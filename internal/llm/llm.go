@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -46,4 +47,42 @@ func (c *Client) Prompt(ctx context.Context, prompt string) (string, error) {
 		return "", err
 	}
 	return resp.Content, nil
+}
+
+// PromptStream streams LLM response tokens to w. Falls back to
+// non-streaming Prompt if the provider doesn't support streaming.
+func (c *Client) PromptStream(ctx context.Context, w io.Writer, prompt string) error {
+	req := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	iter, err := c.client.Stream(ctx, req)
+	if err != nil {
+		// Fallback: provider may not support streaming.
+		resp, promptErr := c.Prompt(ctx, prompt)
+		if promptErr != nil {
+			return promptErr
+		}
+		_, writeErr := fmt.Fprint(w, resp)
+		return writeErr
+	}
+	defer iter.Close()
+
+	for {
+		tok, err := iter.Next()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		if _, writeErr := fmt.Fprint(w, tok.Content); writeErr != nil {
+			return writeErr
+		}
+		if tok.Done {
+			return nil
+		}
+	}
 }
