@@ -3,11 +3,13 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"charm.land/log/v2"
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"hop.top/foo/internal/config"
 	"hop.top/foo/internal/llm"
 	"hop.top/foo/internal/pattern"
@@ -23,6 +25,8 @@ import (
 var (
 	patternName string
 	modelName   string
+	noStream    bool
+	dryRun      bool
 	cfg         config.Config
 	root        *cli.Root
 	mgr         *wsm.Manager
@@ -56,7 +60,7 @@ func New() *cli.Root {
 			upgrade.WithGitHub("hop-top/foo"),
 			upgrade.WithStateDir(stateDir),
 		)
-		upgrade.NotifyIfAvailable(ctx, checker, os.Stderr)
+		upgrade.NotifyIfAvailable(ctx, checker, cmd.ErrOrStderr())
 
 		// Init workspace (WSM)
 		var err error
@@ -78,6 +82,7 @@ func New() *cli.Root {
 	root.Cmd.Args = cobra.MaximumNArgs(1)
 	root.Cmd.Run = func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
+		out := cmd.OutOrStdout()
 
 		// Load pattern if specified
 		var sysPrompt string
@@ -95,42 +100,86 @@ func New() *cli.Root {
 			mName = cfg.Model
 		}
 
-		client, err := llm.NewClient(ctx, mName)
-		if err != nil {
-			logger.Error("Error creating LLM client", "err", err)
-			os.Exit(1)
+		// Read stdin if piped
+		var stdinText string
+		if f, ok := cmd.InOrStdin().(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
+			b, err := io.ReadAll(f)
+			if err != nil {
+				logger.Error("Error reading stdin", "err", err)
+				os.Exit(1)
+			}
+			stdinText = string(b)
 		}
 
-		if len(args) > 0 {
-			// Single shot prompt
-			prompt := args[0]
+		// Build prompt: stdin + arg are combined
+		var prompt string
+		switch {
+		case stdinText != "" && len(args) > 0:
+			prompt = args[0] + "\n\n" + stdinText
+		case stdinText != "":
+			prompt = stdinText
+		case len(args) > 0:
+			prompt = args[0]
+		}
 
-			// Record prompt event
+		if prompt != "" {
+			fullPrompt := prompt
+			if sysPrompt != "" {
+				fullPrompt = fmt.Sprintf("%s\n\nUser: %s", sysPrompt, prompt)
+			}
+
+			// --dry-run: print assembled prompt and exit
+			if dryRun {
+				if sysPrompt != "" {
+					fmt.Fprintln(out, "--- system ---")
+					fmt.Fprintln(out, sysPrompt)
+					fmt.Fprintln(out, "--- user ---")
+					fmt.Fprintln(out, prompt)
+				} else {
+					fmt.Fprintln(out, prompt)
+				}
+				return
+			}
+
+			client, err := llm.NewClient(ctx, mName)
+			if err != nil {
+				logger.Error("Error creating LLM client", "err", err)
+				os.Exit(1)
+			}
+
 			_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.prompt", map[string]any{
 				"prompt":  prompt,
 				"pattern": patternName,
 				"model":   mName,
 			})
 
-			fullPrompt := prompt
-			if sysPrompt != "" {
-				fullPrompt = fmt.Sprintf("%s\n\nUser: %s", sysPrompt, prompt)
-			}
+			if noStream {
+				resp, err := client.Prompt(ctx, fullPrompt)
+				if err != nil {
+					logger.Error("Error from LLM", "err", err)
+					os.Exit(1)
+				}
 
-			resp, err := client.Prompt(ctx, fullPrompt)
+				_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.response", map[string]any{
+					"response": resp,
+				})
+
+				fmt.Fprintln(out, resp)
+			} else {
+				if err := client.PromptStream(ctx, out, fullPrompt); err != nil {
+					logger.Error("Error from LLM", "err", err)
+					os.Exit(1)
+				}
+				fmt.Fprintln(out)
+			}
+		} else {
+			// REPL mode — only when interactive terminal
+			client, err := llm.NewClient(ctx, mName)
 			if err != nil {
-				logger.Error("Error from LLM", "err", err)
+				logger.Error("Error creating LLM client", "err", err)
 				os.Exit(1)
 			}
 
-			// Record response event
-			_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.response", map[string]any{
-				"response": resp,
-			})
-
-			fmt.Println(resp)
-		} else {
-			// REPL mode
 			p := tea.NewProgram(ui.NewREPLModel(ctx, client))
 			if _, err := p.Run(); err != nil {
 				logger.Error("Error running REPL", "err", err)
@@ -141,6 +190,8 @@ func New() *cli.Root {
 
 	root.Cmd.Flags().StringVarP(&patternName, "pattern", "p", "", "Pattern to use")
 	root.Cmd.Flags().StringVarP(&modelName, "model", "m", "", "Model to use (overrides default)")
+	root.Cmd.Flags().BoolVar(&noStream, "no-stream", false, "Disable streaming (wait for full response)")
+	root.Cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print assembled prompt without calling LLM")
 
 	root.Cmd.AddCommand(patternCmd())
 	root.Cmd.AddCommand(modelCmd())
@@ -340,7 +391,7 @@ func upgradeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "upgrade",
 		Short: "Upgrade foo to the latest version",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			stateDir, _ := xdg.StateDir("foo")
 			checker := upgrade.New(
@@ -348,11 +399,10 @@ func upgradeCmd() *cobra.Command {
 				upgrade.WithGitHub("hop-top/foo"),
 				upgrade.WithStateDir(stateDir),
 			)
-			err := upgrade.RunCLI(ctx, checker, upgrade.CLIOptions{})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Upgrade failed: %v\n", err)
-				os.Exit(1)
+			if err := upgrade.RunCLI(ctx, checker, upgrade.CLIOptions{}); err != nil {
+				return fmt.Errorf("upgrade: %w", err)
 			}
+			return nil
 		},
 	}
 }
