@@ -16,6 +16,7 @@ import (
 	"hop.top/foo/internal/config"
 	"hop.top/foo/internal/llm"
 	"hop.top/foo/internal/pattern"
+	"hop.top/foo/internal/schema"
 	"hop.top/foo/internal/strategy"
 	"hop.top/foo/internal/tool"
 	"hop.top/foo/internal/tool/builtin"
@@ -66,6 +67,8 @@ var (
 	toolsApprove bool
 	fragments    []string
 	sysFragments []string
+	schemaName   string
+	schemaMulti  string
 	cfg          config.Config
 	root         *cli.Root
 	mgr          *wsm.Manager
@@ -148,6 +151,9 @@ func New() *cli.Root {
 			}
 			sysPrompt = wrapped
 		}
+
+		// Inject schema instructions into system prompt
+		sysPrompt = appendSchemaPrompt(sysPrompt, schemaName, schemaMulti)
 
 		mName := modelName
 		if mName == "" {
@@ -321,10 +327,16 @@ func New() *cli.Root {
 	root.Cmd.Flags().BoolVar(&toolsApprove, "tools-approve", false, "Confirm before each tool execution")
 	root.Cmd.Flags().StringSliceVarP(&fragments, "fragment", "f", nil, "Attach fragment(s) to user prompt")
 	root.Cmd.Flags().StringSliceVar(&sysFragments, "sf", nil, "Attach fragment(s) to system prompt")
+	root.Cmd.PersistentFlags().StringVar(&schemaName, "schema", "", "Structured JSON output (schema name or DSL)")
+	root.Cmd.PersistentFlags().StringVar(&schemaMulti, "schema-multi", "", "Array JSON output (schema name or DSL)")
 
 	root.Cmd.AddCommand(patternCmd())
 	root.Cmd.AddCommand(strategyCmd())
 	root.Cmd.AddCommand(fragmentCmd())
+	root.Cmd.AddCommand(embedCmd())
+	root.Cmd.AddCommand(similarCmd())
+	root.Cmd.AddCommand(collectionsCmd())
+	root.Cmd.AddCommand(schemaCmd())
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
 	root.Cmd.AddCommand(upgradeCmd())
@@ -516,6 +528,46 @@ func providerCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+// appendSchemaPrompt injects JSON schema instructions into the system
+// prompt when --schema or --schema-multi flags are used. Workaround
+// until kit/llm supports response_format natively.
+func appendSchemaPrompt(sysPrompt, name, multiName string) string {
+	target := name
+	isMulti := false
+	if target == "" {
+		target = multiName
+		isMulti = true
+	}
+	if target == "" {
+		return sysPrompt
+	}
+
+	store, err := openSchemaStore()
+	if err != nil {
+		return sysPrompt
+	}
+
+	sc, err := store.Get(target)
+	if err != nil {
+		compiled, dslErr := schema.CompileDSLJSON(target)
+		if dslErr != nil {
+			return sysPrompt
+		}
+		instr := "\n\nRespond with valid JSON matching this schema:\n" + compiled
+		if isMulti {
+			instr = "\n\nRespond with a JSON array where each element matches this schema:\n" + compiled
+		}
+		return sysPrompt + instr
+	}
+
+	schemaJSON, _ := json.MarshalIndent(sc.Schema, "", "  ")
+	instr := "\n\nRespond with valid JSON matching this schema:\n" + string(schemaJSON)
+	if isMulti {
+		instr = "\n\nRespond with a JSON array where each element matches this schema:\n" + string(schemaJSON)
+	}
+	return sysPrompt + instr
 }
 
 func upgradeCmd() *cobra.Command {
