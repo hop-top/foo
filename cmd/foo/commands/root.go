@@ -153,7 +153,14 @@ func New() *cli.Root {
 		}
 
 		// Inject schema instructions into system prompt
-		sysPrompt = appendSchemaPrompt(sysPrompt, schemaName, schemaMulti)
+		if schemaName != "" || schemaMulti != "" {
+			var schemaErr error
+			sysPrompt, schemaErr = appendSchemaPrompt(sysPrompt, schemaName, schemaMulti)
+			if schemaErr != nil {
+				logger.Error("Error resolving schema", "err", schemaErr)
+				os.Exit(1)
+			}
+		}
 
 		mName := modelName
 		if mName == "" {
@@ -334,6 +341,7 @@ func New() *cli.Root {
 	root.Cmd.AddCommand(strategyCmd())
 	root.Cmd.AddCommand(fragmentCmd())
 	root.Cmd.AddCommand(embedCmd())
+	root.Cmd.AddCommand(embedMultiCmd())
 	root.Cmd.AddCommand(similarCmd())
 	root.Cmd.AddCommand(collectionsCmd())
 	root.Cmd.AddCommand(schemaCmd())
@@ -533,7 +541,7 @@ func providerCmd() *cobra.Command {
 // appendSchemaPrompt injects JSON schema instructions into the system
 // prompt when --schema or --schema-multi flags are used. Workaround
 // until kit/llm supports response_format natively.
-func appendSchemaPrompt(sysPrompt, name, multiName string) string {
+func appendSchemaPrompt(sysPrompt, name, multiName string) (string, error) {
 	target := name
 	isMulti := false
 	if target == "" {
@@ -541,33 +549,32 @@ func appendSchemaPrompt(sysPrompt, name, multiName string) string {
 		isMulti = true
 	}
 	if target == "" {
-		return sysPrompt
+		return sysPrompt, nil
 	}
 
 	store, err := openSchemaStore()
 	if err != nil {
-		return sysPrompt
+		return "", fmt.Errorf("open schema store: %w", err)
 	}
 
+	var schemaJSON string
 	sc, err := store.Get(target)
 	if err != nil {
 		compiled, dslErr := schema.CompileDSLJSON(target)
 		if dslErr != nil {
-			return sysPrompt
+			return "", fmt.Errorf("schema %q not found and not valid DSL: %w", target, dslErr)
 		}
-		instr := "\n\nRespond with valid JSON matching this schema:\n" + compiled
-		if isMulti {
-			instr = "\n\nRespond with a JSON array where each element matches this schema:\n" + compiled
-		}
-		return sysPrompt + instr
+		schemaJSON = compiled
+	} else {
+		b, _ := json.MarshalIndent(sc.Schema, "", "  ")
+		schemaJSON = string(b)
 	}
 
-	schemaJSON, _ := json.MarshalIndent(sc.Schema, "", "  ")
-	instr := "\n\nRespond with valid JSON matching this schema:\n" + string(schemaJSON)
+	instr := "\n\nRespond with valid JSON matching this schema:\n" + schemaJSON
 	if isMulti {
-		instr = "\n\nRespond with a JSON array where each element matches this schema:\n" + string(schemaJSON)
+		instr = "\n\nRespond with a JSON array where each element matches this schema:\n" + schemaJSON
 	}
-	return sysPrompt + instr
+	return sysPrompt + instr, nil
 }
 
 func upgradeCmd() *cobra.Command {

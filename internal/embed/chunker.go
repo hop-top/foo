@@ -101,19 +101,28 @@ func chunkSections(sections []string, charSize, charOverlap int) []string {
 }
 
 func fixedChunk(text string, charSize, charOverlap int) []string {
+	if charSize <= 0 {
+		return []string{text}
+	}
+	if charOverlap < 0 {
+		charOverlap = 0
+	}
+	if charOverlap >= charSize {
+		charOverlap = charSize - 1
+	}
 	if len(text) <= charSize {
 		return []string{text}
 	}
 
+	step := charSize - charOverlap
 	var chunks []string
-	for start := 0; start < len(text); {
+	for start := 0; start < len(text); start += step {
 		end := start + charSize
 		if end > len(text) {
 			end = len(text)
 		}
 		chunks = append(chunks, text[start:end])
-		start = end - charOverlap
-		if start >= len(text) {
+		if end == len(text) {
 			break
 		}
 	}

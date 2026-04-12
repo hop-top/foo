@@ -81,8 +81,18 @@ func (s *Store) Put(e Embedding) (string, error) {
 			vector = excluded.vector,
 			metadata = excluded.metadata
 	`, e.ID, e.Collection, e.ContentHash, vecBlob, string(metaJSON), e.CreatedAt)
+	if err != nil {
+		return "", err
+	}
 
-	return e.ID, err
+	// Return actual stored ID (may differ on conflict)
+	var id string
+	if err := s.db.QueryRow(`
+		SELECT id FROM embeddings WHERE collection = ? AND content_hash = ?
+	`, e.Collection, e.ContentHash).Scan(&id); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // Similar returns the top-n most similar embeddings to the query vector
