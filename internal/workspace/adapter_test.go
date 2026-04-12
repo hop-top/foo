@@ -2,13 +2,17 @@ package workspace
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // TestAdapter is an in-memory implementation of the workspace.Store for testing.
 type TestAdapter struct {
 	mu        sync.RWMutex
+	counter   atomic.Int64
 	sessions  map[string][]string // workspaceID -> sessionIDs
 	events    map[string][]Event  // sessionID -> events
 	artifacts map[string][]byte   // artifactID -> content
@@ -27,7 +31,7 @@ func NewTestAdapter() *TestAdapter {
 func (a *TestAdapter) CreateSession(ctx context.Context, workspaceID string, metadata map[string]string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	id := "test-session"
+	id := fmt.Sprintf("test-session-%d", a.counter.Add(1))
 	a.sessions[workspaceID] = append(a.sessions[workspaceID], id)
 	return id, nil
 }
@@ -58,7 +62,8 @@ func (a *TestAdapter) SearchEvents(ctx context.Context, workspaceID string, quer
 func (a *TestAdapter) SaveArtifact(ctx context.Context, workspaceID string, name string, content []byte) (*ArtifactData, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	id := "test-artifact"
+	h := sha256.Sum256(content)
+	id := fmt.Sprintf("%x", h[:8])
 	a.artifacts[id] = content
 	return &ArtifactData{ArtifactID: id, Path: name}, nil
 }

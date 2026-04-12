@@ -20,14 +20,14 @@ func InitWorkspace(ctx context.Context) (*wsm_core.Manager, *wsm_core.Workspace,
 	return a.manager, a.ws, nil
 }
 
-// WSMAdapter is a production adapter for Foo that wraps the kit/wsm package.
+// WSMAdapter is a production adapter for Foo that wraps hop.top/wsm.
 // It maps Foo's internal Store interface to wsm's Manager and Backend.
 type WSMAdapter struct {
 	manager *wsm_core.Manager
 	ws      *wsm_core.Workspace
 }
 
-// NewWSMAdapter initializes a kit/wsm instance and returns it as a workspace.Store.
+// NewWSMAdapter initializes a hop.top/wsm-backed adapter and returns it as a workspace.Store.
 func NewWSMAdapter(ctx context.Context, dbPath string) (*WSMAdapter, error) {
 	if dbPath == "" {
 		home, err := os.UserHomeDir()
@@ -78,13 +78,11 @@ func NewWSMAdapter(ctx context.Context, dbPath string) (*WSMAdapter, error) {
 }
 
 func (a *WSMAdapter) CreateSession(ctx context.Context, workspaceID string, metadata map[string]string) (string, error) {
-	// In wsm, session IDs are often external or provided during event recording.
-	// We'll generate a ULID or similar if none provided.
-	return "", nil 
+	return "", fmt.Errorf("WSMAdapter.CreateSession not implemented")
 }
 
 func (a *WSMAdapter) ListSessions(ctx context.Context, workspaceID string) ([]string, error) {
-	return nil, nil
+	return nil, fmt.Errorf("WSMAdapter.ListSessions not implemented")
 }
 
 func (a *WSMAdapter) LogEvent(ctx context.Context, event Event) error {
@@ -95,27 +93,25 @@ func (a *WSMAdapter) LogEvent(ctx context.Context, event Event) error {
 }
 
 func (a *WSMAdapter) GetSessionEvents(ctx context.Context, workspaceID string, sessionID string) ([]Event, error) {
-	// Use manager.Events with filter for SessionID
-	return nil, nil
+	return nil, fmt.Errorf("WSMAdapter.GetSessionEvents not implemented")
 }
 
 func (a *WSMAdapter) SearchEvents(ctx context.Context, workspaceID string, query string) ([]Event, error) {
-	return nil, nil
+	return nil, fmt.Errorf("WSMAdapter.SearchEvents not implemented")
 }
 
 func (a *WSMAdapter) SaveArtifact(ctx context.Context, workspaceID string, name string, content []byte) (*ArtifactData, error) {
-	return nil, nil
+	return nil, fmt.Errorf("WSMAdapter.SaveArtifact not implemented")
 }
 
 func (a *WSMAdapter) GetArtifact(ctx context.Context, artifactID string) ([]byte, error) {
-	return nil, nil
+	return nil, fmt.Errorf("WSMAdapter.GetArtifact not implemented")
 }
 
 func (a *WSMAdapter) SetState(ctx context.Context, sessionID string, key string, value []byte) error {
-	// Map to interaction.state event type or similar in wsm
-	return nil
+	return fmt.Errorf("WSMAdapter.SetState not implemented")
 }
 
 func (a *WSMAdapter) GetState(ctx context.Context, sessionID string, key string) ([]byte, error) {
-	return nil, nil
+	return nil, fmt.Errorf("WSMAdapter.GetState not implemented")
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"charm.land/log/v2"
 	tea "charm.land/bubbletea/v2"
@@ -13,6 +14,7 @@ import (
 	"hop.top/foo/internal/config"
 	"hop.top/foo/internal/llm"
 	"hop.top/foo/internal/pattern"
+	"hop.top/foo/internal/strategy"
 	"hop.top/foo/internal/ui"
 	"hop.top/foo/internal/workspace"
 	"hop.top/kit/cli"
@@ -166,14 +168,25 @@ func New() *cli.Root {
 
 				fmt.Fprintln(out, resp)
 			} else {
-				if err := client.PromptStream(ctx, out, fullPrompt); err != nil {
+				var buf strings.Builder
+				w := io.MultiWriter(out, &buf)
+				if err := client.PromptStream(ctx, w, fullPrompt); err != nil {
 					logger.Error("Error from LLM", "err", err)
 					os.Exit(1)
 				}
 				fmt.Fprintln(out)
+
+				_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.response", map[string]any{
+					"response": buf.String(),
+				})
 			}
 		} else {
-			// REPL mode — only when interactive terminal
+			// REPL mode — requires interactive terminal
+			if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "error: REPL requires an interactive terminal; provide a prompt or pipe input")
+				os.Exit(1)
+			}
+
 			client, err := llm.NewClient(ctx, mName)
 			if err != nil {
 				logger.Error("Error creating LLM client", "err", err)
