@@ -49,6 +49,19 @@ func (c *Client) Prompt(ctx context.Context, prompt string) (string, error) {
 	return resp.Content, nil
 }
 
+// CallWithTools sends messages with tool definitions to the LLM and
+// returns the response which may contain tool calls. Requires the
+// underlying provider to implement kit/llm.ToolCaller.
+func (c *Client) CallWithTools(
+	ctx context.Context,
+	messages []llm.Message,
+	tools []llm.ToolDef,
+) (llm.ToolResponse, error) {
+	return c.client.CallWithTools(ctx, llm.Request{
+		Messages: messages,
+	}, tools)
+}
+
 // PromptStream streams LLM response tokens to w. Falls back to
 // non-streaming Prompt if the provider doesn't support streaming.
 func (c *Client) PromptStream(ctx context.Context, w io.Writer, prompt string) error {
