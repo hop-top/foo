@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -26,7 +27,7 @@ func fragmentCmd() *cobra.Command {
 }
 
 func newFragmentManager() (*fragment.Manager, error) {
-	adapter, err := workspace.NewWSMAdapter(nil, "")
+	adapter, err := workspace.NewWSMAdapter(context.Background(), "")
 	if err != nil {
 		return nil, fmt.Errorf("init workspace: %w", err)
 	}
