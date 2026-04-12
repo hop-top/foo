@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +17,8 @@ import (
 	"hop.top/foo/internal/llm"
 	"hop.top/foo/internal/pattern"
 	"hop.top/foo/internal/strategy"
+	"hop.top/foo/internal/tool"
+	"hop.top/foo/internal/tool/builtin"
 	"hop.top/foo/internal/ui"
 	"hop.top/foo/internal/workspace"
 	"hop.top/kit/cli"
@@ -24,16 +28,49 @@ import (
 	wsm "hop.top/wsm/pkg/workspace"
 )
 
+// buildRegistry creates a tool registry populated with builtins and
+// optionally filtered to the names specified by --tool flags.
+func buildRegistry(names []string) *tool.Registry {
+	reg := tool.NewRegistry()
+	_ = reg.Register(builtin.TimeTool{})
+	_ = reg.Register(builtin.VersionTool{})
+	if len(names) > 0 {
+		return reg.Filter(names)
+	}
+	return reg
+}
+
+// approveFromStdin returns an ApproveFunc that prompts via the given
+// reader/writer pair, reading "y" or "n".
+func approveFromStdin(r io.Reader, w io.Writer) tool.ApproveFunc {
+	return func(name string, args json.RawMessage) bool {
+		fmt.Fprintf(w, "[tool] execute %s with %s? [y/N] ", name, string(args))
+		scanner := bufio.NewScanner(r)
+		if scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			return line == "y" || line == "Y"
+		}
+		return false
+	}
+}
+
 var (
-	patternName string
-	modelName   string
-	noStream    bool
-	dryRun      bool
-	cfg         config.Config
-	root        *cli.Root
-	mgr         *wsm.Manager
-	ws          *wsm.Workspace
-	logger      *log.Logger
+	patternName  string
+	strategyName string
+	modelName    string
+	noStream     bool
+	dryRun       bool
+	toolNames    []string
+	chainLimit   int
+	toolsDebug   bool
+	toolsApprove bool
+	fragments    []string
+	sysFragments []string
+	cfg          config.Config
+	root         *cli.Root
+	mgr          *wsm.Manager
+	ws           *wsm.Workspace
+	logger       *log.Logger
 )
 
 func New() *cli.Root {
@@ -97,6 +134,21 @@ func New() *cli.Root {
 			sysPrompt = p.System
 		}
 
+		// Apply strategy wrapping if specified
+		if strategyName != "" {
+			sm, err := strategy.NewManager()
+			if err != nil {
+				logger.Error("Error creating strategy manager", "err", err)
+				os.Exit(1)
+			}
+			wrapped, err := sm.WrapPrompt(strategyName, sysPrompt)
+			if err != nil {
+				logger.Error("Error applying strategy", "name", strategyName, "err", err)
+				os.Exit(1)
+			}
+			sysPrompt = wrapped
+		}
+
 		mName := modelName
 		if mName == "" {
 			mName = cfg.Model
@@ -122,6 +174,39 @@ func New() *cli.Root {
 			prompt = stdinText
 		case len(args) > 0:
 			prompt = args[0]
+		}
+
+		// Resolve fragments and attach to prompts
+		if len(fragments) > 0 || len(sysFragments) > 0 {
+			fragMgr, fErr := newFragmentManager()
+			if fErr != nil {
+				logger.Error("Error initializing fragment manager", "err", fErr)
+				os.Exit(1)
+			}
+			if len(fragments) > 0 {
+				resolved, fErr := fragMgr.ResolveMultiple(ctx, fragments)
+				if fErr != nil {
+					logger.Error("Error resolving fragments", "err", fErr)
+					os.Exit(1)
+				}
+				if prompt != "" {
+					prompt = prompt + "\n---\n" + resolved
+				} else {
+					prompt = resolved
+				}
+			}
+			if len(sysFragments) > 0 {
+				resolved, fErr := fragMgr.ResolveMultiple(ctx, sysFragments)
+				if fErr != nil {
+					logger.Error("Error resolving system fragments", "err", fErr)
+					os.Exit(1)
+				}
+				if sysPrompt != "" {
+					sysPrompt = sysPrompt + "\n---\n" + resolved
+				} else {
+					sysPrompt = resolved
+				}
+			}
 		}
 
 		if prompt != "" {
@@ -154,6 +239,30 @@ func New() *cli.Root {
 				"pattern": patternName,
 				"model":   mName,
 			})
+
+			// Tool dispatch mode
+			if len(toolNames) > 0 {
+				reg := buildRegistry(toolNames)
+				dcfg := tool.DispatchConfig{
+					ChainLimit:  chainLimit,
+					Debug:       toolsDebug,
+					DebugWriter: cmd.ErrOrStderr(),
+				}
+				if toolsApprove {
+					dcfg.Approve = approveFromStdin(cmd.InOrStdin(), cmd.ErrOrStderr())
+				}
+				dispatcher := tool.NewDispatcher(client, reg, dcfg)
+				resp, dispatchErr := dispatcher.Run(ctx, fullPrompt)
+				if dispatchErr != nil {
+					logger.Error("Error from tool dispatch", "err", dispatchErr)
+					os.Exit(1)
+				}
+				_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.response", map[string]any{
+					"response": resp,
+				})
+				fmt.Fprintln(out, resp)
+				return
+			}
 
 			if noStream {
 				resp, err := client.Prompt(ctx, fullPrompt)
@@ -202,11 +311,20 @@ func New() *cli.Root {
 	}
 
 	root.Cmd.Flags().StringVarP(&patternName, "pattern", "p", "", "Pattern to use")
+	root.Cmd.Flags().StringVarP(&strategyName, "strategy", "s", "", "Strategy to wrap system prompt")
 	root.Cmd.Flags().StringVarP(&modelName, "model", "m", "", "Model to use (overrides default)")
 	root.Cmd.Flags().BoolVar(&noStream, "no-stream", false, "Disable streaming (wait for full response)")
 	root.Cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print assembled prompt without calling LLM")
+	root.Cmd.Flags().StringSliceVarP(&toolNames, "tool", "T", nil, "Enable specific tools by name")
+	root.Cmd.Flags().IntVar(&chainLimit, "chain-limit", 5, "Max tool-call iterations")
+	root.Cmd.Flags().BoolVar(&toolsDebug, "tools-debug", false, "Log tool calls and results")
+	root.Cmd.Flags().BoolVar(&toolsApprove, "tools-approve", false, "Confirm before each tool execution")
+	root.Cmd.Flags().StringSliceVarP(&fragments, "fragment", "f", nil, "Attach fragment(s) to user prompt")
+	root.Cmd.Flags().StringSliceVar(&sysFragments, "sf", nil, "Attach fragment(s) to system prompt")
 
 	root.Cmd.AddCommand(patternCmd())
+	root.Cmd.AddCommand(strategyCmd())
+	root.Cmd.AddCommand(fragmentCmd())
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
 	root.Cmd.AddCommand(upgradeCmd())
