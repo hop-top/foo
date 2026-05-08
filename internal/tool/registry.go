@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"hop.top/kit/llm"
+	"hop.top/kit/go/ai/llm"
 )
 
 // Registry holds named tools and converts them to LLM-ready definitions.

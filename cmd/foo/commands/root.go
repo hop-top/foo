@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"sort"
 	"strings"
 
 	"charm.land/log/v2"
@@ -22,449 +24,390 @@ import (
 	"hop.top/foo/internal/tool/builtin"
 	"hop.top/foo/internal/ui"
 	"hop.top/foo/internal/workspace"
-	"hop.top/kit/cli"
-	kitlog "hop.top/kit/log"
-	"hop.top/kit/upgrade"
-	"hop.top/kit/xdg"
+	extdiscover "hop.top/kit/go/ai/ext/discover"
+	kitllm "hop.top/kit/go/ai/llm"
+	kitcli "hop.top/kit/go/console/cli"
+	"hop.top/kit/go/console/output"
+	kitlog "hop.top/kit/go/console/log"
+	"hop.top/kit/go/core/upgrade"
+	"hop.top/kit/go/core/xdg"
+	kitbus "hop.top/kit/go/runtime/bus"
 	wsm "hop.top/wsm/pkg/workspace"
 )
 
-// buildRegistry creates a tool registry populated with builtins and
-// optionally filtered to the names specified by --tool flags.
-func buildRegistry(names []string) *tool.Registry {
-	reg := tool.NewRegistry()
-	_ = reg.Register(builtin.TimeTool{})
-	_ = reg.Register(builtin.VersionTool{})
-	if len(names) > 0 {
-		return reg.Filter(names)
-	}
-	return reg
-}
+const version = "0.1.0"
 
-// approveFromStdin returns an ApproveFunc that prompts via the given
-// reader/writer pair, reading "y" or "n".
-func approveFromStdin(r io.Reader, w io.Writer) tool.ApproveFunc {
-	return func(name string, args json.RawMessage) bool {
-		fmt.Fprintf(w, "[tool] execute %s with %s? [y/N] ", name, string(args))
-		scanner := bufio.NewScanner(r)
-		if scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			return line == "y" || line == "Y"
-		}
-		return false
-	}
-}
+const longDescription = `foo is an opinionated terminal-first LLM workflow tool.
+
+Use the root command for one-shot prompts, or use grouped subcommands to
+manage reusable prompt assets, embeddings, schemas, and interactive sessions.`
 
 var (
-	patternName  string
-	strategyName string
-	modelName    string
-	noStream     bool
-	dryRun       bool
-	toolNames    []string
-	chainLimit   int
-	toolsDebug   bool
-	toolsApprove bool
-	fragments    []string
-	sysFragments []string
-	schemaName   string
-	schemaMulti  string
-	cfg          config.Config
-	root         *cli.Root
-	mgr          *wsm.Manager
-	ws           *wsm.Workspace
-	logger       *log.Logger
+	patternName     string
+	strategyName    string
+	modelName       string
+	noStream        bool
+	dryRun          bool
+	toolNames       []string
+	chainLimit      int
+	toolsDebug      bool
+	toolsApprove    bool
+	fragments       []string
+	systemFragments []string
+	schemaName      string
+	schemaMulti     string
+
+	cfg     = config.Default()
+	root    *kitcli.Root
+	logger  *log.Logger
+	eventBus kitbus.Bus
+	mgr     *wsm.Manager
+	ws      *wsm.Workspace
 )
 
-func New() *cli.Root {
-	var err error
-	cfg, err = config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-	}
+var commandGroups = map[string]string{
+	"shell":    "interact",
+	"pattern":  "knowledge",
+	"strategy": "knowledge",
+	"fragment": "knowledge",
+	"schema":   "knowledge",
+	"embed":    "knowledge",
+	"model":    "organize",
+	"provider": "organize",
+	"upgrade":  "management",
+}
 
-	root = cli.New(cli.Config{
+func New() *kitcli.Root {
+	root = kitcli.New(kitcli.Config{
 		Name:    "foo",
-		Version: "0.1.0",
-		Short:   "foo is an opinionated LLM CLI/REPL",
-		Accent:  cfg.Accent,
+		Version: version,
+		Short:   "LLM workflows from the terminal",
+		Accent:  config.DefaultAccent,
+		Help: kitcli.HelpConfig{
+			Disclaimer: longDescription,
+			Groups: []kitcli.GroupConfig{
+				{ID: "knowledge", Title: "KNOWLEDGE"},
+				{ID: "organize", Title: "ORGANIZE"},
+				{ID: "interact", Title: "INTERACT"},
+			},
+		},
 	})
-
 	logger = kitlog.New(root.Viper)
+	slog.SetDefault(slog.New(logger))
 
-	root.Cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-
-		// Check for upgrades
-		stateDir, _ := xdg.StateDir("foo")
-		checker := upgrade.New(
-			upgrade.WithBinary("foo", "0.1.0"),
-			upgrade.WithGitHub("hop-top/foo"),
-			upgrade.WithStateDir(stateDir),
-		)
-		upgrade.NotifyIfAvailable(ctx, checker, cmd.ErrOrStderr())
-
-		// Init workspace (WSM)
-		var err error
-		mgr, ws, err = workspace.InitWorkspace(ctx)
-		if err != nil {
-			return fmt.Errorf("initialize workspace: %w", err)
-		}
-
-		// Record session start
-		_, _ = mgr.RecordEvent(ctx, ws.ID, "session.start", map[string]any{
-			"command": cmd.CommandPath(),
-			"args":    args,
-			"cwd":     os.Getenv("PWD"),
-		})
-
-		return nil
-	}
-
+	root.Cmd.Use = "foo [prompt]"
+	root.Cmd.SilenceUsage = true
+	root.Cmd.SilenceErrors = true
+	root.Cmd.SuggestionsMinimumDistance = 2
 	root.Cmd.Args = cobra.MaximumNArgs(1)
-	root.Cmd.Run = func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
-		out := cmd.OutOrStdout()
+	root.Cmd.PersistentPreRunE = initializeRuntime
+	root.Cmd.RunE = runPromptOrShell
 
-		// Load pattern if specified
-		var sysPrompt string
-		if patternName != "" {
-			p, err := pattern.LoadPattern(cfg.PatternsPath, patternName)
-			if err != nil {
-				logger.Error("Error loading pattern", "name", patternName, "err", err)
-				os.Exit(1)
-			}
-			sysPrompt = p.System
-		}
+	flags := root.Cmd.Flags()
+	flags.StringVarP(&patternName, "pattern", "p", "", "Pattern to apply")
+	flags.StringVarP(&strategyName, "strategy", "s", "", "Strategy to wrap the system prompt")
+	flags.StringVarP(&modelName, "model", "m", "", "Model override")
+	flags.BoolVar(&noStream, "no-stream", false, "Disable streaming output")
+	flags.BoolVar(&dryRun, "dry-run", false, "Print assembled prompt without calling the model")
+	flags.StringSliceVarP(&toolNames, "tool", "T", nil, "Enable specific tools by name")
+	flags.IntVar(&chainLimit, "chain-limit", 5, "Maximum tool-call iterations")
+	flags.BoolVar(&toolsDebug, "tools-debug", false, "Write tool call traces to stderr")
+	flags.BoolVar(&toolsApprove, "tools-approve", false, "Prompt before each tool execution")
+	flags.StringSliceVarP(&fragments, "fragment", "f", nil, "Attach fragment(s) to the user prompt")
+	flags.StringSliceVar(&systemFragments, "system-fragment", nil, "Attach fragment(s) to the system prompt")
+	flags.StringVar(&schemaName, "schema", "", "Structured JSON output (schema name or DSL)")
+	flags.StringVar(&schemaMulti, "schema-multi", "", "Structured JSON array output (schema name or DSL)")
 
-		// Apply strategy wrapping if specified
-		if strategyName != "" {
-			sm, err := strategy.NewManager()
-			if err != nil {
-				logger.Error("Error creating strategy manager", "err", err)
-				os.Exit(1)
-			}
-			wrapped, err := sm.WrapPrompt(strategyName, sysPrompt)
-			if err != nil {
-				logger.Error("Error applying strategy", "name", strategyName, "err", err)
-				os.Exit(1)
-			}
-			sysPrompt = wrapped
-		}
-
-		// Inject schema instructions into system prompt
-		if schemaName != "" || schemaMulti != "" {
-			var schemaErr error
-			sysPrompt, schemaErr = appendSchemaPrompt(sysPrompt, schemaName, schemaMulti)
-			if schemaErr != nil {
-				logger.Error("Error resolving schema", "err", schemaErr)
-				os.Exit(1)
-			}
-		}
-
-		mName := modelName
-		if mName == "" {
-			mName = cfg.Model
-		}
-
-		// Read stdin if piped
-		var stdinText string
-		if f, ok := cmd.InOrStdin().(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
-			b, err := io.ReadAll(f)
-			if err != nil {
-				logger.Error("Error reading stdin", "err", err)
-				os.Exit(1)
-			}
-			stdinText = string(b)
-		}
-
-		// Build prompt: stdin + arg are combined
-		var prompt string
-		switch {
-		case stdinText != "" && len(args) > 0:
-			prompt = args[0] + "\n\n" + stdinText
-		case stdinText != "":
-			prompt = stdinText
-		case len(args) > 0:
-			prompt = args[0]
-		}
-
-		// Resolve fragments and attach to prompts
-		if len(fragments) > 0 || len(sysFragments) > 0 {
-			fragMgr, fErr := newFragmentManager()
-			if fErr != nil {
-				logger.Error("Error initializing fragment manager", "err", fErr)
-				os.Exit(1)
-			}
-			if len(fragments) > 0 {
-				resolved, fErr := fragMgr.ResolveMultiple(ctx, fragments)
-				if fErr != nil {
-					logger.Error("Error resolving fragments", "err", fErr)
-					os.Exit(1)
-				}
-				if prompt != "" {
-					prompt = prompt + "\n---\n" + resolved
-				} else {
-					prompt = resolved
-				}
-			}
-			if len(sysFragments) > 0 {
-				resolved, fErr := fragMgr.ResolveMultiple(ctx, sysFragments)
-				if fErr != nil {
-					logger.Error("Error resolving system fragments", "err", fErr)
-					os.Exit(1)
-				}
-				if sysPrompt != "" {
-					sysPrompt = sysPrompt + "\n---\n" + resolved
-				} else {
-					sysPrompt = resolved
-				}
-			}
-		}
-
-		if prompt != "" {
-			fullPrompt := prompt
-			if sysPrompt != "" {
-				fullPrompt = fmt.Sprintf("%s\n\nUser: %s", sysPrompt, prompt)
-			}
-
-			// --dry-run: print assembled prompt and exit
-			if dryRun {
-				if sysPrompt != "" {
-					fmt.Fprintln(out, "--- system ---")
-					fmt.Fprintln(out, sysPrompt)
-					fmt.Fprintln(out, "--- user ---")
-					fmt.Fprintln(out, prompt)
-				} else {
-					fmt.Fprintln(out, prompt)
-				}
-				return
-			}
-
-			client, err := llm.NewClient(ctx, mName)
-			if err != nil {
-				logger.Error("Error creating LLM client", "err", err)
-				os.Exit(1)
-			}
-
-			_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.prompt", map[string]any{
-				"prompt":  prompt,
-				"pattern": patternName,
-				"model":   mName,
-			})
-
-			// Tool dispatch mode
-			if len(toolNames) > 0 {
-				reg := buildRegistry(toolNames)
-				dcfg := tool.DispatchConfig{
-					ChainLimit:  chainLimit,
-					Debug:       toolsDebug,
-					DebugWriter: cmd.ErrOrStderr(),
-				}
-				if toolsApprove {
-					dcfg.Approve = approveFromStdin(cmd.InOrStdin(), cmd.ErrOrStderr())
-				}
-				dispatcher := tool.NewDispatcher(client, reg, dcfg)
-				resp, dispatchErr := dispatcher.Run(ctx, fullPrompt)
-				if dispatchErr != nil {
-					logger.Error("Error from tool dispatch", "err", dispatchErr)
-					os.Exit(1)
-				}
-				_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.response", map[string]any{
-					"response": resp,
-				})
-				fmt.Fprintln(out, resp)
-				return
-			}
-
-			if noStream {
-				resp, err := client.Prompt(ctx, fullPrompt)
-				if err != nil {
-					logger.Error("Error from LLM", "err", err)
-					os.Exit(1)
-				}
-
-				_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.response", map[string]any{
-					"response": resp,
-				})
-
-				fmt.Fprintln(out, resp)
-			} else {
-				var buf strings.Builder
-				w := io.MultiWriter(out, &buf)
-				if err := client.PromptStream(ctx, w, fullPrompt); err != nil {
-					logger.Error("Error from LLM", "err", err)
-					os.Exit(1)
-				}
-				fmt.Fprintln(out)
-
-				_, _ = mgr.RecordEvent(ctx, ws.ID, "interaction.response", map[string]any{
-					"response": buf.String(),
-				})
-			}
-		} else {
-			// REPL mode — requires interactive terminal
-			if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "error: REPL requires an interactive terminal; provide a prompt or pipe input")
-				os.Exit(1)
-			}
-
-			client, err := llm.NewClient(ctx, mName)
-			if err != nil {
-				logger.Error("Error creating LLM client", "err", err)
-				os.Exit(1)
-			}
-
-			p := tea.NewProgram(ui.NewREPLModel(ctx, client))
-			if _, err := p.Run(); err != nil {
-				logger.Error("Error running REPL", "err", err)
-				os.Exit(1)
-			}
-		}
-	}
-
-	root.Cmd.Flags().StringVarP(&patternName, "pattern", "p", "", "Pattern to use")
-	root.Cmd.Flags().StringVarP(&strategyName, "strategy", "s", "", "Strategy to wrap system prompt")
-	root.Cmd.Flags().StringVarP(&modelName, "model", "m", "", "Model to use (overrides default)")
-	root.Cmd.Flags().BoolVar(&noStream, "no-stream", false, "Disable streaming (wait for full response)")
-	root.Cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print assembled prompt without calling LLM")
-	root.Cmd.Flags().StringSliceVarP(&toolNames, "tool", "T", nil, "Enable specific tools by name")
-	root.Cmd.Flags().IntVar(&chainLimit, "chain-limit", 5, "Max tool-call iterations")
-	root.Cmd.Flags().BoolVar(&toolsDebug, "tools-debug", false, "Log tool calls and results")
-	root.Cmd.Flags().BoolVar(&toolsApprove, "tools-approve", false, "Confirm before each tool execution")
-	root.Cmd.Flags().StringSliceVarP(&fragments, "fragment", "f", nil, "Attach fragment(s) to user prompt")
-	root.Cmd.Flags().StringSliceVar(&sysFragments, "sf", nil, "Attach fragment(s) to system prompt")
-	root.Cmd.PersistentFlags().StringVar(&schemaName, "schema", "", "Structured JSON output (schema name or DSL)")
-	root.Cmd.PersistentFlags().StringVar(&schemaMulti, "schema-multi", "", "Array JSON output (schema name or DSL)")
-
+	root.Cmd.AddCommand(shellCmd())
 	root.Cmd.AddCommand(patternCmd())
 	root.Cmd.AddCommand(strategyCmd())
 	root.Cmd.AddCommand(fragmentCmd())
-	root.Cmd.AddCommand(embedCmd())
-	root.Cmd.AddCommand(embedMultiCmd())
-	root.Cmd.AddCommand(similarCmd())
-	root.Cmd.AddCommand(collectionsCmd())
+	root.Cmd.AddCommand(embedRootCmd())
 	root.Cmd.AddCommand(schemaCmd())
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
 	root.Cmd.AddCommand(upgradeCmd())
 
+	applyCommandGroups()
 	return root
+}
+
+func initializeRuntime(cmd *cobra.Command, _ []string) error {
+	extraPaths, overrides := root.ConfigArgs()
+	loaded, err := config.Load(config.LoadOptions{
+		ExtraConfigPaths: extraPaths,
+		Overrides:        overrides,
+	})
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	cfg = loaded
+
+	verbose, _ := cmd.Root().PersistentFlags().GetCount("verbose")
+	logger = kitlog.WithVerbose(root.Viper, verbose)
+	slog.SetDefault(slog.New(logger))
+
+	if cmd.Name() != "upgrade" {
+		upgrade.NotifyIfAvailable(cmd.Context(), newUpgradeChecker(), cmd.ErrOrStderr())
+	}
+	if eventBus == nil {
+		eventBus = kitbus.New()
+	}
+
+	if cmd.CommandPath() == "foo" || cmd.CommandPath() == "foo shell" {
+		mgr, ws, err = workspace.InitWorkspace(cmd.Context())
+		if err != nil {
+			return fmt.Errorf("initialize workspace: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func runPromptOrShell(cmd *cobra.Command, args []string) error {
+	prompt, err := readPrompt(cmd, args)
+	if err != nil {
+		return err
+	}
+	if prompt == "" {
+		return runShell(cmd)
+	}
+
+	systemPrompt, err := assembleSystemPrompt(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	if len(fragments) > 0 {
+		fragmentManager, err := newFragmentManager()
+		if err != nil {
+			return err
+		}
+		resolved, err := fragmentManager.ResolveMultiple(cmd.Context(), fragments)
+		if err != nil {
+			return err
+		}
+		prompt = strings.TrimSpace(prompt + "\n---\n" + resolved)
+	}
+
+	if dryRun {
+		if systemPrompt != "" {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "--- system ---")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), systemPrompt)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "--- user ---")
+		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), prompt)
+		return nil
+	}
+
+	client, err := llm.NewClient(cmd.Context(), selectedModel())
+	if err != nil {
+		return err
+	}
+
+	fullPrompt := prompt
+	if systemPrompt != "" {
+		fullPrompt = systemPrompt + "\n\nUser: " + prompt
+	}
+
+	recordMessage(cmd.Context(), "user", prompt)
+
+	if len(toolNames) > 0 {
+		registry, err := buildRegistry(toolNames)
+		if err != nil {
+			return err
+		}
+		dispatcher := tool.NewDispatcher(client, registry, tool.DispatchConfig{
+			ChainLimit:  chainLimit,
+			Debug:       toolsDebug,
+			DebugWriter: cmd.ErrOrStderr(),
+			Approve:     approvalFunc(cmd),
+		})
+		resp, err := dispatcher.Run(cmd.Context(), fullPrompt)
+		if err != nil {
+			return err
+		}
+		recordMessage(cmd.Context(), "assistant", resp)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), resp)
+		return nil
+	}
+
+	if noStream {
+		resp, err := client.Prompt(cmd.Context(), fullPrompt)
+		if err != nil {
+			return err
+		}
+		recordMessage(cmd.Context(), "assistant", resp)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), resp)
+		return nil
+	}
+
+	var buf strings.Builder
+	if err := client.PromptStream(cmd.Context(), io.MultiWriter(cmd.OutOrStdout(), &buf), fullPrompt); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	recordMessage(cmd.Context(), "assistant", buf.String())
+	return nil
+}
+
+func shellCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "shell",
+		Short: "Open an interactive shell session",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runShell(cmd)
+		},
+	}
+}
+
+func runShell(cmd *cobra.Command) error {
+	if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
+		return fmt.Errorf("interactive shell requires a terminal")
+	}
+	client, err := llm.NewClient(cmd.Context(), selectedModel())
+	if err != nil {
+		return err
+	}
+	program := tea.NewProgram(ui.NewREPLModel(cmd.Context(), client))
+	_, err = program.Run()
+	return err
 }
 
 func patternCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pattern",
-		Short: "Manage patterns",
+		Short: "Manage reusable system prompt patterns",
 	}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List available patterns",
-		Run: func(cmd *cobra.Command, args []string) {
-			patterns, err := pattern.List(cfg.PatternsPath)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			names, err := pattern.List(cfg.PatternsPath)
 			if err != nil {
-				fmt.Println("Error listing patterns:", err)
-				return
+				return err
 			}
-			fmt.Println("Available patterns:")
-			for _, p := range patterns {
-				fmt.Printf("- %s\n", p)
+			rows := make([]patternRow, 0, len(names))
+			for _, name := range names {
+				rows = append(rows, patternRow{Name: name})
 			}
+			return renderData(cmd, rows)
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "add <name> [system-prompt]",
-		Short: "Add a new pattern",
-		Args:  cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			name := args[0]
-			sys := ""
-			if len(args) > 1 {
-				sys = args[1]
+		Use:   "show <name>",
+		Short: "Show one pattern",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			item, err := pattern.LoadPattern(cfg.PatternsPath, args[0])
+			if err != nil {
+				return err
 			}
-			if err := pattern.Create(cfg.PatternsPath, name, sys); err != nil {
-				fmt.Println("Error creating pattern:", err)
-				return
+			return renderData(cmd, patternView{Name: item.Name, System: item.System})
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "create <name> [system-prompt]",
+		Short: "Create or replace a pattern",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			systemPrompt := ""
+			if len(args) == 2 {
+				systemPrompt = args[1]
 			}
-			fmt.Printf("Pattern %q added to %s\n", name, cfg.PatternsPath)
+			if err := pattern.Create(cfg.PatternsPath, args[0], systemPrompt); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q saved\n", args[0])
+			return nil
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "import <path> [name]",
 		Short: "Import a pattern from a file",
-		Args:  cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			path := args[0]
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
-			if len(args) > 1 {
+			if len(args) == 2 {
 				name = args[1]
 			}
-			if err := pattern.Import(cfg.PatternsPath, path, name); err != nil {
-				fmt.Println("Error importing pattern:", err)
-				return
+			if err := pattern.Import(cfg.PatternsPath, args[0], name); err != nil {
+				return err
 			}
-			fmt.Println("Pattern imported successfully")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "pattern imported")
+			return nil
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "remove <name>",
-		Short: "Remove a pattern",
+		Use:   "delete <name>",
+		Short: "Delete a pattern",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			name := args[0]
-			if err := pattern.Remove(cfg.PatternsPath, name); err != nil {
-				fmt.Println("Error removing pattern:", err)
-				return
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := pattern.Delete(cfg.PatternsPath, args[0]); err != nil {
+				return err
 			}
-			fmt.Printf("Pattern %q removed\n", name)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q deleted\n", args[0])
+			return nil
 		},
 	})
 
 	return cmd
 }
 
+func strategyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "strategy",
+		Short: "List available prompt strategies",
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List available strategies",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			manager, err := strategy.NewManager()
+			if err != nil {
+				return err
+			}
+			loaded := manager.List()
+			rows := make([]strategyRow, 0, len(loaded))
+			for _, item := range loaded {
+				rows = append(rows, strategyRow{Name: item.Name, Description: item.Description})
+			}
+			return renderData(cmd, rows)
+		},
+	})
+	return cmd
+}
+
 func modelCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model",
-		Short: "Manage models",
+		Short: "Manage the default model selection",
 	}
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "List common models",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Common models:")
-			fmt.Println("- claude-3-5-sonnet-latest")
-			fmt.Println("- claude-3-opus-latest")
-			fmt.Println("- gpt-4o")
-			fmt.Println("- gpt-4o-mini")
-			fmt.Println("- o1-preview")
+		Use:   "current",
+		Short: "Show the current default model",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return renderData(cmd, modelStatus{Current: cfg.Model})
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "set-default <model>",
+		Use:   "default <model>",
 		Short: "Set the default model",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.Model = args[0]
 			if err := cfg.Save(); err != nil {
-				fmt.Println("Error saving default model:", err)
-				return
+				return err
 			}
-			fmt.Printf("Default model set to %q\n", cfg.Model)
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "refresh",
-		Short: "Refresh model list (stub)",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Model list refreshed (mock)")
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default model set to %q\n", cfg.Model)
+			return nil
 		},
 	})
 
@@ -474,82 +417,154 @@ func modelCmd() *cobra.Command {
 func providerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider",
-		Short: "Manage providers",
+		Short: "Inspect configured LLM providers",
 	}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
-		Short: "List supported providers",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Supported providers (URI schemes):")
-			fmt.Println("- anthropic://")
-			fmt.Println("- openai://")
-			fmt.Println("- openrouter://")
-			fmt.Println("- xai://")
-			fmt.Println("- groq://")
-			fmt.Println("- deepseek://")
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "enable <scheme>",
-		Short: "Enable a provider (stub)",
-		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("Provider %q enabled (mock)\n", args[0])
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "disable <scheme>",
-		Short: "Disable a provider (stub)",
-		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("Provider %q disabled (mock)\n", args[0])
+		Short: "List registered providers",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			schemes := kitllm.Schemes()
+			sort.Strings(schemes)
+			rows := make([]providerRow, 0, len(schemes))
+			for _, scheme := range schemes {
+				rows = append(rows, providerRow{Scheme: scheme})
+			}
+			return renderData(cmd, rows)
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "show <scheme>",
-		Short: "Show provider details",
+		Short: "Show provider auth status",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			scheme := args[0]
-			envVar := ""
-			switch scheme {
-			case "anthropic":
-				envVar = "ANTHROPIC_API_KEY"
-			case "openai":
-				envVar = "OPENAI_API_KEY"
+		RunE: func(cmd *cobra.Command, args []string) error {
+			scheme := strings.TrimSuffix(args[0], "://")
+			keyName, authType := providerAuthRequirement(scheme)
+			status := providerStatus{
+				Scheme:   scheme,
+				AuthType: authType,
 			}
-			if envVar != "" {
-				key := os.Getenv(envVar)
-				status := "not set"
-				if key != "" {
-					status = "configured (masked: " + key[:4] + "...)"
-				}
-				fmt.Printf("Provider: %s\nAPI Key: %s (%s)\n", scheme, envVar, status)
+			if keyName == "" {
+				status.Status = "available"
+				return renderData(cmd, status)
+			}
+			status.SecretKey = keyName
+			_, ok, err := cfg.LookupSecret(cmd.Context(), keyName)
+			if err != nil {
+				return err
+			}
+			if ok {
+				status.Status = "configured"
 			} else {
-				fmt.Printf("Provider details for %q not implemented yet\n", scheme)
+				status.Status = "missing"
 			}
+			return renderData(cmd, status)
 		},
 	})
 
 	return cmd
 }
 
-// appendSchemaPrompt injects JSON schema instructions into the system
-// prompt when --schema or --schema-multi flags are used. Workaround
-// until kit/llm supports response_format natively.
-func appendSchemaPrompt(sysPrompt, name, multiName string) (string, error) {
-	target := name
-	isMulti := false
+func upgradeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade foo to the latest version",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return upgrade.RunCLI(cmd.Context(), newUpgradeChecker(), upgrade.CLIOptions{})
+		},
+	}
+}
+
+func buildRegistry(names []string) (*tool.Registry, error) {
+	registry := tool.NewRegistry()
+	_ = registry.Register(builtin.TimeTool{})
+	_ = registry.Register(builtin.VersionTool{})
+
+	scanner := &extdiscover.Scanner{Prefix: "foo-tool-"}
+	found, err := scanner.Scan()
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range found {
+		toolDef := tool.NewExternalTool(item.Name, item.Name, item.Path, nil)
+		if err := item.Enrich(); err == nil {
+			meta := item.Meta()
+			toolDef = tool.NewExternalTool(meta.Name, meta.Description, item.Path, nil)
+		}
+		_ = registry.Register(toolDef)
+	}
+
+	if len(names) > 0 {
+		return registry.Filter(names), nil
+	}
+	return registry, nil
+}
+
+func approvalFunc(cmd *cobra.Command) tool.ApproveFunc {
+	if !toolsApprove {
+		return nil
+	}
+	return approveFromStdin(cmd.InOrStdin(), cmd.ErrOrStderr())
+}
+
+func approveFromStdin(r io.Reader, w io.Writer) tool.ApproveFunc {
+	return func(name string, args json.RawMessage) bool {
+		_, _ = fmt.Fprintf(w, "[tool] execute %s with %s? [y/N] ", name, string(args))
+		scanner := bufio.NewScanner(r)
+		if scanner.Scan() {
+			answer := strings.TrimSpace(scanner.Text())
+			return answer == "y" || answer == "Y"
+		}
+		return false
+	}
+}
+
+func assembleSystemPrompt(ctx context.Context) (string, error) {
+	systemPrompt := ""
+	if patternName != "" {
+		loaded, err := pattern.LoadPattern(cfg.PatternsPath, patternName)
+		if err != nil {
+			return "", err
+		}
+		systemPrompt = loaded.System
+	}
+	if strategyName != "" {
+		manager, err := strategy.NewManager()
+		if err != nil {
+			return "", err
+		}
+		systemPrompt, err = manager.WrapPrompt(strategyName, systemPrompt)
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(systemFragments) > 0 {
+		fragmentManager, err := newFragmentManager()
+		if err != nil {
+			return "", err
+		}
+		resolved, err := fragmentManager.ResolveMultiple(ctx, systemFragments)
+		if err != nil {
+			return "", err
+		}
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n---\n" + resolved)
+	}
+	if schemaName != "" || schemaMulti != "" {
+		return appendSchemaPrompt(systemPrompt, schemaName, schemaMulti)
+	}
+	return strings.TrimSpace(systemPrompt), nil
+}
+
+func appendSchemaPrompt(systemPrompt, single, multi string) (string, error) {
+	target := single
+	arrayMode := false
 	if target == "" {
-		target = multiName
-		isMulti = true
+		target = multi
+		arrayMode = true
 	}
 	if target == "" {
-		return sysPrompt, nil
+		return systemPrompt, nil
 	}
 
 	store, err := openSchemaStore()
@@ -558,41 +573,138 @@ func appendSchemaPrompt(sysPrompt, name, multiName string) (string, error) {
 	}
 
 	var schemaJSON string
-	sc, err := store.Get(target)
-	if err != nil {
-		compiled, dslErr := schema.CompileDSLJSON(target)
-		if dslErr != nil {
-			return "", fmt.Errorf("schema %q not found and not valid DSL: %w", target, dslErr)
+	stored, err := store.Get(target)
+	if err == nil {
+		compiled, marshalErr := json.MarshalIndent(stored.Schema, "", "  ")
+		if marshalErr != nil {
+			return "", marshalErr
+		}
+		schemaJSON = string(compiled)
+	} else {
+		compiled, compileErr := schema.CompileDSLJSON(target)
+		if compileErr != nil {
+			return "", fmt.Errorf("schema %q not found and not valid DSL: %w", target, compileErr)
 		}
 		schemaJSON = compiled
-	} else {
-		b, _ := json.MarshalIndent(sc.Schema, "", "  ")
-		schemaJSON = string(b)
 	}
 
-	instr := "\n\nRespond with valid JSON matching this schema:\n" + schemaJSON
-	if isMulti {
-		instr = "\n\nRespond with a JSON array where each element matches this schema:\n" + schemaJSON
+	instruction := "\n\nRespond with valid JSON matching this schema:\n" + schemaJSON
+	if arrayMode {
+		instruction = "\n\nRespond with a JSON array where each element matches this schema:\n" + schemaJSON
 	}
-	return sysPrompt + instr, nil
+	return strings.TrimSpace(systemPrompt + instruction), nil
 }
 
-func upgradeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "upgrade",
-		Short: "Upgrade foo to the latest version",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			stateDir, _ := xdg.StateDir("foo")
-			checker := upgrade.New(
-				upgrade.WithBinary("foo", "0.1.0"),
-				upgrade.WithGitHub("hop-top/foo"),
-				upgrade.WithStateDir(stateDir),
-			)
-			if err := upgrade.RunCLI(ctx, checker, upgrade.CLIOptions{}); err != nil {
-				return fmt.Errorf("upgrade: %w", err)
-			}
-			return nil
-		},
+func readPrompt(cmd *cobra.Command, args []string) (string, error) {
+	var stdinText string
+	if file, ok := cmd.InOrStdin().(*os.File); ok && !term.IsTerminal(int(file.Fd())) {
+		data, err := io.ReadAll(file)
+		if err != nil {
+			return "", err
+		}
+		stdinText = strings.TrimSpace(string(data))
 	}
+
+	switch {
+	case stdinText != "" && len(args) > 0:
+		return strings.TrimSpace(args[0] + "\n\n" + stdinText), nil
+	case stdinText != "":
+		return stdinText, nil
+	case len(args) > 0:
+		return strings.TrimSpace(args[0]), nil
+	default:
+		return "", nil
+	}
+}
+
+func selectedModel() string {
+	if modelName != "" {
+		return modelName
+	}
+	return cfg.Model
+}
+
+func renderData(cmd *cobra.Command, data any) error {
+	return output.Dispatch(cmd, root.Viper, data)
+}
+
+func applyCommandGroups() {
+	for _, cmd := range root.Cmd.Commands() {
+		if groupID, ok := commandGroups[cmd.Name()]; ok {
+			cmd.GroupID = groupID
+		}
+	}
+}
+
+func publishEvent(ctx context.Context, topic string, payload any) {
+	if eventBus == nil {
+		return
+	}
+	_ = eventBus.Publish(ctx, kitbus.NewEvent(kitbus.Topic(topic), "foo", payload))
+}
+
+func recordMessage(ctx context.Context, role, content string) {
+	if mgr == nil || ws == nil || content == "" {
+		return
+	}
+	_, _ = mgr.RecordEvent(ctx, ws.ID, wsm.EventInteractionMessage, wsm.MessageData{
+		Role:    role,
+		Content: content,
+	})
+}
+
+func newUpgradeChecker() *upgrade.Checker {
+	stateDir, err := xdg.StateDir("foo")
+	if err != nil {
+		stateDir = ""
+	}
+	return upgrade.New(
+		upgrade.WithBinary("foo", version),
+		upgrade.WithGitHub("hop-top/foo"),
+		upgrade.WithStateDir(stateDir),
+	)
+}
+
+func providerAuthRequirement(scheme string) (key string, authType string) {
+	switch scheme {
+	case "anthropic":
+		return "anthropic_api_key", "api_key"
+	case "openai":
+		return "openai_api_key", "api_key"
+	case "google", "gemini":
+		return "google_api_key", "api_key"
+	case "ollama":
+		return "", "local"
+	default:
+		return "", "unknown"
+	}
+}
+
+type patternRow struct {
+	Name string `json:"name" yaml:"name" table:"NAME,priority=9"`
+}
+
+type patternView struct {
+	Name   string `json:"name" yaml:"name" table:"NAME,priority=9"`
+	System string `json:"system" yaml:"system"`
+}
+
+type strategyRow struct {
+	Name        string `json:"name" yaml:"name" table:"NAME,priority=9"`
+	Description string `json:"description" yaml:"description" table:"DESCRIPTION,priority=8"`
+}
+
+type modelStatus struct {
+	Current string `json:"current" yaml:"current" table:"CURRENT,priority=9"`
+}
+
+type providerRow struct {
+	Scheme string `json:"scheme" yaml:"scheme" table:"SCHEME,priority=9"`
+}
+
+type providerStatus struct {
+	Scheme    string `json:"scheme" yaml:"scheme" table:"SCHEME,priority=9"`
+	AuthType  string `json:"auth_type" yaml:"auth_type" table:"AUTH,priority=7"`
+	SecretKey string `json:"secret_key,omitempty" yaml:"secret_key,omitempty"`
+	Status    string `json:"status" yaml:"status" table:"STATUS,priority=8"`
 }

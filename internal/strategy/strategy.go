@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"hop.top/kit/xdg"
+	"hop.top/kit/go/core/xdg"
 )
 
 // Strategy represents a loaded strategy template.

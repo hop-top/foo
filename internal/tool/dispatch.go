@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"hop.top/kit/llm"
+	"hop.top/kit/go/ai/llm"
 )
 
 // ApproveFunc is called before executing a tool when approval is required.

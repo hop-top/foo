@@ -7,9 +7,12 @@ import (
 	"os"
 	"strings"
 
-	"hop.top/kit/llm"
-	_ "hop.top/kit/llm/anthropic"
-	_ "hop.top/kit/llm/openai"
+	"hop.top/kit/go/ai/llm"
+	_ "hop.top/kit/go/ai/llm/anthropic"
+	_ "hop.top/kit/go/ai/llm/google"
+	_ "hop.top/kit/go/ai/llm/ollama"
+	_ "hop.top/kit/go/ai/llm/openai"
+	_ "hop.top/kit/go/ai/llm/routellm"
 )
 
 type Client struct {
@@ -18,11 +21,18 @@ type Client struct {
 
 func NewClient(ctx context.Context, model string) (*Client, error) {
 	var uri string
-	if strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1-") {
+	switch {
+	case strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1-") || strings.HasPrefix(model, "o3-"):
 		uri = fmt.Sprintf("openai://%s?api_key=%s", model, os.Getenv("OPENAI_API_KEY"))
-	} else if strings.HasPrefix(model, "claude-") {
+	case strings.HasPrefix(model, "claude-"):
 		uri = fmt.Sprintf("anthropic://%s?api_key=%s", model, os.Getenv("ANTHROPIC_API_KEY"))
-	} else {
+	case strings.HasPrefix(model, "gemini-"):
+		uri = fmt.Sprintf("google://%s?api_key=%s", model, os.Getenv("GOOGLE_API_KEY"))
+	case strings.HasPrefix(model, "llama") || strings.HasPrefix(model, "mistral") || strings.HasPrefix(model, "deepseek-r1"):
+		uri = fmt.Sprintf("ollama://%s", model)
+	case strings.HasPrefix(model, "router-"):
+		uri = fmt.Sprintf("routellm://%s", strings.TrimPrefix(model, "router-"))
+	default:
 		// Fallback to openai scheme if unknown, maybe it's a compat provider
 		uri = fmt.Sprintf("openai://%s?api_key=%s", model, os.Getenv("OPENAI_API_KEY"))
 	}

@@ -14,6 +14,10 @@ type Pattern struct {
 }
 
 func LoadPattern(patternsPath, name string) (*Pattern, error) {
+	name, err := normalizeName(name)
+	if err != nil {
+		return nil, err
+	}
 	// Look in local .foo/patterns first, then config path
 	paths := []string{
 		filepath.Join(".foo", "patterns", name, "system.md"),
@@ -34,6 +38,10 @@ func LoadPattern(patternsPath, name string) (*Pattern, error) {
 }
 
 func Create(patternsPath, name, system string) error {
+	name, err := normalizeName(name)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(patternsPath, name, "system.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -47,6 +55,10 @@ func Import(patternsPath, srcPath, name string) error {
 		if name == "." || name == "/" || name == "patterns" {
 			name = strings.TrimSuffix(filepath.Base(srcPath), ".md")
 		}
+	}
+	name, err := normalizeName(name)
+	if err != nil {
+		return err
 	}
 
 	destDir := filepath.Join(patternsPath, name)
@@ -70,7 +82,11 @@ func Import(patternsPath, srcPath, name string) error {
 	return err
 }
 
-func Remove(patternsPath, name string) error {
+func Delete(patternsPath, name string) error {
+	name, err := normalizeName(name)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(patternsPath, name)
 	return os.RemoveAll(path)
 }
@@ -96,4 +112,22 @@ func List(patternsPath string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+func normalizeName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	switch {
+	case name == "":
+		return "", fmt.Errorf("pattern name is required")
+	case filepath.IsAbs(name):
+		return "", fmt.Errorf("pattern name must be relative")
+	case name == "." || name == "..":
+		return "", fmt.Errorf("pattern name %q is invalid", name)
+	case strings.Contains(name, "/"), strings.Contains(name, `\`):
+		return "", fmt.Errorf("pattern name %q must be a single path segment", name)
+	case strings.Contains(name, ".."):
+		return "", fmt.Errorf("pattern name %q is invalid", name)
+	default:
+		return name, nil
+	}
 }

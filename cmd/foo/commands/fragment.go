@@ -15,13 +15,12 @@ func fragmentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "fragment",
 		Short: "Manage reusable prompt fragments",
-		Aliases: []string{"frag"},
 	}
 
 	cmd.AddCommand(fragmentListCmd())
-	cmd.AddCommand(fragmentSetCmd())
+	cmd.AddCommand(fragmentCreateCmd())
 	cmd.AddCommand(fragmentShowCmd())
-	cmd.AddCommand(fragmentRemoveCmd())
+	cmd.AddCommand(fragmentDeleteCmd())
 
 	return cmd
 }
@@ -37,7 +36,7 @@ func newFragmentManager() (*fragment.Manager, error) {
 func fragmentListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List all fragment aliases",
+		Short: "List fragment aliases",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			mgr, err := newFragmentManager()
@@ -51,32 +50,26 @@ func fragmentListCmd() *cobra.Command {
 			}
 
 			if len(entries) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No fragments found.")
 				return nil
 			}
-
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "%-20s %-10s %s\n", "ALIAS", "SOURCE", "ARTIFACT")
-			fmt.Fprintf(out, "%-20s %-10s %s\n", "-----", "------", "--------")
-			for _, e := range entries {
-				artPrefix := e.Entry.ArtifactID
-				if len(artPrefix) > 12 {
-					artPrefix = artPrefix[:12]
-				}
-				fmt.Fprintf(out, "%-20s %-10s %s\n",
-					e.Alias, e.Entry.Source, artPrefix)
+			rows := make([]fragmentRow, 0, len(entries))
+			for _, entry := range entries {
+				rows = append(rows, fragmentRow{
+					Alias:    entry.Alias,
+					Source:   entry.Entry.Source,
+					Artifact: shortID(entry.Entry.ArtifactID),
+				})
 			}
-
-			return nil
+			return renderData(cmd, rows)
 		},
 	}
 }
 
-func fragmentSetCmd() *cobra.Command {
+func fragmentCreateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "set <alias> [source]",
-		Short: "Set a fragment from file, URL, or stdin",
-		Long: `Set a fragment alias. Source can be:
+		Use:   "create <alias> [source]",
+		Short: "Create or replace a fragment from file, URL, or stdin",
+		Long: `Create or replace a fragment alias. Source can be:
   - A file path
   - A URL (http:// or https://)
   - Omitted to read from stdin`,
@@ -105,7 +98,8 @@ func fragmentSetCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Fragment %q set\n", alias)
+			publishEvent(ctx, "foo.fragment.created", map[string]any{"alias": alias})
+			fmt.Fprintf(cmd.OutOrStdout(), "fragment %q saved\n", alias)
 			return nil
 		},
 	}
@@ -114,7 +108,7 @@ func fragmentSetCmd() *cobra.Command {
 func fragmentShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <alias>",
-		Short: "Print fragment content to stdout",
+		Short: "Show one fragment",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -127,17 +121,15 @@ func fragmentShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			fmt.Fprint(cmd.OutOrStdout(), string(content))
-			return nil
+			return renderData(cmd, fragmentView{Alias: args[0], Content: string(content)})
 		},
 	}
 }
 
-func fragmentRemoveCmd() *cobra.Command {
+func fragmentDeleteCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove <alias>",
-		Short: "Remove a fragment alias",
+		Use:   "delete <alias>",
+		Short: "Delete a fragment alias",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -150,8 +142,27 @@ func fragmentRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Fragment %q removed\n", args[0])
+			publishEvent(ctx, "foo.fragment.deleted", map[string]any{"alias": args[0]})
+			fmt.Fprintf(cmd.OutOrStdout(), "fragment %q deleted\n", args[0])
 			return nil
 		},
 	}
+}
+
+type fragmentRow struct {
+	Alias    string `json:"alias" yaml:"alias" table:"ALIAS,priority=9"`
+	Source   string `json:"source" yaml:"source" table:"SOURCE,priority=8"`
+	Artifact string `json:"artifact" yaml:"artifact" table:"ARTIFACT,priority=7"`
+}
+
+type fragmentView struct {
+	Alias   string `json:"alias" yaml:"alias" table:"ALIAS,priority=9"`
+	Content string `json:"content" yaml:"content"`
+}
+
+func shortID(value string) string {
+	if len(value) <= 12 {
+		return value
+	}
+	return value[:12]
 }

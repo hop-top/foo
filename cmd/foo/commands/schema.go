@@ -10,7 +10,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/schema"
-	"hop.top/kit/xdg"
+	"hop.top/kit/go/core/xdg"
 )
 
 func schemaCmd() *cobra.Command {
@@ -21,9 +21,9 @@ func schemaCmd() *cobra.Command {
 
 	cmd.AddCommand(schemaListCmd())
 	cmd.AddCommand(schemaShowCmd())
-	cmd.AddCommand(schemaSetCmd())
-	cmd.AddCommand(schemaRemoveCmd())
-	cmd.AddCommand(schemaDSLCmd())
+	cmd.AddCommand(schemaCreateCmd())
+	cmd.AddCommand(schemaDeleteCmd())
+	cmd.AddCommand(schemaCompileCmd())
 
 	return cmd
 }
@@ -43,16 +43,14 @@ func schemaListCmd() *cobra.Command {
 				return err
 			}
 
-			out := cmd.OutOrStdout()
 			if len(names) == 0 {
-				fmt.Fprintln(out, "No schemas stored")
 				return nil
 			}
-
+			rows := make([]schemaRow, 0, len(names))
 			for _, name := range names {
-				fmt.Fprintln(out, name)
+				rows = append(rows, schemaRow{Name: name})
 			}
-			return nil
+			return renderData(cmd, rows)
 		},
 	}
 }
@@ -73,24 +71,17 @@ func schemaShowCmd() *cobra.Command {
 				return err
 			}
 
-			out := cmd.OutOrStdout()
-			b, _ := json.MarshalIndent(sc.Schema, "", "  ")
-			fmt.Fprintln(out, string(b))
-
-			if sc.DSL != "" {
-				fmt.Fprintf(out, "\nDSL: %s\n", sc.DSL)
-			}
-			return nil
+			return renderData(cmd, schemaView{Name: sc.Name, DSL: sc.DSL, Schema: sc.Schema})
 		},
 	}
 }
 
-func schemaSetCmd() *cobra.Command {
+func schemaCreateCmd() *cobra.Command {
 	var filePath string
 
 	cmd := &cobra.Command{
-		Use:   "set <name> [dsl]",
-		Short: "Create or update a schema from DSL or JSON file",
+		Use:   "create <name> [dsl]",
+		Short: "Create or replace a schema from DSL or JSON",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -99,22 +90,16 @@ func schemaSetCmd() *cobra.Command {
 				return err
 			}
 
-			out := cmd.OutOrStdout()
-
 			if filePath != "" {
 				data, err := os.ReadFile(filePath)
 				if err != nil {
 					return fmt.Errorf("read file: %w", err)
 				}
 
-				sc, err := store.SetJSON(name, json.RawMessage(data))
-				if err != nil {
+				if _, err := store.SetJSON(name, json.RawMessage(data)); err != nil {
 					return err
 				}
-
-				b, _ := json.MarshalIndent(sc.Schema, "", "  ")
-				fmt.Fprintf(out, "Schema %q set from %s\n%s\n",
-					name, filePath, string(b))
+				fmt.Fprintf(cmd.OutOrStdout(), "schema %q saved from %s\n", name, filePath)
 				return nil
 			}
 
@@ -122,13 +107,10 @@ func schemaSetCmd() *cobra.Command {
 				return fmt.Errorf("provide DSL string or --file")
 			}
 
-			sc, err := store.Set(name, args[1])
-			if err != nil {
+			if _, err := store.Set(name, args[1]); err != nil {
 				return err
 			}
-
-			b, _ := json.MarshalIndent(sc.Schema, "", "  ")
-			fmt.Fprintf(out, "Schema %q set\n%s\n", name, string(b))
+			fmt.Fprintf(cmd.OutOrStdout(), "schema %q saved\n", name)
 			return nil
 		},
 	}
@@ -137,10 +119,10 @@ func schemaSetCmd() *cobra.Command {
 	return cmd
 }
 
-func schemaRemoveCmd() *cobra.Command {
+func schemaDeleteCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove <name>",
-		Short: "Remove a stored schema",
+		Use:   "delete <name>",
+		Short: "Delete a schema",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := openSchemaStore()
@@ -151,24 +133,23 @@ func schemaRemoveCmd() *cobra.Command {
 			if err := store.Remove(args[0]); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Schema %q removed\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "schema %q deleted\n", args[0])
 			return nil
 		},
 	}
 }
 
-func schemaDSLCmd() *cobra.Command {
+func schemaCompileCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "dsl <shorthand>",
-		Short: "Preview a DSL without storing",
+		Use:   "compile <shorthand>",
+		Short: "Compile a DSL without storing it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			output, err := schema.CompileDSLJSON(args[0])
+			compiled, err := schema.CompileDSL(args[0])
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), output)
-			return nil
+			return renderData(cmd, schemaView{Name: "", DSL: args[0], Schema: compiled})
 		},
 	}
 }
@@ -188,4 +169,14 @@ func openSchemaStore() (*schema.Store, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	return schema.NewStore(db)
+}
+
+type schemaRow struct {
+	Name string `json:"name" yaml:"name" table:"NAME,priority=9"`
+}
+
+type schemaView struct {
+	Name   string         `json:"name,omitempty" yaml:"name,omitempty" table:"NAME,priority=9"`
+	DSL    string         `json:"dsl,omitempty" yaml:"dsl,omitempty"`
+	Schema map[string]any `json:"schema" yaml:"schema"`
 }

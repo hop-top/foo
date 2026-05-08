@@ -12,29 +12,74 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/embed"
-	"hop.top/kit/xdg"
+	"hop.top/kit/go/core/xdg"
 )
 
-var embedCollection string
-
-func embedCmd() *cobra.Command {
+func embedRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "embed <text>",
-		Short: "Embed text into a vector collection",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runEmbed,
+		Use:   "embed",
+		Short: "Manage local embeddings",
 	}
-	cmd.Flags().StringVarP(&embedCollection, "collection", "c", "default", "Collection name")
+
+	cmd.AddCommand(embedTextCmd())
+	cmd.AddCommand(embedFileCmd())
+	cmd.AddCommand(embedSearchCmd())
+	cmd.AddCommand(embedCollectionCmd())
 	return cmd
 }
 
-func embedMultiCmd() *cobra.Command {
-	var filePath string
+func embedTextCmd() *cobra.Command {
+	var collection string
 
 	cmd := &cobra.Command{
-		Use:   "embed-multi",
-		Short: "Embed a file as chunked vectors",
+		Use:   "add <text>",
+		Short: "Embed text into a collection",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			embedder, err := embed.NewOpenAIEmbedder()
+			if err != nil {
+				return err
+			}
+
+			store, err := openEmbedStore()
+			if err != nil {
+				return err
+			}
+
+			vecs, err := embedder.Embed(cmd.Context(), []string{args[0]})
+			if err != nil {
+				return fmt.Errorf("embed: %w", err)
+			}
+
+			storedID, err := store.Put(embed.Embedding{
+				ID:          ulid.Make().String(),
+				Collection:  collection,
+				ContentHash: contentHash(args[0]),
+				Vector:      vecs[0],
+				Metadata:    map[string]string{"text": args[0]},
+			})
+			if err != nil {
+				return fmt.Errorf("store: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "embedded %s into %q\n", storedID, collection)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
+	return cmd
+}
+
+func embedFileCmd() *cobra.Command {
+	var (
+		collection string
+		filePath   string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "file --file <path>",
+		Short: "Embed a file as chunked vectors",
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if filePath == "" {
 				return fmt.Errorf("--file is required")
 			}
@@ -46,7 +91,6 @@ func embedMultiCmd() *cobra.Command {
 
 			chunks := embed.Chunk(string(data), nil)
 			if len(chunks) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No chunks generated")
 				return nil
 			}
 
@@ -54,26 +98,21 @@ func embedMultiCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
 			store, err := openEmbedStore()
 			if err != nil {
 				return err
 			}
 
-			ctx := cmd.Context()
-			vecs, err := embedder.Embed(ctx, chunks)
+			vecs, err := embedder.Embed(cmd.Context(), chunks)
 			if err != nil {
 				return fmt.Errorf("embed: %w", err)
 			}
 
-			out := cmd.OutOrStdout()
 			for i, chunk := range chunks {
-				hash := contentHash(chunk)
-				id := ulid.Make().String()
 				_, err := store.Put(embed.Embedding{
-					ID:          id,
-					Collection:  embedCollection,
-					ContentHash: hash,
+					ID:          ulid.Make().String(),
+					Collection:  collection,
+					ContentHash: contentHash(chunk),
 					Vector:      vecs[i],
 					Metadata: map[string]string{
 						"source": filePath,
@@ -84,163 +123,112 @@ func embedMultiCmd() *cobra.Command {
 					return fmt.Errorf("store chunk %d: %w", i+1, err)
 				}
 			}
-			fmt.Fprintf(out, "Embedded %d chunks from %s into %q\n",
-				len(chunks), filePath, embedCollection)
+
+			fmt.Fprintf(cmd.OutOrStdout(), "embedded %d chunks from %s into %q\n", len(chunks), filePath, collection)
 			return nil
 		},
 	}
-
-	cmd.Flags().StringVarP(&embedCollection, "collection", "c", "default", "Collection name")
+	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
 	cmd.Flags().StringVar(&filePath, "file", "", "File to embed")
 	return cmd
 }
 
-func similarCmd() *cobra.Command {
-	var n int
+func embedSearchCmd() *cobra.Command {
+	var (
+		collection string
+		count      int
+	)
 
 	cmd := &cobra.Command{
-		Use:   "similar <query>",
-		Short: "Find similar embeddings by cosine similarity",
+		Use:   "search <query>",
+		Short: "Search for similar embedded content",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			embedder, err := embed.NewOpenAIEmbedder()
 			if err != nil {
 				return err
 			}
-
 			store, err := openEmbedStore()
 			if err != nil {
 				return err
 			}
 
-			ctx := cmd.Context()
-			vecs, err := embedder.Embed(ctx, []string{args[0]})
+			vecs, err := embedder.Embed(cmd.Context(), []string{args[0]})
 			if err != nil {
 				return fmt.Errorf("embed query: %w", err)
 			}
 
-			results, err := store.Similar(embedCollection, vecs[0], n)
+			results, err := store.Similar(collection, vecs[0], count)
 			if err != nil {
 				return fmt.Errorf("search: %w", err)
 			}
 
-			out := cmd.OutOrStdout()
-			if len(results) == 0 {
-				fmt.Fprintln(out, "No results found")
-				return nil
+			rows := make([]embedResultRow, 0, len(results))
+			for _, item := range results {
+				rows = append(rows, embedResultRow{
+					ID:     shortID(item.ID),
+					Score:  item.Score,
+					Source: item.Metadata["source"],
+					Chunk:  item.Metadata["chunk"],
+				})
 			}
-
-			for _, r := range results {
-				source := r.Metadata["source"]
-				chunk := r.Metadata["chunk"]
-				fmt.Fprintf(out, "%.4f  %s", r.Score, r.ID)
-				if source != "" {
-					fmt.Fprintf(out, "  [%s", source)
-					if chunk != "" {
-						fmt.Fprintf(out, " %s", chunk)
-					}
-					fmt.Fprint(out, "]")
-				}
-				fmt.Fprintln(out)
-			}
-			return nil
+			return renderData(cmd, rows)
 		},
 	}
 
-	cmd.Flags().StringVarP(&embedCollection, "collection", "c", "default", "Collection name")
-	cmd.Flags().IntVarP(&n, "count", "n", 5, "Number of results")
+	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
+	cmd.Flags().IntVarP(&count, "count", "n", 5, "Number of results")
 	return cmd
 }
 
-func collectionsCmd() *cobra.Command {
+func embedCollectionCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "collections",
+		Use:   "collection",
 		Short: "Manage embedding collections",
 	}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List collections",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := openEmbedStore()
 			if err != nil {
 				return err
 			}
-
-			cols, err := store.ListCollections()
+			collections, err := store.ListCollections()
 			if err != nil {
 				return err
 			}
-
-			out := cmd.OutOrStdout()
-			if len(cols) == 0 {
-				fmt.Fprintln(out, "No collections")
-				return nil
+			rows := make([]collectionRow, 0, len(collections))
+			for _, collection := range collections {
+				count, countErr := store.CollectionCount(collection)
+				if countErr != nil {
+					return countErr
+				}
+				rows = append(rows, collectionRow{Name: collection, Count: count})
 			}
-
-			for _, c := range cols {
-				count, _ := store.CollectionCount(c)
-				fmt.Fprintf(out, "%s (%d embeddings)\n", c, count)
-			}
-			return nil
+			return renderData(cmd, rows)
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "delete <name>",
-		Short: "Delete a collection",
+		Short: "Delete one collection",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := openEmbedStore()
 			if err != nil {
 				return err
 			}
-
 			if err := store.DeleteCollection(args[0]); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Collection %q deleted\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "collection %q deleted\n", args[0])
 			return nil
 		},
 	})
 
 	return cmd
-}
-
-func runEmbed(cmd *cobra.Command, args []string) error {
-	text := args[0]
-
-	embedder, err := embed.NewOpenAIEmbedder()
-	if err != nil {
-		return err
-	}
-
-	store, err := openEmbedStore()
-	if err != nil {
-		return err
-	}
-
-	ctx := cmd.Context()
-	vecs, err := embedder.Embed(ctx, []string{text})
-	if err != nil {
-		return fmt.Errorf("embed: %w", err)
-	}
-
-	hash := contentHash(text)
-	id := ulid.Make().String()
-	storedID, err := store.Put(embed.Embedding{
-		ID:          id,
-		Collection:  embedCollection,
-		ContentHash: hash,
-		Vector:      vecs[0],
-		Metadata:    map[string]string{"text": text},
-	})
-	if err != nil {
-		return fmt.Errorf("store: %w", err)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Embedded %s into %q\n", storedID, embedCollection)
-	return nil
 }
 
 func openEmbedStore() (*embed.Store, error) {
@@ -260,7 +248,19 @@ func openEmbedStore() (*embed.Store, error) {
 	return embed.NewStore(db)
 }
 
-func contentHash(text string) string {
-	h := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(h[:])[:16]
+func contentHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+type embedResultRow struct {
+	ID     string  `json:"id" yaml:"id" table:"ID,priority=9"`
+	Score  float64 `json:"score" yaml:"score" table:"SCORE,priority=8"`
+	Source string  `json:"source,omitempty" yaml:"source,omitempty" table:"SOURCE,priority=7"`
+	Chunk  string  `json:"chunk,omitempty" yaml:"chunk,omitempty" table:"CHUNK,priority=6"`
+}
+
+type collectionRow struct {
+	Name  string `json:"name" yaml:"name" table:"NAME,priority=9"`
+	Count int    `json:"count" yaml:"count" table:"COUNT,priority=8"`
 }
