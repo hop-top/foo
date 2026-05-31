@@ -1,4 +1,4 @@
-.PHONY: build test clean
+.PHONY: build test clean lint
 
 BINARY_NAME=foo
 BIN_DIR=bin
@@ -14,3 +14,7 @@ test: build
 clean:
 	rm -rf $(BIN_DIR)
 	go clean
+
+lint:
+	go vet ./...
+	@command -v actionlint >/dev/null 2>&1 && actionlint -color || echo "actionlint not installed; skipping"
