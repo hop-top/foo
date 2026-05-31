@@ -17,7 +17,7 @@ cause → fix; the longer sections below give the detail.
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
-| `interactive shell requires a terminal` | `foo` invoked with no args and no TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
+| `interactive REPL requires a terminal` | `foo` invoked with no args and no TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
 | `UNAUTHORIZED` from a `delete` command | Destructive command refused off-TTY | [Use `--confirm=yes`](#destructive-command-refused-with-unauthorized) |
 | Empty output or visible garbled bytes | Streaming hiccup | [Disable streaming](#streaming-garbled-or-truncated) |
 | `embed: ... 401 Unauthorized` | `OPENAI_API_KEY` missing | Export it |
@@ -74,7 +74,7 @@ A name shown by one list does not exist in another.
 Running plain `foo` with no positional argument and no piped
 stdin attempts to open the REPL, which requires a terminal.
 
-If you got `interactive shell requires a terminal`, either:
+If you got `interactive REPL requires a terminal`, either:
 
 - Supply a prompt: `foo "hello"`.
 - Pipe a prompt: `echo hello | foo`.

@@ -64,7 +64,7 @@ var (
 )
 
 var commandGroups = map[string]string{
-	"shell":    "interact",
+	"repl":     "interact",
 	"pattern":  "knowledge",
 	"strategy": "knowledge",
 	"fragment": "knowledge",
@@ -110,7 +110,7 @@ func New(v string) *kitcli.Root {
 	root.Cmd.SuggestionsMinimumDistance = 2
 	root.Cmd.Args = cobra.MaximumNArgs(1)
 	root.Cmd.PersistentPreRunE = initializeRuntime
-	root.Cmd.RunE = runPromptOrShell
+	root.Cmd.RunE = runPromptOrREPL
 
 	flags := root.Cmd.Flags()
 	flags.StringVarP(&patternName, "pattern", "p", "", "Pattern to apply")
@@ -127,7 +127,7 @@ func New(v string) *kitcli.Root {
 	flags.StringVar(&schemaName, "schema", "", "Structured JSON output (schema name or DSL)")
 	flags.StringVar(&schemaMulti, "schema-multi", "", "Structured JSON array output (schema name or DSL)")
 
-	root.Cmd.AddCommand(shellCmd())
+	root.Cmd.AddCommand(replCmd())
 	root.Cmd.AddCommand(patternCmd())
 	root.Cmd.AddCommand(strategyCmd())
 	root.Cmd.AddCommand(fragmentCmd())
@@ -166,7 +166,7 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 		eventBus = kitbus.New()
 	}
 
-	if cmd.CommandPath() == "foo" || cmd.CommandPath() == "foo shell" {
+	if cmd.CommandPath() == "foo" || cmd.CommandPath() == "foo repl" {
 		mgr, ws, err = workspace.InitWorkspace(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("initialize workspace: %w", err)
@@ -176,13 +176,13 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func runPromptOrShell(cmd *cobra.Command, args []string) error {
+func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 	prompt, err := readPrompt(cmd, args)
 	if err != nil {
 		return err
 	}
 	if prompt == "" {
-		return runShell(cmd)
+		return runREPL(cmd)
 	}
 
 	systemPrompt, err := assembleSystemPrompt(cmd.Context())
@@ -263,14 +263,16 @@ func runPromptOrShell(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func shellCmd() *cobra.Command {
+func replCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "shell",
-		Short: "Open an interactive shell session",
-		Long: `Open the bubbletea-backed REPL for an interactive multi-turn
-session against the configured model. Requires a TTY.`,
+		Use:   "repl",
+		Short: "Open an interactive REPL session",
+		Long: `Open a multi-turn REPL against the currently selected model
+(set via --model, foo model default, or config). Requires a TTY.
+
+Keys: Enter sends the prompt; Ctrl+C or Esc exits.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runShell(cmd)
+			return runREPL(cmd)
 		},
 	}
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectInteractive)
@@ -279,9 +281,9 @@ session against the configured model. Requires a TTY.`,
 	return cmd
 }
 
-func runShell(cmd *cobra.Command) error {
+func runREPL(cmd *cobra.Command) error {
 	if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
-		return fmt.Errorf("interactive shell requires a terminal")
+		return fmt.Errorf("interactive REPL requires a terminal")
 	}
 	client, err := llm.NewClient(cmd.Context(), selectedModel())
 	if err != nil {
