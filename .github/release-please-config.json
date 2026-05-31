@@ -6,9 +6,6 @@
   "bump-minor-pre-major": true,
   "label": "status:release-pending",
   "release-label": "status:release-tagged",
-  "extra-files": [
-    "VERSION"
-  ],
   "changelog-sections": [
     {"type": "feat", "section": "Features"},
     {"type": "fix", "section": "Bug Fixes"},
