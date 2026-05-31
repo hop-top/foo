@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 
@@ -25,6 +26,7 @@ import (
 	"hop.top/foo/internal/ui"
 	"hop.top/foo/internal/workspace"
 	extdiscover "hop.top/kit/go/ai/ext/discover"
+	extdispatch "hop.top/kit/go/ai/ext/dispatch"
 	kitllm "hop.top/kit/go/ai/llm"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/console/output"
@@ -137,8 +139,65 @@ func New(v string) *kitcli.Root {
 	root.Cmd.AddCommand(providerCmd())
 	root.Cmd.AddCommand(upgradeCmd())
 
+	registerExtPlugins(root.Cmd)
 	applyCommandGroups()
 	return root
+}
+
+// registerExtPlugins discovers `foo-*` binaries on $PATH, registers each
+// as a passthrough subcommand via kit's ext/dispatch helper, and stamps
+// the cobra metadata the strict validator demands (Long, side-effect,
+// idempotency). Long is sourced from each plugin's --ext-info
+// description; on failure we synthesize a non-empty placeholder so the
+// validator gate stays armed.
+func registerExtPlugins(rootCmd *cobra.Command) {
+	before := commandSet(rootCmd)
+	extdispatch.Register(rootCmd, "foo", "")
+	for _, sub := range rootCmd.Commands() {
+		if _, existed := before[sub.Name()]; existed {
+			continue
+		}
+		annotateExtPlugin(sub)
+	}
+}
+
+func commandSet(c *cobra.Command) map[string]struct{} {
+	s := make(map[string]struct{}, len(c.Commands()))
+	for _, sub := range c.Commands() {
+		s[sub.Name()] = struct{}{}
+	}
+	return s
+}
+
+func annotateExtPlugin(sub *cobra.Command) {
+	desc := externalPluginDescription(sub.Name())
+	if desc == "" {
+		desc = "External plugin discovered on $PATH; see `" + sub.Name() + " --help` for plugin-specific flags."
+	}
+	if sub.Short == "" {
+		sub.Short = desc
+	}
+	sub.Long = desc
+	// External binaries are opaque: side-effect class is unknown, so
+	// pick the most conservative classification kit offers — interactive
+	// (forces TTY policy off destructive shortcuts) and non-idempotent.
+	kitcli.SetSideEffect(sub, kitcli.SideEffectInteractive)
+	kitcli.SetIdempotency(sub, kitcli.IdempotencyNo)
+	kitcli.SetTopLevelVerb(sub)
+	kitcli.SetPassthrough(sub)
+}
+
+func externalPluginDescription(name string) string {
+	binary := "foo-" + name
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return ""
+	}
+	found := extdiscover.Found{Name: name, Path: path}
+	if err := found.Enrich(); err != nil {
+		return ""
+	}
+	return found.Meta().Description
 }
 
 func initializeRuntime(cmd *cobra.Command, _ []string) error {
@@ -182,6 +241,9 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if prompt == "" {
+		if stdinIsPipe(cmd) {
+			return fmt.Errorf("no prompt provided (stdin was empty); pass a positional prompt or pipe non-empty content")
+		}
 		return runREPL(cmd)
 	}
 
@@ -279,6 +341,18 @@ Keys: Enter sends the prompt; Ctrl+C or Esc exits.`,
 	kitcli.SetIdempotency(cmd, kitcli.IdempotencyNo)
 	kitcli.SetTopLevelVerb(cmd)
 	return cmd
+}
+
+// stdinIsPipe reports whether stdin is a file descriptor that is not a
+// terminal — i.e., a pipe, redirect, or closed handle. The bare command
+// uses this to distinguish "no prompt on an interactive TTY (open the
+// REPL)" from "no prompt and a piped stdin produced nothing (error)".
+func stdinIsPipe(cmd *cobra.Command) bool {
+	f, ok := cmd.InOrStdin().(*os.File)
+	if !ok {
+		return true
+	}
+	return !term.IsTerminal(int(f.Fd()))
 }
 
 func runREPL(cmd *cobra.Command) error {
