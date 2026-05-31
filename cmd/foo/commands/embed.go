@@ -12,6 +12,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/embed"
+	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/core/xdg"
 )
 
@@ -19,7 +20,13 @@ func embedRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "embed",
 		Short: "Manage local embeddings",
+		Long: `Manage a local vector store for embedding and semantic search.
+
+Add text or files to named collections, then run similarity queries
+against them. Embeddings are produced by the configured provider and
+persisted in the user-scoped state directory.`,
 	}
+	kitcli.SetHierarchical(cmd)
 
 	cmd.AddCommand(embedTextCmd())
 	cmd.AddCommand(embedFileCmd())
@@ -34,7 +41,11 @@ func embedTextCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <text>",
 		Short: "Embed text into a collection",
-		Args:  cobra.ExactArgs(1),
+		Long: `Embed a literal text string and persist it in the named collection.
+
+Each call mints a fresh ULID-keyed row in the store. The default
+collection is "default"; override with --collection.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			embedder, err := embed.NewOpenAIEmbedder()
 			if err != nil {
@@ -66,6 +77,7 @@ func embedTextCmd() *cobra.Command {
 			return nil
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
 	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
 	return cmd
 }
@@ -79,6 +91,10 @@ func embedFileCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "file --file <path>",
 		Short: "Embed a file as chunked vectors",
+		Long: `Read a file from disk, chunk it, and embed each chunk into the
+named collection. Each chunk is stored with source-path and chunk-index
+metadata so search results can be traced back. Re-running with the
+same content produces new rows; provide --idempotency-key to dedupe.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if filePath == "" {
 				return fmt.Errorf("--file is required")
@@ -128,6 +144,8 @@ func embedFileCmd() *cobra.Command {
 			return nil
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
+	kitcli.SetIdempotency(cmd, kitcli.IdempotencyConditional)
 	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
 	cmd.Flags().StringVar(&filePath, "file", "", "File to embed")
 	return cmd
@@ -142,7 +160,9 @@ func embedSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search for similar embedded content",
-		Args:  cobra.ExactArgs(1),
+		Long: `Embed the query string and return the top --count nearest neighbors
+from the named collection. Pure read; no state mutation.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			embedder, err := embed.NewOpenAIEmbedder()
 			if err != nil {
@@ -176,6 +196,7 @@ func embedSearchCmd() *cobra.Command {
 		},
 	}
 
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
 	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
 	cmd.Flags().IntVarP(&count, "count", "n", 5, "Number of results")
 	return cmd
@@ -185,11 +206,18 @@ func embedCollectionCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "collection",
 		Short: "Manage embedding collections",
-	}
+		Long: `Group embeddings under a named collection.
 
-	cmd.AddCommand(&cobra.Command{
+Collections are namespaces over the local vector store. List or
+delete collections; embeddings themselves are added with
+'foo embed add' or 'foo embed file'.`,
+	}
+	kitcli.SetHierarchical(cmd)
+
+	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List collections",
+		Long:  "List every collection in the local vector store with its row count.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := openEmbedStore()
 			if err != nil {
@@ -209,11 +237,14 @@ func embedCollectionCmd() *cobra.Command {
 			}
 			return renderData(cmd, rows)
 		},
-	})
+	}
+	kitcli.SetSideEffect(listCmd, kitcli.SideEffectRead)
+	cmd.AddCommand(listCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	deleteCmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete one collection",
+		Long:  "Drop every embedding stored under the named collection. Irreversible local state loss.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := openEmbedStore()
@@ -226,7 +257,9 @@ func embedCollectionCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "collection %q deleted\n", args[0])
 			return nil
 		},
-	})
+	}
+	kitcli.SetSideEffect(deleteCmd, kitcli.SideEffectDestructiveLocal)
+	cmd.AddCommand(deleteCmd)
 
 	return cmd
 }
