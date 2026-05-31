@@ -1,0 +1,16 @@
+name: release-please-preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/release-please-config.json'
+      - '.github/.release-please-manifest.json'
+      - '.github/workflows/release-please.yml'
+      - '.github/workflows/goreleaser.yml'
+      - 'go.mod'
+      - '.goreleaser.yaml'
+  workflow_dispatch: {}
+
+jobs:
+  preflight:
+    uses: hop-top/.github/.github/workflows/release-please-preflight.yml@v0
