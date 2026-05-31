@@ -117,31 +117,74 @@ func TestCLI_Pattern(t *testing.T) {
 // when it is supplied. Read commands ignore --confirm entirely.
 func TestCLI_Destructive_ConfirmPolicy(t *testing.T) {
 	ensureBinary(t)
-	tmpDir := t.TempDir()
 
-	// Seed a pattern so the destructive leaf has something to act on.
-	_, _, err := runFoo(t, tmpDir, "pattern", "create", "doomed", "")
-	require.NoError(t, err)
+	cases := []struct {
+		name           string
+		seed           [][]string
+		deleteArgs     []string
+		successOutput  string
+		listArgs       []string
+	}{
+		{
+			name:          "pattern",
+			seed:          [][]string{{"pattern", "create", "doomed", ""}},
+			deleteArgs:    []string{"pattern", "delete", "doomed"},
+			successOutput: `pattern "doomed" deleted`,
+			listArgs:      []string{"pattern", "list"},
+		},
+		{
+			name:          "fragment",
+			seed:          [][]string{{"fragment", "create", "doomed", "scrap text"}},
+			deleteArgs:    []string{"fragment", "delete", "doomed"},
+			successOutput: `fragment "doomed" deleted`,
+			listArgs:      []string{"fragment", "list"},
+		},
+		{
+			name:          "schema",
+			seed:          [][]string{{"schema", "create", "doomed", "name, age int"}},
+			deleteArgs:    []string{"schema", "delete", "doomed"},
+			successOutput: `schema "doomed" deleted`,
+			listArgs:      []string{"schema", "list"},
+		},
+	}
 
-	t.Run("destructive refused without --confirm", func(t *testing.T) {
-		_, stderr, err := runFoo(t, tmpDir, "pattern", "delete", "doomed")
-		require.Error(t, err, "non-TTY delete without --confirm must exit non-zero")
-		require.Contains(t, stderr, "UNAUTHORIZED",
-			"kit confirm policy should report UNAUTHORIZED on non-TTY default")
-	})
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
 
-	t.Run("destructive proceeds with --confirm=yes", func(t *testing.T) {
-		stdout, _, err := runFoo(t, tmpDir, "pattern", "delete", "doomed", "--confirm=yes")
-		require.NoError(t, err)
-		require.Contains(t, stdout, `pattern "doomed" deleted`)
-	})
+			if tc.name == "fragment" {
+				srcPath := filepath.Join(tmpDir, "frag-src.txt")
+				require.NoError(t, os.WriteFile(srcPath, []byte("scrap text"), 0o644))
+				tc.seed = [][]string{{"fragment", "create", "doomed", srcPath}}
+			}
 
-	t.Run("read commands ignore --confirm", func(t *testing.T) {
-		// list is annotated SideEffectRead; the policy gate is a
-		// no-op for read leaves.
-		_, _, err := runFoo(t, tmpDir, "pattern", "list", "--confirm=no")
-		require.NoError(t, err)
-	})
+			for _, seed := range tc.seed {
+				_, _, err := runFoo(t, tmpDir, seed...)
+				require.NoError(t, err, "seed: %v", seed)
+			}
+
+			t.Run("refused without --confirm", func(t *testing.T) {
+				_, stderr, err := runFoo(t, tmpDir, tc.deleteArgs...)
+				require.Error(t, err, "non-TTY delete without --confirm must exit non-zero")
+				require.Contains(t, stderr, "UNAUTHORIZED",
+					"kit confirm policy should report UNAUTHORIZED on non-TTY default")
+			})
+
+			t.Run("proceeds with --confirm=yes", func(t *testing.T) {
+				args := append(append([]string{}, tc.deleteArgs...), "--confirm=yes")
+				stdout, _, err := runFoo(t, tmpDir, args...)
+				require.NoError(t, err)
+				require.Contains(t, stdout, tc.successOutput)
+			})
+
+			t.Run("read commands ignore --confirm", func(t *testing.T) {
+				args := append(append([]string{}, tc.listArgs...), "--confirm=no")
+				_, _, err := runFoo(t, tmpDir, args...)
+				require.NoError(t, err)
+			})
+		})
+	}
 }
 
 func TestCLI_Provider(t *testing.T) {
