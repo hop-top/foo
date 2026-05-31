@@ -133,7 +133,10 @@ func New() *kitcli.Root {
 }
 
 func initializeRuntime(cmd *cobra.Command, _ []string) error {
-	extraPaths, overrides := root.ConfigArgs()
+	extraPaths, overrides, err := root.ConfigArgs()
+	if err != nil {
+		return fmt.Errorf("parse config args: %w", err)
+	}
 	loaded, err := config.Load(config.LoadOptions{
 		ExtraConfigPaths: extraPaths,
 		Overrides:        overrides,
