@@ -94,7 +94,7 @@ func embedFileCmd() *cobra.Command {
 		Long: `Read a file from disk, chunk it, and embed each chunk into the
 named collection. Each chunk is stored with source-path and chunk-index
 metadata so search results can be traced back. Re-running with the
-same content produces new rows; provide --idempotency-key to dedupe.`,
+same content produces new rows.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if filePath == "" {
 				return fmt.Errorf("--file is required")
