@@ -13,7 +13,7 @@ import (
 	"golang.org/x/net/html"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 func main() {
 	var (

@@ -35,8 +35,6 @@ import (
 	wsm "hop.top/wsm/pkg/workspace"
 )
 
-const version = "0.1.0"
-
 const longDescription = `foo is an opinionated terminal-first LLM workflow tool.
 
 Use the root command for one-shot prompts, or use grouped subcommands to
@@ -77,7 +75,18 @@ var commandGroups = map[string]string{
 	"upgrade":  "management",
 }
 
-func New() *kitcli.Root {
+// version is bound by main via ldflags (-X main.version) and threaded
+// in through New. Defaults to "dev" when unset (go run, go build with
+// no ldflags). All paths that report a foo version — --version, the
+// foo_version LLM tool, and the upgrade check — read from this single
+// value.
+var version = "dev"
+
+func New(v string) *kitcli.Root {
+	if v != "" {
+		version = v
+		builtin.Version = v
+	}
 	root = kitcli.New(kitcli.Config{
 		Name:    "foo",
 		Version: version,

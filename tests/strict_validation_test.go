@@ -22,7 +22,7 @@ import (
 // without kit annotations, or a kit-required surface was removed.
 // Reproduce the exact failure list with `./bin/foo --help`.
 func TestRoot_StrictValidate_Passes(t *testing.T) {
-	root := commands.New()
+	root := commands.New("test")
 	if err := root.Validate(); err != nil {
 		t.Fatalf("Root.Validate must return nil; got: %v", err)
 	}

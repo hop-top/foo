@@ -64,7 +64,9 @@ func TestCLI_Basic(t *testing.T) {
 		stdout, _, err := runFoo(t, tmpDir, "--version")
 		require.NoError(t, err)
 		// kit renders version as `<name> v<version>` on a single line.
-		require.Contains(t, stdout, "foo v0.1.0")
+		// Default build (no ldflags) reports "dev"; release builds set
+		// the real semver via -X main.version=...
+		require.Contains(t, stdout, "foo v")
 	})
 
 	t.Run("status", func(t *testing.T) {
