@@ -373,6 +373,23 @@ internal/
   config/              layered configuration
 ```
 
+## Compatibility
+
+Destructive commands (anything that removes local state, e.g.
+`pattern delete`, `schema delete`, `fragment delete`,
+`embed collection delete`) participate in kit's global `--confirm`
+policy. The default outside a TTY is `--confirm=no`, which refuses
+the action with `UNAUTHORIZED`. Supply `--confirm=yes` in scripts:
+
+```
+foo pattern delete my-pattern --confirm=yes
+```
+
+There are no legacy `--force`/`--yes` flags to bridge — foo never
+shipped them — and the `--confirm` flag is registered by kit, not
+foo. `foo status` is the kit-shipped status subcommand; it boots
+clean even when the rest of the CLI is offline.
+
 ## Contributing
 
 Contributions welcome. Please open an issue before large changes.

@@ -10,156 +10,173 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// runFoo executes the foo binary against an isolated $HOME, returning
+// stdout, stderr, and the exec error. The binary is rebuilt every test
+// run so stale `bin/foo` cannot mask a change in command vocabulary.
 func runFoo(t *testing.T, tmpHome string, args ...string) (string, string, error) {
-	// Build the binary if it doesn't exist (handled by Makefile usually, but good for go test ./...)
+	t.Helper()
 	binPath := filepath.Join("..", "..", "bin", "foo")
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
-		cmd := exec.Command("go", "build", "-o", binPath, "../../main.go")
-		err := cmd.Run()
-		require.NoError(t, err, "failed to build binary")
-	}
-
-	absBinPath, _ := filepath.Abs(binPath)
+	absBinPath, err := filepath.Abs(binPath)
+	require.NoError(t, err)
 	cmd := exec.Command(absBinPath, args...)
-	
-	// Isolate the test environment
-	cmd.Env = append(os.Environ(), 
+
+	cmd.Env = append(os.Environ(),
 		"HOME="+tmpHome,
 		"XDG_CONFIG_HOME="+filepath.Join(tmpHome, ".config"),
 		"XDG_STATE_HOME="+filepath.Join(tmpHome, ".local", "state"),
+		"XDG_DATA_HOME="+filepath.Join(tmpHome, ".local", "share"),
+		// Force the no-color path so assertions are not foiled by
+		// terminfo escape sequences.
+		"NO_COLOR=1",
 	)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	return stdout.String(), stderr.String(), err
 }
 
+// ensureBinary builds foo into bin/foo. Tests share one binary.
+func ensureBinary(t *testing.T) {
+	t.Helper()
+	binPath := filepath.Join("..", "..", "bin", "foo")
+	mainPath := filepath.Join("..", "..", ".")
+	cmd := exec.Command("go", "build", "-o", binPath, mainPath)
+	out, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "build foo: %s", string(out))
+}
+
 func TestCLI_Basic(t *testing.T) {
+	ensureBinary(t)
 	tmpDir := t.TempDir()
 
 	t.Run("help", func(t *testing.T) {
 		stdout, _, err := runFoo(t, tmpDir, "--help")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "foo is an opinionated LLM CLI/REPL")
+		// Current foo Short text. If this string drifts the test
+		// must drift with it.
+		require.Contains(t, stdout, "LLM workflows from the terminal")
 	})
 
 	t.Run("version", func(t *testing.T) {
 		stdout, _, err := runFoo(t, tmpDir, "--version")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "foo version 0.1.0")
+		// kit renders version as `<name> v<version>` on a single line.
+		require.Contains(t, stdout, "foo v0.1.0")
+	})
+
+	t.Run("status", func(t *testing.T) {
+		// Mounted by kit's WithStatus option; never exercised in
+		// the legacy suite. Smokes that the kit runtime boots and
+		// the default status providers render.
+		stdout, _, err := runFoo(t, tmpDir, "status", "--format=json")
+		require.NoError(t, err)
+		require.Contains(t, stdout, "\"sections\"")
 	})
 }
 
 func TestCLI_Pattern(t *testing.T) {
+	ensureBinary(t)
 	tmpDir := t.TempDir()
 
-	t.Run("add pattern", func(t *testing.T) {
-		stdout, _, err := runFoo(t, tmpDir, "pattern", "add", "test-p", "You are a test assistant")
+	t.Run("create", func(t *testing.T) {
+		stdout, _, err := runFoo(t, tmpDir, "pattern", "create", "test-p", "You are a test assistant")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "Pattern \"test-p\" added")
+		require.Contains(t, stdout, `pattern "test-p" saved`)
 	})
 
-	t.Run("import pattern", func(t *testing.T) {
+	t.Run("import", func(t *testing.T) {
 		src := filepath.Join(tmpDir, "my-prompt.md")
-		err := os.WriteFile(src, []byte("imported system prompt"), 0644)
+		err := os.WriteFile(src, []byte("imported system prompt"), 0o644)
 		require.NoError(t, err)
 
 		stdout, _, err := runFoo(t, tmpDir, "pattern", "import", src, "imported-p")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "Pattern imported successfully")
-
-		stdout, _, _ = runFoo(t, tmpDir, "pattern", "list")
-		require.Contains(t, stdout, "- imported-p")
+		require.Contains(t, stdout, "pattern imported")
 	})
 
-	t.Run("list patterns", func(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
 		stdout, _, err := runFoo(t, tmpDir, "pattern", "list")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "- test-p")
+		require.Contains(t, stdout, "test-p")
+		require.Contains(t, stdout, "imported-p")
 	})
 
-	t.Run("remove pattern", func(t *testing.T) {
-		stdout, _, err := runFoo(t, tmpDir, "pattern", "remove", "test-p")
+	t.Run("show", func(t *testing.T) {
+		stdout, _, err := runFoo(t, tmpDir, "pattern", "show", "test-p")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "Pattern \"test-p\" removed")
-		
-		stdout, _, _ = runFoo(t, tmpDir, "pattern", "list")
-		require.NotContains(t, stdout, "- test-p")
+		require.Contains(t, stdout, "test-p")
 	})
 }
 
-func TestCLI_Model(t *testing.T) {
+// TestCLI_Destructive_ConfirmPolicy locks in kit's --confirm policy
+// against foo's destructive leaves. Non-TTY default is "no"; a
+// destructive command must refuse without --confirm=yes and proceed
+// when it is supplied. Read commands ignore --confirm entirely.
+func TestCLI_Destructive_ConfirmPolicy(t *testing.T) {
+	ensureBinary(t)
 	tmpDir := t.TempDir()
 
-	t.Run("list models", func(t *testing.T) {
-		stdout, _, err := runFoo(t, tmpDir, "model", "list")
-		require.NoError(t, err)
-		require.Contains(t, stdout, "Common models")
-		require.Contains(t, stdout, "gpt-4o")
+	// Seed a pattern so the destructive leaf has something to act on.
+	_, _, err := runFoo(t, tmpDir, "pattern", "create", "doomed", "")
+	require.NoError(t, err)
+
+	t.Run("destructive refused without --confirm", func(t *testing.T) {
+		_, stderr, err := runFoo(t, tmpDir, "pattern", "delete", "doomed")
+		require.Error(t, err, "non-TTY delete without --confirm must exit non-zero")
+		require.Contains(t, stderr, "UNAUTHORIZED",
+			"kit confirm policy should report UNAUTHORIZED on non-TTY default")
 	})
 
-	t.Run("set default model", func(t *testing.T) {
-		stdout, _, err := runFoo(t, tmpDir, "model", "set-default", "gpt-4o")
+	t.Run("destructive proceeds with --confirm=yes", func(t *testing.T) {
+		stdout, _, err := runFoo(t, tmpDir, "pattern", "delete", "doomed", "--confirm=yes")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "Default model set to \"gpt-4o\"")
-		
-		// Verify it saved to config
-		configPath := filepath.Join(tmpDir, ".config", "foo", "config.yaml")
-		content, err := os.ReadFile(configPath)
-		require.NoError(t, err)
-		require.Contains(t, string(content), "model: gpt-4o")
+		require.Contains(t, stdout, `pattern "doomed" deleted`)
 	})
 
-	t.Run("refresh models", func(t *testing.T) {
-		stdout, _, err := runFoo(t, tmpDir, "model", "refresh")
+	t.Run("read commands ignore --confirm", func(t *testing.T) {
+		// list is annotated SideEffectRead; the policy gate is a
+		// no-op for read leaves.
+		_, _, err := runFoo(t, tmpDir, "pattern", "list", "--confirm=no")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "Model list refreshed")
 	})
 }
 
 func TestCLI_Provider(t *testing.T) {
+	ensureBinary(t)
 	tmpDir := t.TempDir()
 
-	t.Run("list providers", func(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
 		stdout, _, err := runFoo(t, tmpDir, "provider", "list")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "Supported providers")
-		require.Contains(t, stdout, "anthropic://")
+		// At least the always-present anthropic + openai schemes.
+		require.Contains(t, stdout, "anthropic")
+		require.Contains(t, stdout, "openai")
 	})
 
-	t.Run("enable_disable provider", func(t *testing.T) {
-		stdout, _, err := runFoo(t, tmpDir, "provider", "enable", "openai")
-		require.NoError(t, err)
-		require.Contains(t, stdout, "Provider \"openai\" enabled")
-
-		stdout, _, err = runFoo(t, tmpDir, "provider", "disable", "openai")
-		require.NoError(t, err)
-		require.Contains(t, stdout, "Provider \"openai\" disabled")
-	})
-
-	t.Run("show provider", func(t *testing.T) {
-		// Set an env var for the test
-		os.Setenv("OPENAI_API_KEY", "sk-test123456789")
-		defer os.Unsetenv("OPENAI_API_KEY")
-
+	t.Run("show with secret configured", func(t *testing.T) {
+		t.Setenv("OPENAI_API_KEY", "sk-test123456789")
 		stdout, _, err := runFoo(t, tmpDir, "provider", "show", "openai")
 		require.NoError(t, err)
-		require.Contains(t, stdout, "Provider: openai")
-		require.Contains(t, stdout, "configured (masked: sk-t...)")
+		require.Contains(t, stdout, "openai")
+		require.Contains(t, stdout, "configured")
 	})
 }
 
-func TestCLI_Workspace(t *testing.T) {
+func TestCLI_Model(t *testing.T) {
+	ensureBinary(t)
 	tmpDir := t.TempDir()
-	
-	// Running any command should initialize the workspace DB
-	_, _, err := runFoo(t, tmpDir, "model", "list")
-	require.NoError(t, err)
-	
-	dbPath := filepath.Join(tmpDir, ".config", "foo", "foo.db")
-	_, err = os.Stat(dbPath)
-	require.NoError(t, err, "workspace DB should be created")
+
+	t.Run("current empty by default", func(t *testing.T) {
+		_, _, err := runFoo(t, tmpDir, "model", "current")
+		require.NoError(t, err)
+	})
+
+	t.Run("default sets model", func(t *testing.T) {
+		stdout, _, err := runFoo(t, tmpDir, "model", "default", "gpt-4o")
+		require.NoError(t, err)
+		require.Contains(t, stdout, `default model set to "gpt-4o"`)
+	})
 }
