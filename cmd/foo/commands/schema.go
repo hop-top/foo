@@ -10,6 +10,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/schema"
+	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/core/xdg"
 )
 
@@ -17,6 +18,8 @@ func schemaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schema",
 		Short: "Manage JSON schemas",
+		Long: `Persist named JSON Schemas (and their source DSL) and use them
+when prompting the model for structured output.`,
 	}
 
 	cmd.AddCommand(schemaListCmd())
@@ -29,9 +32,10 @@ func schemaCmd() *cobra.Command {
 }
 
 func schemaListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List stored schemas",
+		Long:  "List every schema persisted in the local schema store.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := openSchemaStore()
 			if err != nil {
@@ -53,12 +57,15 @@ func schemaListCmd() *cobra.Command {
 			return renderData(cmd, rows)
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
+	return cmd
 }
 
 func schemaShowCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show a stored schema",
+		Long:  "Render the source DSL and compiled JSON Schema for one stored schema.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := openSchemaStore()
@@ -74,6 +81,8 @@ func schemaShowCmd() *cobra.Command {
 			return renderData(cmd, schemaView{Name: sc.Name, DSL: sc.DSL, Schema: sc.Schema})
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
+	return cmd
 }
 
 func schemaCreateCmd() *cobra.Command {
@@ -82,7 +91,10 @@ func schemaCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <name> [dsl]",
 		Short: "Create or replace a schema from DSL or JSON",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Create or replace a schema in the local store from inline DSL or
+a JSON Schema file supplied via --file. The DSL is compiled before
+persistence; the JSON path stores the schema verbatim.`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			store, err := openSchemaStore()
@@ -115,14 +127,16 @@ func schemaCreateCmd() *cobra.Command {
 		},
 	}
 
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
 	cmd.Flags().StringVar(&filePath, "file", "", "JSON schema file")
 	return cmd
 }
 
 func schemaDeleteCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete a schema",
+		Long:  "Remove a schema from the local store. Local irreversible.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := openSchemaStore()
@@ -137,12 +151,15 @@ func schemaDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectDestructiveLocal)
+	return cmd
 }
 
 func schemaCompileCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "compile <shorthand>",
 		Short: "Compile a DSL without storing it",
+		Long:  "Compile a DSL shorthand into a JSON Schema and render it. No persistence.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			compiled, err := schema.CompileDSL(args[0])
@@ -152,6 +169,9 @@ func schemaCompileCmd() *cobra.Command {
 			return renderData(cmd, schemaView{Name: "", DSL: args[0], Schema: compiled})
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
+	kitcli.SetIdempotency(cmd, kitcli.IdempotencyYes)
+	return cmd
 }
 
 func openSchemaStore() (*schema.Store, error) {
