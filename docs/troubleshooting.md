@@ -17,7 +17,9 @@ cause → fix; the longer sections below give the detail.
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
-| `interactive REPL requires a terminal` | `foo` invoked with no args and no TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
+| `interactive REPL requires a terminal` | `foo repl` invoked without a TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
+| `no prompt provided (stdin was empty)` | `foo` got an empty pipe and no positional prompt | [Diagnose the upstream pipe](#empty-pipe-into-foo) |
+| `pattern "X" not found` despite `foo pattern list` showing it elsewhere | Pattern is project-local in another cwd | [Make the pattern global](#pattern-found-here-not-there) |
 | `UNAUTHORIZED` from a `delete` command | Destructive command refused off-TTY | [Use `--confirm=yes`](#destructive-command-refused-with-unauthorized) |
 | Empty output or visible garbled bytes | Streaming hiccup | [Disable streaming](#streaming-garbled-or-truncated) |
 | `embed: ... 401 Unauthorized` | `OPENAI_API_KEY` missing | Export it |
@@ -79,6 +81,52 @@ If you got `interactive REPL requires a terminal`, either:
 - Supply a prompt: `foo "hello"`.
 - Pipe a prompt: `echo hello | foo`.
 - Run from a real terminal (not a non-TTY subprocess).
+
+## Empty pipe into foo
+
+`no prompt provided (stdin was empty)` means `foo` was invoked
+with no positional prompt and stdin was a closed or empty pipe.
+Most often this is a cascade: the upstream command in the pipeline
+failed and produced no output.
+
+```sh
+foo youtube "https://..." | foo -p summarize
+# foo: no prompt provided (stdin was empty)
+```
+
+Diagnose by running the upstream alone and watching stderr:
+
+```sh
+foo youtube "https://..." 2>&1 1>/dev/null
+# look for the actual error
+```
+
+If the upstream succeeds, the pipe is fine and the receiving
+`foo` has its own issue (missing pattern, missing key) — check
+those independently.
+
+## Pattern found here, not there
+
+You ran `foo pattern list` in one directory and saw `summarize`.
+You ran `foo -p summarize "..."` in another directory and got
+`pattern "summarize" not found`. The pattern is **project-local**:
+it lives at `./.foo/patterns/summarize/system.md` in the first
+cwd, not in the user-global store.
+
+To make a pattern available from any cwd, import it into the user
+store:
+
+```sh
+# from the directory that has the project-local pattern
+foo pattern import .foo/patterns/summarize/system.md summarize
+# pattern imported
+```
+
+After import the pattern lives at
+`$XDG_CONFIG_HOME/foo/patterns/summarize/system.md` and resolves
+regardless of cwd. See
+[manage-patterns.md](how-to/manage-patterns.md#scope-and-cwd) for
+the full lookup rules.
 
 ## Schema DSL parse failure
 

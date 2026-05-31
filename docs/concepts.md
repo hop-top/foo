@@ -108,7 +108,8 @@ and it becomes a foo subcommand. Implement `--ext-info` to return
 metadata in the standard JSON shape.
 
 Plugins typically emit markdown on stdout, which composes with
-foo's stdin reader: `foo youtube ... | foo -p summarize`.
+foo's stdin reader: `foo youtube ... | foo -p summarize`. End-to-end
+walkthrough: [Use plugins](how-to/use-plugins.md).
 
 ## The kit surface
 

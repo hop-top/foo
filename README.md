@@ -42,6 +42,7 @@ If that prints a model response, you are done. If it errors, read
 | Switch or default a model | [docs/how-to/configure-models.md](docs/how-to/configure-models.md) |
 | Run destructive commands in scripts | [docs/how-to/confirm-destructive-ops.md](docs/how-to/confirm-destructive-ops.md) |
 | Upgrade foo in place | [docs/how-to/upgrade-foo.md](docs/how-to/upgrade-foo.md) |
+| Install and use plugins (youtube, scrape, custom) | [docs/how-to/use-plugins.md](docs/how-to/use-plugins.md) |
 | Look up the exact flag, command, or value | [docs/reference/commands.md](docs/reference/commands.md) |
 | Look up a config key or env var | [docs/reference/config.md](docs/reference/config.md) |
 | Look up the schema DSL grammar | [docs/reference/schema-dsl.md](docs/reference/schema-dsl.md) |
@@ -67,7 +68,8 @@ Plugins emit markdown on stdout, pipeable into foo:
 foo youtube "https://youtube.com/watch?v=xxx" | foo -p summarize
 ```
 
-All plugins support `--ext-info` for discovery metadata.
+All plugins support `--ext-info` for discovery metadata. Full
+walkthrough: [Use plugins](docs/how-to/use-plugins.md).
 
 ## License
 

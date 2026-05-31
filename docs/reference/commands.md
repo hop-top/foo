@@ -13,6 +13,7 @@ the real `cobra.Command.Use` strings; descriptions come from
 | `foo repl` | `foo repl` | Open an interactive REPL session — TTY required (Enter sends; Ctrl+C/Esc exits) | (No how-to; same as bare `foo` on a TTY) |
 | `foo upgrade` | `foo upgrade` | Upgrade foo to the latest version | [Upgrade foo](../how-to/upgrade-foo.md) |
 | `foo completion` | `foo completion [shell]` | Generate the autocompletion script for the specified shell | (kit-shipped) |
+| `foo <plugin>` | `foo <plugin> [argv...]` | Dispatch to `foo-<plugin>` binary on `$PATH` (PLUGINS group, descriptions from `--ext-info`) | [Use plugins](../how-to/use-plugins.md) |
 
 ## Root flags
 

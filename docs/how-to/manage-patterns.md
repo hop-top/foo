@@ -93,8 +93,8 @@ foo pattern delete old-pattern --confirm=yes
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `pattern ... not found` | Wrong alias or wrong scope | Run `foo pattern list` |
-| `pattern "X" saved` but `-p X` reports not found | Wrote to user scope, expected project scope, or vice versa | Check `patterns_path` config + `.foo/patterns/` |
+| `pattern ... not found` | Wrong alias, or pattern is project-local in a different cwd | Run `foo pattern list`; see [Scope and cwd](#scope-and-cwd) |
+| `pattern "X" saved` but `-p X` reports not found from elsewhere | Pattern in `.foo/patterns/` is cwd-bound | Import it: `foo pattern import .foo/patterns/X/system.md X` |
 | `permission denied` on create | XDG config dir not writable | Check `$XDG_CONFIG_HOME` |
 
 ## How it works
@@ -110,6 +110,34 @@ when checking shared patterns into a repository.
 `-p <name>` loads the pattern body as the system prompt. Combined
 with `--strategy` it is the strategy that wraps the pattern, not
 the other way around.
+
+### Scope and cwd
+
+`-p <name>` resolves in this order:
+
+1. `./.foo/patterns/<name>/system.md` (project-local, cwd-relative)
+2. `<patterns_path>/<name>/system.md` (user-global; defaults to
+   `$XDG_CONFIG_HOME/foo/patterns/<name>/system.md`)
+
+`foo pattern list` checks both locations and de-duplicates by
+name. **A pattern is only usable from a directory where at least
+one of the two lookups resolves.** This is the cause of the most
+common pattern surprise: you create a pattern while in a project
+directory (so it lands in `.foo/patterns/`), then try to use it
+from somewhere else and get `pattern "<name>" not found`.
+
+To make a project-local pattern available everywhere, import it
+into the user store:
+
+```sh
+foo pattern import .foo/patterns/<name>/system.md <name>
+# pattern imported
+```
+
+`foo pattern create` always writes to the user store. `foo pattern
+import` does the same. Neither writes into `.foo/patterns/` —
+checking a project-local pattern into a repo is done by editing
+files directly (not via `pattern create`).
 
 ## Options
 
