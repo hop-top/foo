@@ -9,6 +9,7 @@ import (
 	"golang.org/x/term"
 	"hop.top/foo/internal/fragment"
 	"hop.top/foo/internal/workspace"
+	kitcli "hop.top/kit/go/console/cli"
 )
 
 func fragmentCmd() *cobra.Command {
@@ -34,9 +35,10 @@ func newFragmentManager() (*fragment.Manager, error) {
 }
 
 func fragmentListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List fragment aliases",
+		Long:  "List every fragment alias known to the workspace store with its source and short artifact id.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			mgr, err := newFragmentManager()
@@ -63,10 +65,12 @@ func fragmentListCmd() *cobra.Command {
 			return renderData(cmd, rows)
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
+	return cmd
 }
 
 func fragmentCreateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "create <alias> [source]",
 		Short: "Create or replace a fragment from file, URL, or stdin",
 		Long: `Create or replace a fragment alias. Source can be:
@@ -103,12 +107,15 @@ func fragmentCreateCmd() *cobra.Command {
 			return nil
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
+	return cmd
 }
 
 func fragmentShowCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show <alias>",
 		Short: "Show one fragment",
+		Long:  "Render the resolved content of a fragment alias from the workspace store.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -124,12 +131,15 @@ func fragmentShowCmd() *cobra.Command {
 			return renderData(cmd, fragmentView{Alias: args[0], Content: string(content)})
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
+	return cmd
 }
 
 func fragmentDeleteCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "delete <alias>",
 		Short: "Delete a fragment alias",
+		Long:  "Remove a fragment alias and its index entry. Local irreversible.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -147,6 +157,8 @@ func fragmentDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectDestructiveLocal)
+	return cmd
 }
 
 type fragmentRow struct {
