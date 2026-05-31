@@ -91,7 +91,7 @@ func New() *kitcli.Root {
 				{ID: "interact", Title: "INTERACT"},
 			},
 		},
-	})
+	}, kitcli.WithStatus(kitcli.StatusConfig{}))
 	logger = kitlog.New(root.Viper)
 	slog.SetDefault(slog.New(logger))
 
@@ -255,13 +255,19 @@ func runPromptOrShell(cmd *cobra.Command, args []string) error {
 }
 
 func shellCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "shell",
 		Short: "Open an interactive shell session",
+		Long: `Open the bubbletea-backed REPL for an interactive multi-turn
+session against the configured model. Requires a TTY.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runShell(cmd)
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectInteractive)
+	kitcli.SetIdempotency(cmd, kitcli.IdempotencyNo)
+	kitcli.SetTopLevelVerb(cmd)
+	return cmd
 }
 
 func runShell(cmd *cobra.Command) error {
@@ -281,11 +287,16 @@ func patternCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pattern",
 		Short: "Manage reusable system prompt patterns",
+		Long: `Store and retrieve named system-prompt patterns.
+
+Patterns are user-scoped, plain-text system prompts that can be
+applied to any prompt via --pattern.`,
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List available patterns",
+		Long:  "List every pattern name in the local pattern directory.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			names, err := pattern.List(cfg.PatternsPath)
 			if err != nil {
@@ -297,11 +308,14 @@ func patternCmd() *cobra.Command {
 			}
 			return renderData(cmd, rows)
 		},
-	})
+	}
+	kitcli.SetSideEffect(listCmd, kitcli.SideEffectRead)
+	cmd.AddCommand(listCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	showCmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show one pattern",
+		Long:  "Print the system-prompt body of one named pattern.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			item, err := pattern.LoadPattern(cfg.PatternsPath, args[0])
@@ -310,11 +324,14 @@ func patternCmd() *cobra.Command {
 			}
 			return renderData(cmd, patternView{Name: item.Name, System: item.System})
 		},
-	})
+	}
+	kitcli.SetSideEffect(showCmd, kitcli.SideEffectRead)
+	cmd.AddCommand(showCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	createCmd := &cobra.Command{
 		Use:   "create <name> [system-prompt]",
 		Short: "Create or replace a pattern",
+		Long:  "Persist a named pattern. When the system-prompt argument is omitted an empty pattern is created.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			systemPrompt := ""
@@ -327,11 +344,14 @@ func patternCmd() *cobra.Command {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q saved\n", args[0])
 			return nil
 		},
-	})
+	}
+	kitcli.SetSideEffect(createCmd, kitcli.SideEffectWriteLocal)
+	cmd.AddCommand(createCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	importCmd := &cobra.Command{
 		Use:   "import <path> [name]",
 		Short: "Import a pattern from a file",
+		Long:  "Read a pattern definition from a file on disk and store it under the given name (default: file basename).",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
@@ -344,11 +364,15 @@ func patternCmd() *cobra.Command {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "pattern imported")
 			return nil
 		},
-	})
+	}
+	kitcli.SetSideEffect(importCmd, kitcli.SideEffectWriteLocal)
+	kitcli.SetIdempotency(importCmd, kitcli.IdempotencyConditional)
+	cmd.AddCommand(importCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	deleteCmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete a pattern",
+		Long:  "Remove a named pattern from the local pattern directory. Local irreversible.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := pattern.Delete(cfg.PatternsPath, args[0]); err != nil {
@@ -357,7 +381,9 @@ func patternCmd() *cobra.Command {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q deleted\n", args[0])
 			return nil
 		},
-	})
+	}
+	kitcli.SetSideEffect(deleteCmd, kitcli.SideEffectDestructiveLocal)
+	cmd.AddCommand(deleteCmd)
 
 	return cmd
 }
@@ -366,10 +392,13 @@ func strategyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "strategy",
 		Short: "List available prompt strategies",
+		Long: `Strategies are built-in wrappers that decorate a system prompt
+(e.g. chain-of-thought, ReAct, scratchpad). Apply one with --strategy.`,
 	}
-	cmd.AddCommand(&cobra.Command{
+	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List available strategies",
+		Long:  "List every built-in prompt strategy with its description.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			manager, err := strategy.NewManager()
 			if err != nil {
@@ -382,7 +411,9 @@ func strategyCmd() *cobra.Command {
 			}
 			return renderData(cmd, rows)
 		},
-	})
+	}
+	kitcli.SetSideEffect(listCmd, kitcli.SideEffectRead)
+	cmd.AddCommand(listCmd)
 	return cmd
 }
 
@@ -390,19 +421,25 @@ func modelCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model",
 		Short: "Manage the default model selection",
+		Long: `Inspect and set the default LLM model used when --model is not
+supplied on the command line.`,
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	currentCmd := &cobra.Command{
 		Use:   "current",
 		Short: "Show the current default model",
+		Long:  "Print the model id stored in user config as the default.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return renderData(cmd, modelStatus{Current: cfg.Model})
 		},
-	})
+	}
+	kitcli.SetSideEffect(currentCmd, kitcli.SideEffectRead)
+	cmd.AddCommand(currentCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	defaultCmd := &cobra.Command{
 		Use:   "default <model>",
 		Short: "Set the default model",
+		Long:  "Persist the supplied model id as the new default in user config.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.Model = args[0]
@@ -412,7 +449,9 @@ func modelCmd() *cobra.Command {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default model set to %q\n", cfg.Model)
 			return nil
 		},
-	})
+	}
+	kitcli.SetSideEffect(defaultCmd, kitcli.SideEffectWriteLocal)
+	cmd.AddCommand(defaultCmd)
 
 	return cmd
 }
@@ -421,11 +460,14 @@ func providerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider",
 		Short: "Inspect configured LLM providers",
+		Long: `Inspect which LLM providers are compiled in and whether the
+credentials they expect are present in the configured secret store.`,
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered providers",
+		Long:  "List every LLM provider scheme registered in this build.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			schemes := kitllm.Schemes()
 			sort.Strings(schemes)
@@ -435,11 +477,14 @@ func providerCmd() *cobra.Command {
 			}
 			return renderData(cmd, rows)
 		},
-	})
+	}
+	kitcli.SetSideEffect(listCmd, kitcli.SideEffectRead)
+	cmd.AddCommand(listCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	showCmd := &cobra.Command{
 		Use:   "show <scheme>",
 		Short: "Show provider auth status",
+		Long:  "Show the secret key a provider expects and whether it is currently configured.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scheme := strings.TrimSuffix(args[0], "://")
@@ -464,19 +509,27 @@ func providerCmd() *cobra.Command {
 			}
 			return renderData(cmd, status)
 		},
-	})
+	}
+	kitcli.SetSideEffect(showCmd, kitcli.SideEffectRead)
+	cmd.AddCommand(showCmd)
 
 	return cmd
 }
 
 func upgradeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Upgrade foo to the latest version",
+		Long: `Check the GitHub releases for a newer version of foo and apply
+the upgrade in-place when one is available. Local binary mutation.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return upgrade.RunCLI(cmd.Context(), newUpgradeChecker(), upgrade.CLIOptions{})
 		},
 	}
+	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
+	kitcli.SetIdempotency(cmd, kitcli.IdempotencyYes)
+	kitcli.SetTopLevelVerb(cmd)
+	return cmd
 }
 
 func buildRegistry(names []string) (*tool.Registry, error) {
