@@ -139,6 +139,78 @@ import` does the same. Neither writes into `.foo/patterns/` —
 checking a project-local pattern into a repo is done by editing
 files directly (not via `pattern create`).
 
+## Re-use fabric patterns
+
+Foo's pattern format (`<patterns_path>/<name>/system.md`) is the
+same on-disk shape as
+[fabric](https://github.com/danielmiessler/fabric)'s pattern
+library. Fabric ships ~239 curated patterns (`extract_wisdom`,
+`summarize`, `analyze_paper`, etc.); you can use any of them with
+foo without conversion.
+
+If fabric is already installed, its patterns live at
+`~/.config/fabric/patterns/`. You can either point foo at them
+directly or copy individual patterns into foo's store.
+
+### Option 1: point foo at fabric's directory
+
+Set `FOO_PATTERNS_PATH` to fabric's pattern root for one
+invocation:
+
+```sh
+FOO_PATTERNS_PATH=~/.config/fabric/patterns \
+  foo -p extract_wisdom "https://example.com/article-text"
+```
+
+For a persistent override, add it to foo's config:
+
+```sh
+# ~/.config/foo/config.yaml
+patterns_path: ~/.config/fabric/patterns
+```
+
+Trade-off: foo's own user-store patterns at
+`~/.config/foo/patterns/` become invisible until you switch back.
+`.foo/patterns/` (project-local) still wins regardless because
+foo checks it first.
+
+### Option 2: import selected patterns into foo's store
+
+If you want a mixed store — your patterns plus a few fabric ones
+— import what you need:
+
+```sh
+# One pattern
+foo pattern import ~/.config/fabric/patterns/extract_wisdom/system.md extract_wisdom
+
+# Bulk import (every fabric pattern)
+for d in ~/.config/fabric/patterns/*/; do
+  name=$(basename "$d")
+  foo pattern import "$d/system.md" "$name"
+done
+```
+
+Patterns land in `$XDG_CONFIG_HOME/foo/patterns/<name>/system.md`
+and are visible from any cwd. Re-importing a pattern overwrites
+the prior version, so the loop is idempotent.
+
+### Option 3: clone fabric's patterns without fabric
+
+If you don't have fabric installed, the patterns repo can be
+shallow-cloned and imported the same way:
+
+```sh
+git clone --depth 1 https://github.com/danielmiessler/fabric.git /tmp/fabric
+for d in /tmp/fabric/patterns/*/; do
+  name=$(basename "$d")
+  foo pattern import "$d/system.md" "$name"
+done
+rm -rf /tmp/fabric
+```
+
+Fabric's patterns are MIT-licensed; check fabric's repo for the
+current license before redistributing.
+
 ## Options
 
 | Subcommand | Args | Purpose |
