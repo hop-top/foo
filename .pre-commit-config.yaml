@@ -1,0 +1,23 @@
+# Pre-commit hooks. Install once per clone:
+#   pip install pre-commit && pre-commit install
+# Or with brew: brew install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint
+        # Runs on any .github/workflows/*.yml change
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        files: \.(yml|yaml)$
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-vet
