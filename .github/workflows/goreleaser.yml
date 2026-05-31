@@ -1,0 +1,19 @@
+name: goreleaser
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    uses: hop-top/.github/.github/workflows/goreleaser-on-tag.yml@v0
+    secrets:
+      RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+      RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+    with:
+      goreleaser-config: .goreleaser.yaml
+      go-version: "1.26"
