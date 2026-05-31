@@ -134,6 +134,8 @@ present.
 
 ## Related docs
 
+- [Write a plugin](write-plugins.md) — author your own subcommand
+  or LLM tool plugin.
 - [Manage patterns](manage-patterns.md) — pattern scope, the
   second-most-common pipeline failure.
 - [Concepts](../concepts.md#plugins-via-path-discovery) — the
