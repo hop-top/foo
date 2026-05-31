@@ -90,16 +90,16 @@ collection` need it.
 ### 7. Passthrough (none currently)
 
 No `cobra.ArbitraryArgs` leaves emit a passthrough warning today.
-Re-check after T-0037 in case a leaf flips its `Args` mode.
+Re-check if a leaf flips its `Args` mode to `ArbitraryArgs`.
 
 ### 8. Local-global flag collisions (none currently)
 
 The validator did not flag any local flags shadowing kit's global
 set (`--format`, `--cols`, `--config`, `--confirm`, `--chdir`,
 `--profile`, `--verbose`, `--quiet`, `--api-version`, `--no-prompt`,
-`--progress-format`, `--template`). Re-check after T-0037.
+`--progress-format`, `--template`). Re-check after any new leaf adds local flags.
 
 ## Exit gate
 
-T-0039 re-arms the strict gate and asserts `root.Validate()` returns
-nil. All buckets above must be closed before that test passes.
+The exit gate is: `root.Validate()` returns nil, `foo --help` and
+`foo status` boot cleanly. All buckets above must be closed.
