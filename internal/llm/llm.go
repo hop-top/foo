@@ -20,21 +20,35 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, model string) (*Client, error) {
-	var uri string
+	// Select provider scheme + the env var that holds its key. Empty
+	// envVar means the scheme doesn't need a key (e.g., ollama is local).
+	var scheme, envVar string
 	switch {
 	case strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1-") || strings.HasPrefix(model, "o3-"):
-		uri = fmt.Sprintf("openai://%s?api_key=%s", model, os.Getenv("OPENAI_API_KEY"))
+		scheme, envVar = "openai", "OPENAI_API_KEY"
 	case strings.HasPrefix(model, "claude-"):
-		uri = fmt.Sprintf("anthropic://%s?api_key=%s", model, os.Getenv("ANTHROPIC_API_KEY"))
+		scheme, envVar = "anthropic", "ANTHROPIC_API_KEY"
 	case strings.HasPrefix(model, "gemini-"):
-		uri = fmt.Sprintf("google://%s?api_key=%s", model, os.Getenv("GOOGLE_API_KEY"))
+		scheme, envVar = "google", "GOOGLE_API_KEY"
 	case strings.HasPrefix(model, "llama") || strings.HasPrefix(model, "mistral") || strings.HasPrefix(model, "deepseek-r1"):
-		uri = fmt.Sprintf("ollama://%s", model)
+		scheme, envVar = "ollama", ""
 	case strings.HasPrefix(model, "router-"):
-		uri = fmt.Sprintf("routellm://%s", strings.TrimPrefix(model, "router-"))
+		model = strings.TrimPrefix(model, "router-")
+		scheme, envVar = "routellm", ""
 	default:
-		// Fallback to openai scheme if unknown, maybe it's a compat provider
-		uri = fmt.Sprintf("openai://%s?api_key=%s", model, os.Getenv("OPENAI_API_KEY"))
+		// Unknown prefix — assume openai-compatible (openrouter, groq, etc.).
+		scheme, envVar = "openai", "OPENAI_API_KEY"
+	}
+
+	var uri string
+	if envVar != "" {
+		key := os.Getenv(envVar)
+		if key == "" {
+			return nil, fmt.Errorf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar)
+		}
+		uri = fmt.Sprintf("%s://%s?api_key=%s", scheme, model, key)
+	} else {
+		uri = fmt.Sprintf("%s://%s", scheme, model)
 	}
 
 	p, err := llm.Resolve(uri)

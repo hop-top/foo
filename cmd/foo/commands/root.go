@@ -21,6 +21,7 @@ import (
 	"hop.top/foo/internal/pattern"
 	"hop.top/foo/internal/schema"
 	"hop.top/foo/internal/strategy"
+	"hop.top/foo/internal/suggest"
 	"hop.top/foo/internal/tool"
 	"hop.top/foo/internal/tool/builtin"
 	"hop.top/foo/internal/ui"
@@ -357,7 +358,7 @@ func stdinIsPipe(cmd *cobra.Command) bool {
 
 func runREPL(cmd *cobra.Command) error {
 	if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
-		return fmt.Errorf("interactive REPL requires a terminal")
+		return fmt.Errorf("interactive REPL requires a terminal; supply a prompt (`foo \"...\"`) or pipe input (`echo ... | foo -p <pattern>`)")
 	}
 	client, err := llm.NewClient(cmd.Context(), selectedModel())
 	if err != nil {
@@ -405,7 +406,7 @@ applied to any prompt via --pattern.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			item, err := pattern.LoadPattern(cfg.PatternsPath, args[0])
 			if err != nil {
-				return err
+				return enrichPatternNotFound(args[0], err)
 			}
 			return renderData(cmd, patternView{Name: item.Name, System: item.System})
 		},
@@ -666,7 +667,7 @@ func assembleSystemPrompt(ctx context.Context) (string, error) {
 	if patternName != "" {
 		loaded, err := pattern.LoadPattern(cfg.PatternsPath, patternName)
 		if err != nil {
-			return "", err
+			return "", enrichPatternNotFound(patternName, err)
 		}
 		systemPrompt = loaded.System
 	}
@@ -724,7 +725,7 @@ func appendSchemaPrompt(systemPrompt, single, multi string) (string, error) {
 	} else {
 		compiled, compileErr := schema.CompileDSLJSON(target)
 		if compileErr != nil {
-			return "", fmt.Errorf("schema %q not found and not valid DSL: %w", target, compileErr)
+			return "", enrichSchemaNotFound(target, fmt.Errorf("schema %q not found and not valid DSL: %w", target, compileErr))
 		}
 		schemaJSON = compiled
 	}
@@ -819,6 +820,40 @@ func providerAuthRequirement(scheme string) (key string, authType string) {
 	default:
 		return "", "unknown"
 	}
+}
+
+// enrichPatternNotFound wraps a "pattern not found" error with an
+// actionable hint: closest-matching name (Levenshtein), `pattern list`
+// pointer, and `pattern import` syntax for promoting project-local
+// patterns. Falls back to the original error if listing fails — the
+// hint is best-effort, never blocking.
+func enrichPatternNotFound(want string, orig error) error {
+	names, listErr := pattern.List(cfg.PatternsPath)
+	if listErr != nil || len(names) == 0 {
+		return fmt.Errorf("%w; run `foo pattern list` to see available patterns, or `foo pattern import <path> %s` to promote a project-local pattern", orig, want)
+	}
+	if guess := suggest.Closest(want, names, 2); guess != "" {
+		return fmt.Errorf("%w; did you mean %q? (run `foo pattern list` to see all)", orig, guess)
+	}
+	return fmt.Errorf("%w; available patterns: %s (run `foo pattern import <path> %s` to add a project-local pattern globally)", orig, strings.Join(names, ", "), want)
+}
+
+// enrichSchemaNotFound wraps the schema lookup failure with a closest
+// suggestion, falling back to a list of available schemas. Errors from
+// listing are silent; the hint is best-effort.
+func enrichSchemaNotFound(want string, orig error) error {
+	store, err := openSchemaStore()
+	if err != nil {
+		return orig
+	}
+	names, listErr := store.List()
+	if listErr != nil || len(names) == 0 {
+		return fmt.Errorf("%w; run `foo schema list` to see stored schemas, or supply a valid DSL string like \"name, age int\"", orig)
+	}
+	if guess := suggest.Closest(want, names, 2); guess != "" {
+		return fmt.Errorf("%w; did you mean %q? (run `foo schema list` to see all)", orig, guess)
+	}
+	return fmt.Errorf("%w; available schemas: %s", orig, strings.Join(names, ", "))
 }
 
 type patternRow struct {

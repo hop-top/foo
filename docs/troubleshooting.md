@@ -13,7 +13,8 @@ cause → fix; the longer sections below give the detail.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `Error creating LLM client` | API key missing or invalid | [Set an API key](#api-key-missing-or-invalid) |
+| `missing X_API_KEY for model "..."` | API key env var unset | [Set an API key](#api-key-missing-or-invalid) |
+| `auth error (provider "...")` | API key set but rejected by the provider | [Check your key + provider config](#api-key-missing-or-invalid) |
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
@@ -29,11 +30,15 @@ cause → fix; the longer sections below give the detail.
 
 ## API key missing or invalid
 
-`Error creating LLM client` is foo telling you it could not build
-a provider client. The two common causes:
+Two distinct failure modes:
 
-- No key in env for the selected model's provider.
-- A key is set but rejected by the provider.
+- **Env var unset** — foo refuses to call the provider with an empty
+  key and reports `missing <ENV_VAR> for model "<model>" (provider
+  <name>); export <ENV_VAR>=... and retry, or switch models with
+  foo model default <model>`. The fix is named in the message.
+- **Key set but rejected** — the provider returns an `auth error
+  (provider "<name>")` with the upstream HTTP body. The key is
+  malformed, expired, or scoped to a different org/project.
 
 Fix:
 
