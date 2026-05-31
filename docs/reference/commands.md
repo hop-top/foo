@@ -8,9 +8,9 @@ the real `cobra.Command.Use` strings; descriptions come from
 
 | Command | Synopsis | Description | How-to |
 |---------|----------|-------------|--------|
-| `foo [prompt]` | `foo [command] [prompt] [--flags]` | Run a one-shot prompt or open the REPL when no prompt given | [Quickstart](../quickstart.md) |
+| `foo [prompt]` | `foo [command] [prompt] [--flags]` | Run a one-shot prompt or open an interactive shell when no prompt given | [Quickstart](../quickstart.md) |
 | `foo status` | `foo status [--flags]` | Show kit runtime status (profile, env, workspace, auth, config) | [Troubleshooting](../troubleshooting.md#foo-status-shows-degraded-health) |
-| `foo shell` | `foo shell` | Open an interactive shell session (REPL) — TTY required | (No how-to; same as bare `foo` on a TTY) |
+| `foo shell` | `foo shell` | Open an interactive shell session — TTY required | (No how-to; same as bare `foo` on a TTY) |
 | `foo upgrade` | `foo upgrade` | Upgrade foo to the latest version | [Upgrade foo](../how-to/upgrade-foo.md) |
 | `foo completion` | `foo completion [shell]` | Generate the autocompletion script for the specified shell | (kit-shipped) |
 
