@@ -112,11 +112,15 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 	scheme, envVar := schemeForModel(model)
 	if scheme == "routellm" {
 		// router- prefix: strip the marker so the URI ends up as
-		// routellm://<router>:<threshold>. The picker is bypassed
-		// because routellm IS a routing mechanism, just a different
-		// one (per-request strong/weak swap rather than pre-flight
-		// pool pick). See docs/how-to/route-across-models.md for the
-		// comparison.
+		// routellm://<router>:<threshold>. The pool picker is
+		// bypassed because routellm IS a routing mechanism, just
+		// answering a different question: pool routing scores
+		// (price, capability, context window) **pre-flight** using
+		// static metadata; routellm scores **per-request** on
+		// prompt content via a RouteLLM server. The two compose —
+		// a routellm pin still inherits the kit fallback chain.
+		// Full comparison table:
+		// docs/how-to/route-across-models.md#pool-routing-vs-router-x
 		model = strings.TrimPrefix(model, "router-")
 	}
 	return buildClient(scheme, model, envVar)
