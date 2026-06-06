@@ -56,8 +56,25 @@ func NewClient(ctx context.Context, model string) (*Client, error) {
 		return nil, err
 	}
 
+	// Resolve fallback URIs from kit's config layer
+	// (~/.config/hop/llm.yaml `fallback:` and the LLM_FALLBACK env
+	// var). LoadConfig errors are tolerated: missing/invalid kit
+	// config must not block a successful single-provider call.
+	// Fallback URIs that fail to resolve are skipped individually so
+	// one bad entry cannot disable the rest of the chain.
+	var opts []llm.Option
+	if cfg, cfgErr := llm.LoadConfig(uri); cfgErr == nil {
+		for _, fbURI := range cfg.Fallbacks {
+			fb, fbErr := llm.Resolve(fbURI)
+			if fbErr != nil {
+				continue
+			}
+			opts = append(opts, llm.WithFallback(fb))
+		}
+	}
+
 	return &Client{
-		client: llm.NewClient(p),
+		client: llm.NewClient(p, opts...),
 	}, nil
 }
 
