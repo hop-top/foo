@@ -300,7 +300,7 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	client, err := llm.NewClient(cmd.Context(), selectedModel())
+	client, err := llm.NewClient(cmd.Context(), clientOptsFromFlags(prompt))
 	if err != nil {
 		return err
 	}
@@ -385,7 +385,7 @@ func runREPL(cmd *cobra.Command) error {
 	if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
 		return fmt.Errorf("interactive REPL requires a terminal; supply a prompt (`foo \"...\"`) or pipe input (`echo ... | foo -p <pattern>`)")
 	}
-	client, err := llm.NewClient(cmd.Context(), selectedModel())
+	client, err := llm.NewClient(cmd.Context(), clientOptsFromFlags(""))
 	if err != nil {
 		return err
 	}
@@ -789,6 +789,31 @@ func selectedModel() string {
 		return modelName
 	}
 	return cfg.Model
+}
+
+// clientOptsFromFlags translates foo's invocation state into the
+// ClientOpts struct kit's pool picker consumes. An explicit
+// -m / FOO_MODEL / config model pins the pick (picker bypassed); empty
+// model engages the pool path. promptText is used purely for token
+// estimation (len/4) and may be empty when the model is selected
+// before the prompt is known (REPL).
+func clientOptsFromFlags(promptText string) llm.ClientOpts {
+	opts := llm.ClientOpts{
+		Model: selectedModel(),
+		Profile: llm.DeriveProfile(llm.ProfileOpts{
+			SchemaSelected:       schemaName != "" || schemaMulti != "",
+			ToolNames:            toolNames,
+			PatternSelected:      patternName != "",
+			PromptTokensEstimate: len(promptText) / 4,
+		}),
+	}
+	// ResolveBudget already validated successfully in
+	// initializeRuntime; we drop the error here because re-validation
+	// would conflate "early gate" with "client construction" semantics.
+	if tier, err := llm.ResolveBudget(budgetTier); err == nil {
+		opts.Budget = tier
+	}
+	return opts
 }
 
 func renderData(cmd *cobra.Command, data any) error {
