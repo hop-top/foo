@@ -57,6 +57,8 @@ var (
 	systemFragments []string
 	schemaName      string
 	schemaMulti     string
+	budgetTier      string
+	pickerDebug     bool
 
 	cfg     = config.Default()
 	root    *kitcli.Root
@@ -129,6 +131,12 @@ func New(v string) *kitcli.Root {
 	flags.StringSliceVar(&systemFragments, "system-fragment", nil, "Attach fragment(s) to the system prompt")
 	flags.StringVar(&schemaName, "schema", "", "Structured JSON output (schema name or DSL)")
 	flags.StringVar(&schemaMulti, "schema-multi", "", "Structured JSON array output (schema name or DSL)")
+
+	// Pool-routing surface. Persistent so subcommands that invoke the
+	// LLM (repl, downstream wrappers) inherit them without re-declaration.
+	persistent := root.Cmd.PersistentFlags()
+	persistent.StringVar(&budgetTier, "budget", "", "Pool routing budget tier (cheap|balanced|premium); overrides FOO_BUDGET")
+	persistent.BoolVar(&pickerDebug, "picker-debug", false, "Trace kit's pool picker decisions to stderr (sets LLM_PICKER_TRACE=1)")
 
 	root.Cmd.AddCommand(replCmd())
 	root.Cmd.AddCommand(patternCmd())
@@ -230,6 +238,23 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 		mgr, ws, err = workspace.InitWorkspace(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("initialize workspace: %w", err)
+		}
+	}
+
+	// --budget validation runs here so misspellings fail before any LLM
+	// call. ResolveBudget enriches the error with a did-you-mean hint
+	// matching foo's pattern/schema not-found story.
+	if _, err := llm.ResolveBudget(budgetTier); err != nil {
+		return err
+	}
+
+	// --picker-debug forwards to the env var kit's picker reads per
+	// call (picker_trace.go: LLM_PICKER_TRACE in {1,true,on,yes}).
+	// Setting it here so every subsequent picker invocation in this
+	// process emits an slog.Info trace on stderr.
+	if pickerDebug {
+		if err := os.Setenv("LLM_PICKER_TRACE", "1"); err != nil {
+			return fmt.Errorf("set LLM_PICKER_TRACE: %w", err)
 		}
 	}
 
