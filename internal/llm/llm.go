@@ -33,6 +33,15 @@ func NewClient(ctx context.Context, model string) (*Client, error) {
 	case strings.HasPrefix(model, "llama") || strings.HasPrefix(model, "mistral") || strings.HasPrefix(model, "deepseek-r1"):
 		scheme, envVar = "ollama", ""
 	case strings.HasPrefix(model, "router-"):
+		// Passthrough to kit's routellm adapter. The suffix after
+		// "router-" is forwarded verbatim as the URI model field, so
+		// `router-mf:0.7` becomes `routellm://mf:0.7` — exactly the
+		// `<router_name>:<threshold>` shape kit's adapter parses.
+		// All other routellm config (base URL, strong/weak model,
+		// router list) lives in kit's standard locations:
+		// `~/.config/hop/llm.yaml`'s `providers.routellm.routellm`
+		// extras block or the ROUTELLM_* env vars. foo does not
+		// surface a parallel flag set; see docs/how-to/route-across-models.md.
 		model = strings.TrimPrefix(model, "router-")
 		scheme, envVar = "routellm", ""
 	default:
