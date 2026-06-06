@@ -14,7 +14,7 @@ require (
 	golang.org/x/net v0.53.0
 	golang.org/x/term v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
-	hop.top/kit v0.4.0-alpha.6
+	hop.top/kit v0.4.0-alpha.7
 	hop.top/wsm v0.0.0-00010101000000-000000000000
 )
 
@@ -51,7 +51,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/mattn/go-isatty v0.0.21 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/miekg/dns v1.1.55 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
@@ -86,6 +86,7 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
+	hop.top/aim v0.1.0-alpha.0 // indirect
 	hop.top/uri v0.2.0-alpha.0 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
