@@ -258,6 +258,20 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// First-run pool seeding. SeedDefaultPool is idempotent — it
+	// only writes when no pool: block is present. The info line on
+	// stderr surfaces the path so operators discover it and can
+	// edit. Errors are non-fatal: a degraded config is still
+	// better than refusing to launch.
+	if wrote, seedErr := llm.SeedDefaultPool(); seedErr != nil {
+		slog.Warn("llm.seed.failed", slog.Any("err", seedErr))
+	} else if wrote {
+		if path, _ := llm.SeedPath(); path != "" {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"foo: seeded default pool config at %s; edit to taste.\n", path)
+		}
+	}
+
 	return nil
 }
 
