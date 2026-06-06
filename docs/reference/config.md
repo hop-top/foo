@@ -51,6 +51,58 @@ secrets:
   service: ""
 ```
 
+## Kit `llm.yaml` (routing surface)
+
+Model routing lives in kit's config file, not foo's. Path:
+`~/.config/hop/llm.yaml` (or `$XDG_CONFIG_HOME/hop/llm.yaml`).
+foo reads this file via `kit/llm.LoadConfig` when constructing
+the LLM client, so the keys below shape every `foo` invocation
+that talks to a model.
+
+```yaml
+# Default URI used when foo's --model / FOO_MODEL / model
+# config key are all unset.
+default: anthropic://claude-3-5-sonnet-latest
+
+# Per-scheme provider overrides. Extras (anything under a
+# scheme but not the four typed fields) are passed through to
+# the adapter — used by routellm below.
+providers:
+  anthropic:
+    api_key: sk-ant-...
+    base_url: ""
+    model: ""
+  openai:
+    api_key: sk-...
+  routellm:
+    routellm:
+      base_url: http://localhost:6060
+      strong_model: gpt-4o
+      weak_model: gpt-4o-mini
+      routers: [mf, bert]
+
+# Ordered list of fallback URIs tried by kit's Client when the
+# primary completion returns a fallbackable error.
+fallback:
+  - openai://gpt-4o-mini
+  - anthropic://claude-3-haiku-20240307
+```
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `default` | string | URI used when no model is specified. Overridden by `LLM_PROVIDER` env. |
+| `providers.<scheme>.api_key` | string | Provider key. Overridden by the per-provider env var (e.g. `OPENAI_API_KEY`). |
+| `providers.<scheme>.base_url` | string | Custom base URL. Overridden by `LLM_BASE_URL` env. |
+| `providers.<scheme>.model` | string | Default model for this scheme; URI model wins when set. |
+| `providers.routellm.routellm.base_url` | string | RouteLLM server URL. Overridden by `ROUTELLM_BASE_URL`. |
+| `providers.routellm.routellm.strong_model` | string | Strong-tier model RouteLLM picks above threshold. Overridden by `ROUTELLM_STRONG_MODEL`. |
+| `providers.routellm.routellm.weak_model` | string | Weak-tier model RouteLLM picks below threshold. Overridden by `ROUTELLM_WEAK_MODEL`. |
+| `providers.routellm.routellm.routers` | list | Enabled router names. Overridden by comma-separated `ROUTELLM_ROUTERS`. |
+| `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. |
+
+End-to-end walkthrough:
+[how-to: route across models](../how-to/route-across-models.md).
+
 ## Environment variables
 
 ### Provider keys
@@ -63,6 +115,22 @@ secrets:
 
 `foo provider show <scheme>` reports each scheme's expected key
 and whether foo can see it.
+
+### Kit routing env vars
+
+These are consumed by `kit/llm` (not foo directly), but they
+take effect on every `foo` invocation.
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `LLM_PROVIDER` | `LoadConfig` | Default URI when no model is specified. Overrides `default:` in `llm.yaml`. |
+| `LLM_API_KEY` | `LoadConfig` | Generic provider key fallback when no per-provider env var is set. |
+| `LLM_BASE_URL` | `LoadConfig` | Custom base URL for the resolved provider. |
+| `LLM_FALLBACK` | `LoadConfig` | Comma-separated fallback URIs. Overrides `fallback:` in `llm.yaml`. |
+| `ROUTELLM_BASE_URL` | routellm adapter | RouteLLM server endpoint. |
+| `ROUTELLM_STRONG_MODEL` | routellm adapter | Strong-tier model id. |
+| `ROUTELLM_WEAK_MODEL` | routellm adapter | Weak-tier model id. |
+| `ROUTELLM_ROUTERS` | routellm adapter | Comma-separated router names. |
 
 ### foo-specific env vars
 

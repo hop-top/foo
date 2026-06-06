@@ -40,6 +40,7 @@ If that prints a model response, you are done. If it errors, read
 | Manage structured-output schemas | [docs/how-to/manage-schemas.md](docs/how-to/manage-schemas.md) |
 | Apply chain-of-thought + other strategies | [docs/how-to/use-strategies.md](docs/how-to/use-strategies.md) |
 | Switch or default a model | [docs/how-to/configure-models.md](docs/how-to/configure-models.md) |
+| Route across models (fallback chain, RouteLLM) | [docs/how-to/route-across-models.md](docs/how-to/route-across-models.md) |
 | Run destructive commands in scripts | [docs/how-to/confirm-destructive-ops.md](docs/how-to/confirm-destructive-ops.md) |
 | Upgrade foo in place | [docs/how-to/upgrade-foo.md](docs/how-to/upgrade-foo.md) |
 | Install and use plugins (youtube, scrape, custom) | [docs/how-to/use-plugins.md](docs/how-to/use-plugins.md) |

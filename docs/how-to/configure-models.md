@@ -126,6 +126,7 @@ use a hosted provider.
 
 ## Related docs
 
+- [Route across models](route-across-models.md) — fallback chains and RouteLLM strong/weak routing.
 - [Reference: config](../reference/config.md) — model + secrets config keys.
 - [Reference: commands](../reference/commands.md#model) — `model` and `provider` surface.
 - [Concepts: assembly pipeline](../concepts.md#the-prompt-assembly-pipeline) — how the model fits in.

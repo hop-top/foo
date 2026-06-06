@@ -50,7 +50,11 @@ calling the model. Use it to verify what foo will actually send.
 ## Patterns, strategies, fragments, schemas
 
 These are foo's four reusable inputs. They differ in what they
-shape and where they go in the prompt:
+shape and where they go in the prompt. Picking which model
+receives the assembled prompt is its own surface — single
+default by config, fallback chain via kit's `llm.yaml`, or
+RouteLLM strong/weak routing — covered in
+[how-to: route across models](how-to/route-across-models.md).
 
 | Concept | Shape | Goes into | Stored at |
 |---------|-------|-----------|-----------|
