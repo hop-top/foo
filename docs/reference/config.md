@@ -81,6 +81,18 @@ providers:
       weak_model: gpt-4o-mini
       routers: [mf, bert]
 
+# Candidate pool the budget picker scores when no --model / -m is
+# set. foo seeds a default block on first run; edit to taste.
+pool:
+  - alias: cheap-openai     # optional shorthand for LLM_POOL_DISABLE
+    scheme: openai          # required: URI scheme in kit's registry
+    model: gpt-4o-mini      # required: model id in models.dev
+    # enabled: false        # optional, default true
+    # weight: 2.0           # optional, default 1.0
+  - alias: balanced-anthropic
+    scheme: anthropic
+    model: claude-3-5-sonnet-latest
+
 # Ordered list of fallback URIs tried by kit's Client when the
 # primary completion returns a fallbackable error.
 fallback:
@@ -98,6 +110,12 @@ fallback:
 | `providers.routellm.routellm.strong_model` | string | Strong-tier model RouteLLM picks above threshold. Overridden by `ROUTELLM_STRONG_MODEL`. |
 | `providers.routellm.routellm.weak_model` | string | Weak-tier model RouteLLM picks below threshold. Overridden by `ROUTELLM_WEAK_MODEL`. |
 | `providers.routellm.routellm.routers` | list | Enabled router names. Overridden by comma-separated `ROUTELLM_ROUTERS`. |
+| `pool` | list of entries | Candidate set the budget picker scores; see fields below. |
+| `pool[].alias` | string | Optional shorthand; entries with an alias can be muted via `LLM_POOL_DISABLE` by name. |
+| `pool[].scheme` | string | URI scheme (e.g. `openai`, `anthropic`, `google`, `ollama`). |
+| `pool[].model` | string | Model id as it appears on models.dev. |
+| `pool[].enabled` | bool | Default `true`. Set `false` to keep the entry but mute it. |
+| `pool[].weight` | float | Default `1.0`. Reserved for future load-distribution policy. |
 | `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. |
 
 End-to-end walkthrough:
@@ -127,6 +145,8 @@ take effect on every `foo` invocation.
 | `LLM_API_KEY` | `LoadConfig` | Generic provider key fallback when no per-provider env var is set. |
 | `LLM_BASE_URL` | `LoadConfig` | Custom base URL for the resolved provider. |
 | `LLM_FALLBACK` | `LoadConfig` | Comma-separated fallback URIs. Overrides `fallback:` in `llm.yaml`. |
+| `LLM_POOL_DISABLE` | `LoadPool` | Comma list of `alias` or `<scheme>:<model>` entries to mute without removing. |
+| `LLM_PICKER_TRACE` | picker | When set to a truthy value (`1`, `true`, `on`, `yes`) emits one structured slog line per pick on stderr. `--picker-debug` sets this implicitly. |
 | `ROUTELLM_BASE_URL` | routellm adapter | RouteLLM server endpoint. |
 | `ROUTELLM_STRONG_MODEL` | routellm adapter | Strong-tier model id. |
 | `ROUTELLM_WEAK_MODEL` | routellm adapter | Weak-tier model id. |
@@ -137,6 +157,7 @@ take effect on every `foo` invocation.
 | Variable | Overrides | Notes |
 |----------|-----------|-------|
 | `FOO_MODEL` | `model` | Default model id |
+| `FOO_BUDGET` | `--budget` | Pool routing tier fallback (`cheap` / `balanced` / `premium`). |
 | `FOO_PATTERNS_PATH` | `patterns_path` | Directory for patterns |
 | `FOO_ACCENT` | `accent` | TUI accent color |
 | `FOO_SECRETS_BACKEND` | `secrets.backend` | Secret backend |

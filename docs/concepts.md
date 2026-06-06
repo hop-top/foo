@@ -51,9 +51,10 @@ calling the model. Use it to verify what foo will actually send.
 
 These are foo's four reusable inputs. They differ in what they
 shape and where they go in the prompt. Picking which model
-receives the assembled prompt is its own surface — single
-default by config, fallback chain via kit's `llm.yaml`, or
-RouteLLM strong/weak routing — covered in
+receives the assembled prompt is its own surface — pool routing
+under `--budget` (the recommended path), a fallback chain
+layered underneath any pick, or RouteLLM strong/weak routing
+per request — covered in
 [how-to: route across models](how-to/route-across-models.md).
 
 | Concept | Shape | Goes into | Stored at |
