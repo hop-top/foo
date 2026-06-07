@@ -3,10 +3,21 @@
 Pick the default model, override it per-invocation, and inspect
 provider auth.
 
+> **First check whether you really want this page.** Foo's default
+> model-selection mechanism is the pool picker driven by
+> `--budget` — see
+> [route across models](route-across-models.md). The right page
+> for "use a cheaper model for a small task" is `--budget cheap`,
+> not `-m`. Read on if you actually need an explicit, picker-
+> bypassing model pin (A/B comparison, debugging a specific
+> model, the only key you have is one provider's).
+
 ## Use this when
 
-- You want to change which model foo calls by default.
-- You want a one-shot override (e.g. cheap model for a small task).
+- You want to pin one specific model id for an invocation,
+  bypassing the pool picker.
+- You want to change the foo `model` config key that the picker
+  uses as the fallback when no pool is loaded.
 - You need to verify which provider keys foo can see.
 
 ## Before you begin
@@ -126,7 +137,7 @@ use a hosted provider.
 
 ## Related docs
 
-- [Route across models](route-across-models.md) — fallback chains and RouteLLM strong/weak routing.
+- [Route across models](route-across-models.md) — pool routing with `--budget` (the primary mechanism), fallback chains, RouteLLM strong/weak routing.
 - [Reference: config](../reference/config.md) — model + secrets config keys.
 - [Reference: commands](../reference/commands.md#model) — `model` and `provider` surface.
 - [Concepts: assembly pipeline](../concepts.md#the-prompt-assembly-pipeline) — how the model fits in.

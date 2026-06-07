@@ -21,11 +21,18 @@ export OPENAI_API_KEY=sk-...
 
 ```sh
 foo "hello"
+# [foo] info: seeded default pool config at ~/.config/hop/llm.yaml; edit to taste.
 # Hello! How can I help you today?
 ```
 
 If that prints a model response, you are done. If it errors, read
 [docs/troubleshooting.md](docs/troubleshooting.md).
+
+The first run seeds a default pool — a list of models foo picks
+from based on what each request needs. The `balanced` tier is the
+default; switch with `--budget cheap` for cheaper, faster picks
+or `--budget premium` for the most capable. Full tour:
+[docs/how-to/route-across-models.md](docs/how-to/route-across-models.md).
 
 ## Documentation
 

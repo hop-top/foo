@@ -134,9 +134,25 @@ assembly pipeline:
 
 The conceptual overview is in [concepts.md](concepts.md).
 
+## Next steps
+
+You ran every command above against the default `balanced` pool
+tier. Two things worth learning next:
+
+- `foo --budget cheap "explain quicksort"` — same prompt routed
+  through a cheaper model. Useful for bulk work and CI scripts.
+- `foo --budget premium --schema "name, summary" "..."` — premium
+  tier with structured output. The picker only considers entries
+  that support JSON mode.
+
+See [route across models](how-to/route-across-models.md) for the
+full picker model, pool editing, and the `-m` explicit-pin
+escape hatch.
+
 ## Related docs
 
 - [Embed content](how-to/embed-content.md) — add text and files in detail.
 - [Search semantically](how-to/search-semantically.md) — tune relevance and result count.
 - [Manage patterns](how-to/manage-patterns.md) — author and share patterns.
 - [Manage schemas](how-to/manage-schemas.md) — save and reuse JSON contracts.
+- [Route across models](how-to/route-across-models.md) — `--budget`, pool, fallback, RouteLLM.
