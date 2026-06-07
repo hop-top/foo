@@ -225,3 +225,29 @@ func TestCLI_Model(t *testing.T) {
 		require.Contains(t, stdout, `default model set to "gpt-4o"`)
 	})
 }
+
+// TestCLI_BudgetValidation locks in two things: invalid --budget values
+// error with a did-you-mean hint when the picker is engaged, AND --budget
+// is silently ignored when -m is set (since -m bypasses the picker).
+func TestCLI_BudgetValidation(t *testing.T) {
+	ensureBinary(t)
+	tmpDir := t.TempDir()
+
+	t.Run("invalid budget errors with did-you-mean", func(t *testing.T) {
+		// --dry-run skips the LLM call but still runs PersistentPreRunE,
+		// which is where ResolveBudget fires.
+		_, stderr, err := runFoo(t, tmpDir, "--dry-run", "--budget", "chep", "hi")
+		require.Error(t, err, "invalid --budget must reject before any LLM call")
+		require.Contains(t, stderr, "did you mean",
+			"error should suggest the closest valid tier")
+	})
+
+	t.Run("invalid budget ignored when --model is set", func(t *testing.T) {
+		// With -m set, budget validation should be skipped because the
+		// picker is bypassed and the value would be inert. --dry-run
+		// guarantees no LLM call regardless.
+		_, _, err := runFoo(t, tmpDir, "--dry-run", "-m", "gpt-4o", "--budget", "bogus", "hi")
+		require.NoError(t, err,
+			"--budget should be silently ignored when -m is set")
+	})
+}

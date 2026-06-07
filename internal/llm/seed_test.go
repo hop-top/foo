@@ -31,11 +31,19 @@ func TestSeedDefaultPool_CleanHome(t *testing.T) {
 	for _, want := range []string{
 		"cheap-openai", "cheap-anthropic", "cheap-google",
 		"balanced-openai", "balanced-anthropic", "balanced-google",
-		"premium-openai", "premium-anthropic", "premium-google",
+		"premium-openai", "premium-anthropic",
 		"pool:",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("seed missing %q:\n%s", want, body)
+		}
+	}
+	// Google premium tier is intentionally omitted from the seed (no
+	// publicly-released ultra-class 2.0 model). Guard against accidental
+	// re-introduction with a stale/wrong ID.
+	for _, unwanted := range []string{"gemini-2.0-ultra", "premium-google"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("seed contains %q which is not a verified GA model:\n%s", unwanted, body)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"hop.top/aim"
 	kitllm "hop.top/kit/go/ai/llm"
@@ -41,13 +42,16 @@ type ClientOpts struct {
 // defaultRegistry is the process-wide aim registry foo lends to the
 // picker when ClientOpts.Registry is nil. Constructed lazily so unit
 // tests that never pick from a real registry don't pay the network
-// cost.
-var defaultRegistry *aim.Registry
+// cost. Concurrent first-touch is safe via defaultRegistryOnce.
+var (
+	defaultRegistry     *aim.Registry
+	defaultRegistryOnce sync.Once
+)
 
 func ensureRegistry() *aim.Registry {
-	if defaultRegistry == nil {
+	defaultRegistryOnce.Do(func() {
 		defaultRegistry = aim.NewRegistry()
-	}
+	})
 	return defaultRegistry
 }
 

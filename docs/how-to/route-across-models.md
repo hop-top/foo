@@ -124,6 +124,12 @@ to one model and **bypasses the picker entirely**. Use it when:
 The fallback chain still wraps the pinned model — `-m` skips the
 picker, not kit's `WithFallback` wiring.
 
+**`--budget` is silently ignored when `-m` is set.** Since the picker
+is bypassed, the budget tier has nothing to filter against; foo skips
+even the value validation. `foo -m gpt-4o --budget cheap "..."` runs
+gpt-4o without complaint or warning. If you want budget-driven
+selection, drop `-m`.
+
 ### Reading picker decisions
 
 `--picker-debug` sets `LLM_PICKER_TRACE=1`, which makes kit emit one

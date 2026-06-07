@@ -22,13 +22,27 @@ import (
 )
 
 // defaultPoolYAML is the YAML block appended/written when no pool: is
-// present. Three tiers × three providers × one model each — enough to
-// exercise the picker without overwhelming a first-time user. Operators
-// are expected to edit this file (the seed comment says as much).
+// present. Three tiers × major providers — enough to exercise the
+// picker without overwhelming a first-time user. Operators are
+// expected to edit this file (the seed comment says as much).
+//
+// Model IDs are conservative defaults chosen from each provider's
+// publicly-documented GA model list. Verify against the provider's
+// current catalog before use:
+//   - OpenAI:    https://platform.openai.com/docs/models
+//   - Anthropic: https://docs.anthropic.com/en/docs/about-claude/models
+//   - Google:    https://ai.google.dev/gemini-api/docs/models/gemini
+//
+// Google's premium tier is intentionally omitted: the 2.0-generation
+// lineup does not include a publicly-released ultra-class model.
+// Operators wanting a third premium provider can add it after
+// confirming the model ID against the catalog above.
 const defaultPoolYAML = `# Default pool seeded by foo on first run. Edit to taste:
 # - alias is optional; useful when LLM_POOL_DISABLE references entries.
 # - enabled defaults to true; set to false to mute an entry without removing.
 # - weight defaults to 1.0; used by future load-distribution policy.
+# - model IDs are conservative defaults; verify against each provider's
+#   current catalog (links in foo's docs/how-to/route-across-models.md).
 pool:
   - alias: cheap-openai
     scheme: openai
@@ -47,16 +61,15 @@ pool:
     model: claude-3-5-sonnet-latest
   - alias: balanced-google
     scheme: google
-    model: gemini-2.0-pro
+    model: gemini-1.5-pro
   - alias: premium-openai
     scheme: openai
     model: o1
   - alias: premium-anthropic
     scheme: anthropic
     model: claude-opus-latest
-  - alias: premium-google
-    scheme: google
-    model: gemini-2.0-ultra
+  # Google premium tier intentionally omitted; add after confirming
+  # the model ID against Google's current GA catalog.
 `
 
 // SeedDefaultPool inspects ~/.config/hop/llm.yaml (or
@@ -85,7 +98,7 @@ func SeedDefaultPool() (wrote bool, err error) {
 		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 			return false, fmt.Errorf("create config dir: %w", mkErr)
 		}
-		if writeErr := os.WriteFile(path, []byte(defaultPoolYAML), 0o644); writeErr != nil {
+		if writeErr := atomicWrite(path, []byte(defaultPoolYAML)); writeErr != nil {
 			return false, fmt.Errorf("write seed: %w", writeErr)
 		}
 		return true, nil
@@ -108,18 +121,45 @@ func SeedDefaultPool() (wrote bool, err error) {
 		return false, nil
 	}
 
-	// Append the pool block. Newline guard so we don't smash a key
-	// onto the operator's last line.
-	suffix := defaultPoolYAML
-	if len(data) > 0 && data[len(data)-1] != '\n' {
-		suffix = "\n" + suffix
-	} else {
-		suffix = "\n" + suffix
-	}
-	if writeErr := os.WriteFile(path, append(data, []byte(suffix)...), 0o644); writeErr != nil {
+	// Append the pool block. Always prepend a newline so we don't
+	// smash a key onto the operator's last line; a doubled newline
+	// when the file already ends with one is cosmetic.
+	suffix := "\n" + defaultPoolYAML
+	if writeErr := atomicWrite(path, append(data, []byte(suffix)...)); writeErr != nil {
 		return false, fmt.Errorf("append seed: %w", writeErr)
 	}
 	return true, nil
+}
+
+// atomicWrite writes data to path via a same-directory tempfile + rename.
+// os.Rename within a directory is atomic on POSIX, so concurrent first-
+// run invocations can race the seed without corrupting the destination.
+// The tempfile is best-effort cleaned up on rename failure.
+func atomicWrite(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".llm-seed-*.yaml")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close temp: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp: %w", err)
+	}
+	return nil
 }
 
 // SeedPath returns the path SeedDefaultPool writes to. Used by tests

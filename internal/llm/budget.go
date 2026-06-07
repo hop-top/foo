@@ -3,8 +3,9 @@
 // for pattern/schema not-found messages (closest-match suggestion).
 //
 // Precedence: caller-supplied CLI value > FOO_BUDGET env > "balanced".
-// Caller is responsible for layering a config-file value above the env
-// fallback if one exists.
+// A config-file precedence layer is intentionally not surfaced today —
+// internal/config.Config has no Budget field. Adding one is tracked as
+// a future enhancement; until then the env var is the persistent knob.
 
 package llm
 

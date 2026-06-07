@@ -244,8 +244,15 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	// --budget validation runs here so misspellings fail before any LLM
 	// call. ResolveBudget enriches the error with a did-you-mean hint
 	// matching foo's pattern/schema not-found story.
-	if _, err := llm.ResolveBudget(budgetTier); err != nil {
-		return err
+	//
+	// Skip when --model is set: an explicit -m pins the call to a
+	// specific model and bypasses the picker entirely, so --budget is
+	// inert. Validating it anyway would surface a confusing error on
+	// `foo -m gpt-4o --budget bogus` for a value that won't be used.
+	if modelName == "" {
+		if _, err := llm.ResolveBudget(budgetTier); err != nil {
+			return err
+		}
 	}
 
 	// --picker-debug forwards to the env var kit's picker reads per
@@ -268,7 +275,7 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	} else if wrote {
 		if path, _ := llm.SeedPath(); path != "" {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-				"foo: seeded default pool config at %s; edit to taste.\n", path)
+				"[foo] info: seeded default pool config at %s; edit to taste.\n", path)
 		}
 	}
 
