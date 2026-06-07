@@ -3,6 +3,13 @@
 Pipe text through LLMs from the terminal. Pattern-based prompts,
 streaming output, plugin ecosystem.
 
+<p align="center">
+    <a href="https://github.com/hop-top/foo/releases"><img src="https://img.shields.io/github/release/hop-top/foo.svg" alt="Release"/></a>
+    <a href="https://pkg.go.dev/hop.top/foo?tab=doc"><img src="https://pkg.go.dev/badge/hop.top/foo.svg" alt="GoDoc"/></a>
+    <a href="https://github.com/hop-top/foo/actions"><img src="https://github.com/hop-top/foo/actions/workflows/ci.yml/badge.svg" alt="Build Status"/></a>
+    <a href="https://github.com/hop-top/foo/blob/main/LICENSE"><img src="https://img.shields.io/github/license/hop-top/foo" alt="License"/></a>
+</p>
+
 ## Install
 
 ```sh
@@ -82,4 +89,7 @@ walkthrough: [Use plugins](docs/how-to/use-plugins.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+See [LICENSE](LICENSE).
+
+---
+Maintained by [jadb](https://x.com/jadb).
