@@ -301,7 +301,8 @@ via `WithFallback`.
 | Surface | Default | Purpose |
 |---------|---------|---------|
 | `--budget` | `balanced` | Pool routing tier (`cheap` / `balanced` / `premium`). |
-| `FOO_BUDGET` (env) | (unset) | Fallback for `--budget`. CLI wins. |
+| `FOO_BUDGET` (env) | (unset) | Fallback for `--budget`. CLI wins; env wins over the config key. |
+| `budget` (foo config key) | (unset) | Persistent default for the budget tier. Env wins. |
 | `--picker-debug` | off | Sets `LLM_PICKER_TRACE=1` for the process. |
 | `-m, --model` | config value | Pin one model; **bypasses the picker**. |
 | `FOO_MODEL` (env) | (unset) | Default model id. |

@@ -28,7 +28,12 @@ type Config struct {
 	Model        string `yaml:"model"`
 	PatternsPath string `yaml:"patterns_path"`
 	Accent       string `yaml:"accent"`
-	Secrets      Secrets `yaml:"secrets"`
+	// Budget is the default pool routing tier (cheap|balanced|premium).
+	// Empty means "no config-file preference"; ResolveBudget falls
+	// through to the env var or the kit default. Validated at use,
+	// not at load, so a misspell on disk does not block startup.
+	Budget  string  `yaml:"budget"`
+	Secrets Secrets `yaml:"secrets"`
 }
 
 func Default() Config {
@@ -132,6 +137,7 @@ func applyEnv(cfg any) {
 	apply("FOO_MODEL", func(v string) { c.Model = v })
 	apply("FOO_PATTERNS_PATH", func(v string) { c.PatternsPath = v })
 	apply("FOO_ACCENT", func(v string) { c.Accent = v })
+	apply("FOO_BUDGET", func(v string) { c.Budget = v })
 	apply("FOO_SECRETS_BACKEND", func(v string) { c.Secrets.Backend = v })
 	apply("FOO_SECRETS_PREFIX", func(v string) { c.Secrets.Prefix = v })
 	apply("FOO_SECRETS_SERVICE", func(v string) { c.Secrets.Service = v })

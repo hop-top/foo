@@ -84,13 +84,33 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 		pool, _ := kitllm.LoadPool()
 		if len(pool) == 0 {
 			// No pool block authored. Surface one slog warning so
-			// operators discover the surface; do not error — task D
-			// seeds a default config on first run.
+			// operators discover the surface; do not error — the seed
+			// path writes a default config on first run.
 			slog.Warn(
 				"llm.pool.empty: no pool block in ~/.config/hop/llm.yaml; falling back to single default model",
 				slog.String("hint", "edit ~/.config/hop/llm.yaml or run foo to seed a default"),
 			)
 		} else {
+			// Help operators understand why the picker has fewer
+			// candidates than the file looks to declare. Kit's
+			// PickProviderInPool silently elides disabled entries
+			// (Stage="pool_disabled" in the trace); we surface the
+			// count once here so `--picker-debug` is not the only way
+			// to discover it.
+			enabled := 0
+			for _, e := range pool {
+				if e.Enabled {
+					enabled++
+				}
+			}
+			if enabled < len(pool) {
+				slog.Debug(
+					"llm.pool.entries: disabled entries elided from picker",
+					slog.Int("total", len(pool)),
+					slog.Int("enabled", enabled),
+					slog.Int("disabled", len(pool)-enabled),
+				)
+			}
 			reg := opts.Registry
 			if reg == nil {
 				reg = ensureRegistry()

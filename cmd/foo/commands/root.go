@@ -250,7 +250,7 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	// inert. Validating it anyway would surface a confusing error on
 	// `foo -m gpt-4o --budget bogus` for a value that won't be used.
 	if modelName == "" {
-		if _, err := llm.ResolveBudget(budgetTier); err != nil {
+		if _, err := llm.ResolveBudget(budgetTier, cfg.Budget); err != nil {
 			return err
 		}
 	}
@@ -831,7 +831,7 @@ func clientOptsFromFlags(promptText string) llm.ClientOpts {
 	// ResolveBudget already validated successfully in
 	// initializeRuntime; we drop the error here because re-validation
 	// would conflate "early gate" with "client construction" semantics.
-	if tier, err := llm.ResolveBudget(budgetTier); err == nil {
+	if tier, err := llm.ResolveBudget(budgetTier, cfg.Budget); err == nil {
 		opts.Budget = tier
 	}
 	return opts

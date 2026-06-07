@@ -34,6 +34,7 @@ ones.
 | `model` | string | `claude-3-5-sonnet-latest` | Default LLM model id | `FOO_MODEL` |
 | `patterns_path` | string | `$XDG_CONFIG_HOME/foo/patterns` | Directory for pattern files | `FOO_PATTERNS_PATH` |
 | `accent` | string | `#E040FB` | TUI accent color (hex) | `FOO_ACCENT` |
+| `budget` | string | `""` (= `balanced` at use) | Persistent pool routing tier. Env wins. | `FOO_BUDGET` |
 | `secrets.backend` | string | `env` | Secret store backend id | `FOO_SECRETS_BACKEND` |
 | `secrets.prefix` | string | `""` | Prefix applied to secret key lookups | `FOO_SECRETS_PREFIX` |
 | `secrets.service` | string | `""` | Service identifier for the backend | `FOO_SECRETS_SERVICE` |

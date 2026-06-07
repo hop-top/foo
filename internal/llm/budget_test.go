@@ -9,7 +9,7 @@ import (
 
 func TestResolveBudget_Default(t *testing.T) {
 	t.Setenv("FOO_BUDGET", "")
-	got, err := ResolveBudget("")
+	got, err := ResolveBudget("", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestResolveBudget_Default(t *testing.T) {
 
 func TestResolveBudget_CLIWinsOverEnv(t *testing.T) {
 	t.Setenv("FOO_BUDGET", "cheap")
-	got, err := ResolveBudget("premium")
+	got, err := ResolveBudget("premium", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestResolveBudget_CLIWinsOverEnv(t *testing.T) {
 
 func TestResolveBudget_EnvFallback(t *testing.T) {
 	t.Setenv("FOO_BUDGET", "cheap")
-	got, err := ResolveBudget("")
+	got, err := ResolveBudget("", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestResolveBudget_EnvFallback(t *testing.T) {
 
 func TestResolveBudget_AcceptsCaseAndWhitespace(t *testing.T) {
 	t.Setenv("FOO_BUDGET", "")
-	got, err := ResolveBudget("  Premium  ")
+	got, err := ResolveBudget("  Premium  ", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestResolveBudget_AcceptsCaseAndWhitespace(t *testing.T) {
 
 func TestResolveBudget_InvalidCLI_SuggestsClosest(t *testing.T) {
 	t.Setenv("FOO_BUDGET", "")
-	_, err := ResolveBudget("cheep")
+	_, err := ResolveBudget("cheep", "")
 	if err == nil {
 		t.Fatal("expected error for misspelled tier")
 	}
@@ -71,7 +71,7 @@ func TestResolveBudget_InvalidCLI_SuggestsClosest(t *testing.T) {
 
 func TestResolveBudget_InvalidEnv_NamesSource(t *testing.T) {
 	t.Setenv("FOO_BUDGET", "wat")
-	_, err := ResolveBudget("")
+	_, err := ResolveBudget("", "")
 	if err == nil {
 		t.Fatal("expected error for invalid env value")
 	}
@@ -82,7 +82,7 @@ func TestResolveBudget_InvalidEnv_NamesSource(t *testing.T) {
 
 func TestResolveBudget_TotallyUnknown_ListsValid(t *testing.T) {
 	t.Setenv("FOO_BUDGET", "")
-	_, err := ResolveBudget("zzzz")
+	_, err := ResolveBudget("zzzz", "")
 	if err == nil {
 		t.Fatal("expected error for unknown value")
 	}
@@ -91,5 +91,38 @@ func TestResolveBudget_TotallyUnknown_ListsValid(t *testing.T) {
 		if !strings.Contains(msg, tier) {
 			t.Errorf("error must list valid tier %q: %q", tier, msg)
 		}
+	}
+}
+
+func TestResolveBudget_ConfigFallback(t *testing.T) {
+	t.Setenv("FOO_BUDGET", "")
+	got, err := ResolveBudget("", "premium")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != kitllm.BudgetPremium {
+		t.Fatalf("config fallback: got %v, want premium", got)
+	}
+}
+
+func TestResolveBudget_EnvWinsOverConfig(t *testing.T) {
+	t.Setenv("FOO_BUDGET", "cheap")
+	got, err := ResolveBudget("", "premium")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != kitllm.BudgetCheap {
+		t.Fatalf("env must win over config: got %v, want cheap", got)
+	}
+}
+
+func TestResolveBudget_InvalidConfig_NamesSource(t *testing.T) {
+	t.Setenv("FOO_BUDGET", "")
+	_, err := ResolveBudget("", "wat")
+	if err == nil {
+		t.Fatal("expected error for invalid config value")
+	}
+	if !strings.Contains(err.Error(), "budget config key") {
+		t.Errorf("error must name the config source: %q", err)
 	}
 }

@@ -1,11 +1,10 @@
-// Budget tier resolution: parse foo's --budget / FOO_BUDGET inputs into
-// kit's BudgetTier enum with the same error-enrichment story foo uses
-// for pattern/schema not-found messages (closest-match suggestion).
+// Budget tier resolution: parse foo's --budget / FOO_BUDGET / config
+// inputs into kit's BudgetTier enum with the same error-enrichment
+// story foo uses for pattern/schema not-found messages (closest-match
+// suggestion).
 //
-// Precedence: caller-supplied CLI value > FOO_BUDGET env > "balanced".
-// A config-file precedence layer is intentionally not surfaced today —
-// internal/config.Config has no Budget field. Adding one is tracked as
-// a future enhancement; until then the env var is the persistent knob.
+// Precedence: caller-supplied CLI value > FOO_BUDGET env > caller-
+// supplied config value > "balanced".
 
 package llm
 
@@ -32,17 +31,22 @@ const DefaultBudget = kitllm.BudgetBalanced
 const DefaultBudgetLabel = "balanced"
 
 // ResolveBudget returns the BudgetTier for cliValue, falling back to
-// FOO_BUDGET, then DefaultBudget. Invalid values produce a closest-match
-// suggestion in the error so misspellings surface like pattern/schema
-// not-found errors.
+// FOO_BUDGET, then cfgValue (the config-file `budget:` key), then
+// DefaultBudget. Invalid values produce a closest-match suggestion in
+// the error so misspellings surface like pattern/schema not-found
+// errors.
 //
-// Empty strings (both cliValue and env) skip layers without erroring.
-func ResolveBudget(cliValue string) (kitllm.BudgetTier, error) {
+// Empty strings at any layer skip that layer without erroring.
+func ResolveBudget(cliValue, cfgValue string) (kitllm.BudgetTier, error) {
 	raw := strings.TrimSpace(cliValue)
 	source := "--budget"
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("FOO_BUDGET"))
 		source = "FOO_BUDGET"
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(cfgValue)
+		source = "budget config key"
 	}
 	if raw == "" {
 		return DefaultBudget, nil
