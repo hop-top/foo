@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"charm.land/log/v2"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/log/v2"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"hop.top/foo/internal/config"
@@ -30,8 +30,8 @@ import (
 	extdispatch "hop.top/kit/go/ai/ext/dispatch"
 	kitllm "hop.top/kit/go/ai/llm"
 	kitcli "hop.top/kit/go/console/cli"
-	"hop.top/kit/go/console/output"
 	kitlog "hop.top/kit/go/console/log"
+	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/core/upgrade"
 	"hop.top/kit/go/core/xdg"
 	kitbus "hop.top/kit/go/runtime/bus"
@@ -60,12 +60,19 @@ var (
 	budgetTier      string
 	pickerDebug     bool
 
-	cfg     = config.Default()
-	root    *kitcli.Root
-	logger  *log.Logger
+	// Delegation-safety / scope globals (§8). Registered via
+	// Config.Globals so they live on the root's persistent flag set and
+	// every subcommand inherits them.
+	offline      bool
+	profileName  string
+	instanceName string
+
+	cfg      = config.Default()
+	root     *kitcli.Root
+	logger   *log.Logger
 	eventBus kitbus.Bus
-	mgr     *wsm.Manager
-	ws      *wsm.Workspace
+	mgr      *wsm.Manager
+	ws       *wsm.Workspace
 )
 
 var commandGroups = map[string]string{
@@ -98,12 +105,22 @@ func New(v string) *kitcli.Root {
 		Short:   "LLM workflows from the terminal",
 		Accent:  config.DefaultAccent,
 		Help: kitcli.HelpConfig{
-			Disclaimer: longDescription,
+			Disclaimer:  longDescription,
+			ShowAliases: true,
 			Groups: []kitcli.GroupConfig{
 				{ID: "knowledge", Title: "KNOWLEDGE"},
 				{ID: "organize", Title: "ORGANIZE"},
 				{ID: "interact", Title: "INTERACT"},
 			},
+		},
+		// Scope/delegation globals (§8). --config -c is registered by kit
+		// automatically; these three complete the required set. Bound to
+		// package-level pointers so initializeRuntime can honor them
+		// without round-tripping through viper.
+		Globals: []kitcli.Flag{
+			{Name: "offline", Usage: "Disable all network access (skips upgrade check and remote calls)", BoolVar: &offline},
+			{Name: "profile", Usage: "Select the aps profile scoping config + secret lookups", StringVar: &profileName},
+			{Name: "instance", Usage: "Select the backend instance (single-instance build: currently a no-op)", StringVar: &instanceName},
 		},
 	}, kitcli.WithStatus(kitcli.StatusConfig{}))
 	logger = kitlog.New(root.Viper)
@@ -223,11 +240,33 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	}
 	cfg = loaded
 
+	// --profile scopes the secret store: the aps profile name namespaces
+	// credential lookups so two profiles never collide on a bare key like
+	// "openai_api_key". Empty leaves the config-file Service intact.
+	//
+	// --instance selects a backend instance. foo is a single-instance
+	// local-state build (one embeddings.db, one schemas.db under the XDG
+	// state dir), so the flag is wired and plumbed but currently has no
+	// backend to switch — it is recorded for forward-compat and surfaced
+	// via config.Secrets.Service when both are set.
+	if profileName != "" {
+		cfg.Secrets.Service = profileName
+		if instanceName != "" {
+			cfg.Secrets.Service = profileName + "/" + instanceName
+		}
+	} else if instanceName != "" {
+		cfg.Secrets.Service = instanceName
+	}
+
 	verbose, _ := cmd.Root().PersistentFlags().GetCount("verbose")
 	logger = kitlog.WithVerbose(root.Viper, verbose)
 	slog.SetDefault(slog.New(logger))
 
-	if cmd.Name() != "upgrade" {
+	// --offline suppresses every network call. The upgrade check is the
+	// one unconditional network touch in the runtime init path; gate it
+	// here. Downstream LLM/embedding calls read the same flag via
+	// networkAllowed().
+	if !offline && cmd.Name() != "upgrade" {
 		upgrade.NotifyIfAvailable(cmd.Context(), newUpgradeChecker(), cmd.ErrOrStderr())
 	}
 	if eventBus == nil {
@@ -655,6 +694,9 @@ func upgradeCmd() *cobra.Command {
 		Long: `Check the GitHub releases for a newer version of foo and apply
 the upgrade in-place when one is available. Local binary mutation.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !networkAllowed() {
+				return fmt.Errorf("`foo upgrade` requires network access; drop --offline and retry")
+			}
 			return upgrade.RunCLI(cmd.Context(), newUpgradeChecker(), upgrade.CLIOptions{})
 		},
 	}
@@ -848,6 +890,12 @@ func applyCommandGroups() {
 		}
 	}
 }
+
+// networkAllowed reports whether outbound network access is permitted.
+// It is false when --offline is set, letting callers short-circuit
+// remote work (upgrade self-update, event-bus peer connect) without
+// each re-reading the flag.
+func networkAllowed() bool { return !offline }
 
 func publishEvent(ctx context.Context, topic string, payload any) {
 	if eventBus == nil {
