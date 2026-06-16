@@ -11,6 +11,16 @@ import (
 
 var version = "dev"
 
+// Exit codes follow the kit cross-tool convention (§8.1): 1 generic,
+// 2 usage (bad/missing args), 5 a missing external dependency. Fetch
+// failures are runtime errors against an otherwise-valid request, so
+// they map to the generic 1.
+const (
+	exitFetch      = 1
+	exitUsage      = 2
+	exitMissingDep = 5
+)
+
 type extInfo struct {
 	Name         string   `json:"name"`
 	Version      string   `json:"version"`
@@ -62,18 +72,18 @@ func main() {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: YouTube URL required")
 		fmt.Fprintln(os.Stderr, "usage: foo-youtube [flags] <url>")
-		os.Exit(1)
+		os.Exit(exitUsage)
 	}
 
 	url := args[0]
 	if !isYouTubeURL(url) {
 		fmt.Fprintf(os.Stderr, "error: invalid YouTube URL: %s\n", url)
-		os.Exit(1)
+		os.Exit(exitUsage)
 	}
 
 	if err := checkYTDLP(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitMissingDep)
 	}
 
 	var md *videoMetadata
@@ -82,7 +92,7 @@ func main() {
 		md, err = fetchMetadata(url)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error fetching metadata: %v\n", err)
-			os.Exit(1)
+			os.Exit(exitFetch)
 		}
 	}
 
@@ -92,7 +102,7 @@ func main() {
 		transcriptText, err = fetchTranscript(url, *timestamps)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error fetching transcript: %v\n", err)
-			os.Exit(1)
+			os.Exit(exitFetch)
 		}
 	}
 
