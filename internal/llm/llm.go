@@ -17,6 +17,8 @@ import (
 	_ "hop.top/kit/go/ai/llm/ollama"
 	_ "hop.top/kit/go/ai/llm/openai"
 	_ "hop.top/kit/go/ai/llm/routellm"
+	"hop.top/kit/go/storage/secret"
+	_ "hop.top/kit/go/storage/secret/env"
 )
 
 type Client struct {
@@ -157,7 +159,7 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 func buildClient(scheme, model, envVar string) (*Client, error) {
 	var uri string
 	if envVar != "" {
-		key := os.Getenv(envVar)
+		key := lookupAPIKey(envVar)
 		if key == "" {
 			return nil, fmt.Errorf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar)
 		}
@@ -189,6 +191,29 @@ func buildClient(scheme, model, envVar string) (*Client, error) {
 	return &Client{
 		client: kitllm.NewClient(p, clientOpts...),
 	}, nil
+}
+
+// lookupAPIKey resolves a provider API key through the kit secret store
+// rather than reading the process environment directly. The store is
+// opened with the default "env" backend, so the historical behavior is
+// preserved: secret key `openai_api_key` maps to env var
+// `OPENAI_API_KEY` (the env backend uppercases and swaps `/`→`_`).
+// Configuring a different backend (keychain, vault) in foo's config
+// transparently redirects the lookup without touching this call site.
+//
+// envVar is the canonical env-var spelling (e.g. "OPENAI_API_KEY"); it
+// is lowercased to form the backend-neutral secret key. A direct
+// os.Getenv read is the last-resort fallback so a store-open failure
+// never regresses a working env-based setup.
+func lookupAPIKey(envVar string) string {
+	key := strings.ToLower(envVar)
+	store, err := secret.Open(secret.Config{Backend: "env"})
+	if err == nil {
+		if got, getErr := store.Get(context.Background(), key); getErr == nil {
+			return string(got.Value)
+		}
+	}
+	return os.Getenv(envVar)
 }
 
 // schemeForModel maps a model id to its kit URI scheme and the env var
