@@ -75,6 +75,7 @@ var (
 	root     *kitcli.Root
 	logger   *log.Logger
 	eventBus kitbus.Bus
+	busNet   *kitbus.NetworkAdapter
 	mgr      *wsm.Manager
 	ws       *wsm.Workspace
 )
@@ -279,6 +280,7 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	}
 	if eventBus == nil {
 		eventBus = kitbus.New()
+		wireBusNetwork(cmd.Context())
 	}
 
 	if cmd.CommandPath() == "foo" || cmd.CommandPath() == "foo repl" {
@@ -520,6 +522,7 @@ applied to any prompt via --pattern.`,
 			if err := pattern.Create(cfg.PatternsPath, args[0], systemPrompt); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.pattern.created", map[string]any{"name": args[0]})
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q saved\n", args[0])
 			return nil
 		},
@@ -540,6 +543,7 @@ applied to any prompt via --pattern.`,
 			if err := pattern.Import(cfg.PatternsPath, args[0], name); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.pattern.imported", map[string]any{"path": args[0], "name": name})
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "pattern imported")
 			return nil
 		},
@@ -557,6 +561,7 @@ applied to any prompt via --pattern.`,
 			if err := pattern.Delete(cfg.PatternsPath, args[0]); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.pattern.deleted", map[string]any{"name": args[0]})
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q deleted\n", args[0])
 			return nil
 		},
@@ -625,6 +630,7 @@ supplied on the command line.`,
 			if err := cfg.Save(); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.organize.model.selected", map[string]any{"model": cfg.Model})
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default model set to %q\n", cfg.Model)
 			return nil
 		},
@@ -951,6 +957,41 @@ func applyCommandGroups() {
 // remote work (upgrade self-update, event-bus peer connect) without
 // each re-reading the flag.
 func networkAllowed() bool { return !offline }
+
+// wireBusNetwork attaches a NetworkAdapter to the in-process bus so the
+// domain events foo publishes reach external subscribers (aps, ctxt,
+// tlc) over WebSocket. A bare bus.New() publishes to nobody; the adapter
+// subscribes to every local topic ("#") and forwards to each connected
+// peer.
+//
+// Peers are read from FOO_BUS_PEERS (comma-separated ws:// URLs);
+// connects are best-effort (kit retries with backoff). When --offline
+// is set, or no peers are configured, the adapter is skipped and events
+// stay in-process. An auth token from FOO_BUS_TOKEN / BUS_TOKEN is
+// attached when present.
+func wireBusNetwork(ctx context.Context) {
+	if !networkAllowed() || eventBus == nil {
+		return
+	}
+	raw := strings.TrimSpace(os.Getenv("FOO_BUS_PEERS"))
+	if raw == "" {
+		return
+	}
+	var opts []kitbus.NetworkOption
+	if auth, ok := kitbus.AuthFromEnv("FOO_BUS_TOKEN", "BUS_TOKEN"); ok {
+		opts = append(opts, kitbus.WithAuth(auth))
+	}
+	busNet = kitbus.NewNetworkAdapter(eventBus, opts...)
+	for _, addr := range strings.Split(raw, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		if err := busNet.Connect(ctx, addr); err != nil {
+			slog.Warn("bus.network.connect.failed", slog.String("addr", addr), slog.Any("err", err))
+		}
+	}
+}
 
 func publishEvent(ctx context.Context, topic string, payload any) {
 	if eventBus == nil {

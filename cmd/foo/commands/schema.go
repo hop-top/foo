@@ -117,6 +117,7 @@ persistence; the JSON path stores the schema verbatim.`,
 				if _, err := store.SetJSON(name, json.RawMessage(data)); err != nil {
 					return err
 				}
+				publishEvent(cmd.Context(), "foo.knowledge.schema.created", map[string]any{"name": name, "source": filePath})
 				fmt.Fprintf(cmd.OutOrStdout(), "schema %q saved from %s\n", name, filePath)
 				return nil
 			}
@@ -128,6 +129,7 @@ persistence; the JSON path stores the schema verbatim.`,
 			if _, err := store.Set(name, args[1]); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.schema.created", map[string]any{"name": name})
 			fmt.Fprintf(cmd.OutOrStdout(), "schema %q saved\n", name)
 			return nil
 		},
@@ -153,6 +155,7 @@ func schemaDeleteCmd() *cobra.Command {
 			if err := store.Remove(args[0]); err != nil {
 				return enrichSchemaNotFound(args[0], err)
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.schema.deleted", map[string]any{"name": args[0]})
 			fmt.Fprintf(cmd.OutOrStdout(), "schema %q deleted\n", args[0])
 			return nil
 		},
@@ -172,6 +175,7 @@ func schemaCompileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.schema.compiled", map[string]any{"dsl": args[0]})
 			return renderData(cmd, schemaView{Name: "", DSL: args[0], Schema: compiled})
 		},
 	}

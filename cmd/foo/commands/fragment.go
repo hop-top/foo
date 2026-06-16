@@ -102,7 +102,7 @@ func fragmentCreateCmd() *cobra.Command {
 				}
 			}
 
-			publishEvent(ctx, "foo.fragment.created", map[string]any{"alias": alias})
+			publishEvent(ctx, "foo.knowledge.fragment.created", map[string]any{"alias": alias})
 			fmt.Fprintf(cmd.OutOrStdout(), "fragment %q saved\n", alias)
 			return nil
 		},
@@ -152,7 +152,7 @@ func fragmentDeleteCmd() *cobra.Command {
 				return err
 			}
 
-			publishEvent(ctx, "foo.fragment.deleted", map[string]any{"alias": args[0]})
+			publishEvent(ctx, "foo.knowledge.fragment.deleted", map[string]any{"alias": args[0]})
 			fmt.Fprintf(cmd.OutOrStdout(), "fragment %q deleted\n", args[0])
 			return nil
 		},

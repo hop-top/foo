@@ -79,6 +79,7 @@ collection is "default"; override with --collection.`,
 				return fmt.Errorf("store: %w", err)
 			}
 
+			publishEvent(cmd.Context(), "foo.knowledge.embedding.created", map[string]any{"id": storedID, "collection": collection})
 			fmt.Fprintf(cmd.OutOrStdout(), "embedded %s into %q\n", storedID, collection)
 			return nil
 		},
@@ -146,6 +147,7 @@ same content produces new rows.`,
 				}
 			}
 
+			publishEvent(cmd.Context(), "foo.knowledge.embedding.created", map[string]any{"source": filePath, "collection": collection, "chunks": len(chunks)})
 			fmt.Fprintf(cmd.OutOrStdout(), "embedded %d chunks from %s into %q\n", len(chunks), filePath, collection)
 			return nil
 		},
@@ -260,6 +262,7 @@ delete collections; embeddings themselves are added with
 			if err := store.DeleteCollection(args[0]); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.collection.deleted", map[string]any{"name": args[0]})
 			fmt.Fprintf(cmd.OutOrStdout(), "collection %q deleted\n", args[0])
 			return nil
 		},
