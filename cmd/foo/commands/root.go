@@ -30,8 +30,10 @@ import (
 	extdispatch "hop.top/kit/go/ai/ext/dispatch"
 	kitllm "hop.top/kit/go/ai/llm"
 	kitcli "hop.top/kit/go/console/cli"
+	kitcliconfig "hop.top/kit/go/console/cli/config"
 	kitlog "hop.top/kit/go/console/log"
 	"hop.top/kit/go/console/output"
+	coreconfig "hop.top/kit/go/core/config"
 	"hop.top/kit/go/core/upgrade"
 	"hop.top/kit/go/core/xdg"
 	kitbus "hop.top/kit/go/runtime/bus"
@@ -84,6 +86,7 @@ var commandGroups = map[string]string{
 	"embed":    "knowledge",
 	"model":    "organize",
 	"provider": "organize",
+	"config":   "management",
 	"upgrade":  "management",
 }
 
@@ -163,6 +166,7 @@ func New(v string) *kitcli.Root {
 	root.Cmd.AddCommand(schemaCmd())
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
+	root.Cmd.AddCommand(configCmd())
 	root.Cmd.AddCommand(upgradeCmd())
 
 	registerExtPlugins(root.Cmd)
@@ -684,6 +688,35 @@ credentials they expect are present in the configured secret store.`,
 	kitcli.SetSideEffect(showCmd, kitcli.SideEffectRead)
 	cmd.AddCommand(showCmd)
 
+	return cmd
+}
+
+// configCmd is the `config` parent. It owns no behavior of its own; the
+// shared `path` / `paths` introspection subcommands are attached by
+// kit's cli/config helper. The resolver adapts core/config's foo-scoped
+// precedence chain to the cli/config.ResolvedPath wire type (identical
+// fields, distinct package).
+func configCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Inspect foo configuration",
+		Long:  "Inspect the foo configuration precedence chain. `config path` prints the highest-precedence existing config file; `config paths` prints the full ordered chain.",
+		Args:  cobra.NoArgs,
+	}
+	resolver := func(cwd string) []kitcliconfig.ResolvedPath {
+		raw := coreconfig.PathsForTool(cwd, "foo")
+		out := make([]kitcliconfig.ResolvedPath, len(raw))
+		for i, r := range raw {
+			out[i] = kitcliconfig.ResolvedPath{
+				Path:   r.Path,
+				Source: r.Source,
+				Scope:  r.Scope,
+				Exists: r.Exists,
+			}
+		}
+		return out
+	}
+	kitcliconfig.RegisterPathSubcommands(cmd, "foo", kitcliconfig.WithResolver(resolver))
 	return cmd
 }
 
