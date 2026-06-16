@@ -162,6 +162,10 @@ func newRoot() *kitcli.Root {
 			Disclaimer: `foo-youtube fetches a YouTube video's transcript and metadata
 via yt-dlp and renders them as markdown on stdout.
 
+Arguments:
+  <url>   YouTube video URL (youtube.com/watch, youtu.be, or
+          youtube.com/shorts). Required.
+
 It is an external plugin for foo: the host discovers it on $PATH and
 interrogates it with --ext-info.`,
 		},
