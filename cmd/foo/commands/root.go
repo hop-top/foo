@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -29,6 +30,7 @@ import (
 	extdiscover "hop.top/kit/go/ai/ext/discover"
 	extdispatch "hop.top/kit/go/ai/ext/dispatch"
 	kitllm "hop.top/kit/go/ai/llm"
+	"hop.top/kit/go/console/alias"
 	kitcli "hop.top/kit/go/console/cli"
 	kitcliconfig "hop.top/kit/go/console/cli/config"
 	kitlog "hop.top/kit/go/console/log"
@@ -87,6 +89,7 @@ var commandGroups = map[string]string{
 	"model":    "organize",
 	"provider": "organize",
 	"config":   "management",
+	"alias":    "management",
 	"upgrade":  "management",
 }
 
@@ -167,6 +170,7 @@ func New(v string) *kitcli.Root {
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
 	root.Cmd.AddCommand(configCmd())
+	root.Cmd.AddCommand(aliasCmd())
 	root.Cmd.AddCommand(upgradeCmd())
 
 	registerExtPlugins(root.Cmd)
@@ -718,6 +722,24 @@ func configCmd() *cobra.Command {
 	}
 	kitcliconfig.RegisterPathSubcommands(cmd, "foo", kitcliconfig.WithResolver(resolver))
 	return cmd
+}
+
+// aliasCmd wires kit's alias store and management command. Aliases are
+// persisted as YAML under the foo config dir; kit's (*Root).AliasCmd
+// supplies list/add/remove leaves and, with Config.Help.ShowAliases
+// set, surfaces them in help output. A store-load failure is
+// non-fatal: the command still mounts against an empty store so
+// `alias add` keeps working.
+func aliasCmd() *cobra.Command {
+	confDir, err := xdg.ConfigDir("foo")
+	if err != nil {
+		confDir = ""
+	}
+	store := alias.NewStore(filepath.Join(confDir, "aliases.yaml"))
+	if loadErr := store.Load(); loadErr != nil {
+		slog.Warn("alias.load.failed", slog.Any("err", loadErr))
+	}
+	return root.AliasCmd(store)
 }
 
 func upgradeCmd() *cobra.Command {
