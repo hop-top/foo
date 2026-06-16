@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,9 +18,19 @@ import (
 	"github.com/spf13/cobra"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/console/output"
+	kitbus "hop.top/kit/go/runtime/bus"
 )
 
 var version = "dev"
+
+// eventBus carries capture events to external subscribers (aps, ctxt,
+// tlc) via the network adapter. A bare bus.New() publishes in-process to
+// nobody; wireBusNetwork attaches the adapter when peers are configured.
+// nil until run() initializes it; publishEvent tolerates the nil bus.
+var (
+	eventBus kitbus.Bus
+	busNet   *kitbus.NetworkAdapter
+)
 
 // Exit codes follow the kit cross-tool convention (§8.1): 1 generic,
 // 2 usage (bad/missing args), 5 a missing external dependency. Fetch
@@ -238,6 +249,14 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 		return missingDepError(err)
 	}
 
+	// Wire the event bus once the request is validated and the dependency
+	// is present, before any extraction runs. A failed fetch below
+	// returns early and publishes nothing.
+	if eventBus == nil {
+		eventBus = kitbus.New()
+		wireBusNetwork(cmd.Context())
+	}
+
 	var md *videoMetadata
 	if opts.metadata {
 		var err error
@@ -245,6 +264,7 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 		if err != nil {
 			return fetchErrorf("fetching metadata: %v", err)
 		}
+		publishEvent(cmd.Context(), "foo-youtube.capture.metadata.fetched", map[string]any{"url": url})
 	}
 
 	var transcriptText string
@@ -254,6 +274,7 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 		if err != nil {
 			return fetchErrorf("fetching transcript: %v", err)
 		}
+		publishEvent(cmd.Context(), "foo-youtube.capture.transcript.fetched", map[string]any{"url": url})
 	}
 
 	var commentList []comment
@@ -272,6 +293,50 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 	}
 	renderMarkdown(out, md, transcriptText, commentList)
 	return nil
+}
+
+// wireBusNetwork attaches a NetworkAdapter to the in-process bus so the
+// capture events foo-youtube publishes reach external subscribers (aps,
+// ctxt, tlc) over WebSocket. A bare bus.New() publishes to nobody; the
+// adapter subscribes to every local topic and forwards to each peer.
+//
+// Peers are read from FOO_YOUTUBE_BUS_PEERS (comma-separated ws:// URLs);
+// with none set, the adapter is skipped and events stay in-process.
+// Connects are best-effort: a failure is logged and never fatal. An auth
+// token from FOO_BUS_TOKEN / BUS_TOKEN is attached when present, sharing
+// the host's token names.
+func wireBusNetwork(ctx context.Context) {
+	if eventBus == nil {
+		return
+	}
+	raw := strings.TrimSpace(os.Getenv("FOO_YOUTUBE_BUS_PEERS"))
+	if raw == "" {
+		return
+	}
+	var opts []kitbus.NetworkOption
+	if auth, ok := kitbus.AuthFromEnv("FOO_BUS_TOKEN", "BUS_TOKEN"); ok {
+		opts = append(opts, kitbus.WithAuth(auth))
+	}
+	busNet = kitbus.NewNetworkAdapter(eventBus, opts...)
+	for _, addr := range strings.Split(raw, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		if err := busNet.Connect(ctx, addr); err != nil {
+			slog.Warn("bus.network.connect.failed", slog.String("addr", addr), slog.Any("err", err))
+		}
+	}
+}
+
+// publishEvent emits one capture event onto the bus, tolerating a nil
+// bus (no-op). The source segment is the binary name so subscribers can
+// filter foo-youtube traffic from the host and sibling sidecars.
+func publishEvent(ctx context.Context, topic string, payload any) {
+	if eventBus == nil {
+		return
+	}
+	_ = eventBus.Publish(ctx, kitbus.NewEvent(kitbus.Topic(topic), "foo-youtube", payload))
 }
 
 func isYouTubeURL(url string) bool {
