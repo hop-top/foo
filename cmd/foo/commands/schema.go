@@ -12,7 +12,13 @@ import (
 	"hop.top/foo/internal/schema"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/core/xdg"
+	"hop.top/kit/go/storage/sqlstore"
 )
+
+// schemaSchemaVersion is the schema-store revision recorded in
+// pre-migrate backup filenames. Bump when schema.NewStore's table
+// layout changes.
+const schemaSchemaVersion = 1
 
 func schemaCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -184,6 +190,14 @@ func openSchemaStore() (*schema.Store, error) {
 	}
 
 	dbPath := filepath.Join(stateDir, "schemas.db")
+
+	// Back up the live DB into <stateDir>/.dbs/ before NewStore migrates.
+	// No-op on first run; timestamped copy otherwise. Backups stay in a
+	// hidden .dbs sibling, never beside the live DB.
+	if _, err := sqlstore.BackupBeforeMigrate(dbPath, schemaSchemaVersion, sqlstore.WithBackupDir(filepath.Join(stateDir, ".dbs"))); err != nil {
+		return nil, fmt.Errorf("backup schemas db: %w", err)
+	}
+
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
