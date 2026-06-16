@@ -1001,33 +1001,37 @@ func providerAuthRequirement(scheme string) (key string, authType string) {
 // pointer, and `pattern import` syntax for promoting project-local
 // patterns. Falls back to the original error if listing fails — the
 // hint is best-effort, never blocking.
+//
+// Returns a typed output.NotFoundError (exit code 3) so main.go maps
+// the failure to the semantic not-found exit status.
 func enrichPatternNotFound(want string, orig error) error {
 	names, listErr := pattern.List(cfg.PatternsPath)
 	if listErr != nil || len(names) == 0 {
-		return fmt.Errorf("%w; run `foo pattern list` to see available patterns, or `foo pattern import <path> %s` to promote a project-local pattern", orig, want)
+		return output.NotFoundError(fmt.Sprintf("%s; run `foo pattern list` to see available patterns, or `foo pattern import <path> %s` to promote a project-local pattern", orig, want))
 	}
 	if guess := suggest.Closest(want, names, 2); guess != "" {
-		return fmt.Errorf("%w; did you mean %q? (run `foo pattern list` to see all)", orig, guess)
+		return output.NotFoundError(fmt.Sprintf("%s; did you mean %q? (run `foo pattern list` to see all)", orig, guess))
 	}
-	return fmt.Errorf("%w; available patterns: %s (run `foo pattern import <path> %s` to add a project-local pattern globally)", orig, strings.Join(names, ", "), want)
+	return output.NotFoundError(fmt.Sprintf("%s; available patterns: %s (run `foo pattern import <path> %s` to add a project-local pattern globally)", orig, strings.Join(names, ", "), want))
 }
 
 // enrichSchemaNotFound wraps the schema lookup failure with a closest
 // suggestion, falling back to a list of available schemas. Errors from
-// listing are silent; the hint is best-effort.
+// listing are silent; the hint is best-effort. Returns a typed
+// output.NotFoundError (exit code 3).
 func enrichSchemaNotFound(want string, orig error) error {
 	store, err := openSchemaStore()
 	if err != nil {
-		return orig
+		return output.NotFoundError(orig.Error())
 	}
 	names, listErr := store.List()
 	if listErr != nil || len(names) == 0 {
-		return fmt.Errorf("%w; run `foo schema list` to see stored schemas, or supply a valid DSL string like \"name, age int\"", orig)
+		return output.NotFoundError(fmt.Sprintf("%s; run `foo schema list` to see stored schemas, or supply a valid DSL string like \"name, age int\"", orig))
 	}
 	if guess := suggest.Closest(want, names, 2); guess != "" {
-		return fmt.Errorf("%w; did you mean %q? (run `foo schema list` to see all)", orig, guess)
+		return output.NotFoundError(fmt.Sprintf("%s; did you mean %q? (run `foo schema list` to see all)", orig, guess))
 	}
-	return fmt.Errorf("%w; available schemas: %s", orig, strings.Join(names, ", "))
+	return output.NotFoundError(fmt.Sprintf("%s; available schemas: %s", orig, strings.Join(names, ", ")))
 }
 
 type patternRow struct {

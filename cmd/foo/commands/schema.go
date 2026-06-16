@@ -75,7 +75,7 @@ func schemaShowCmd() *cobra.Command {
 
 			sc, err := store.Get(args[0])
 			if err != nil {
-				return err
+				return enrichSchemaNotFound(args[0], err)
 			}
 
 			return renderData(cmd, schemaView{Name: sc.Name, DSL: sc.DSL, Schema: sc.Schema})
@@ -145,7 +145,7 @@ func schemaDeleteCmd() *cobra.Command {
 			}
 
 			if err := store.Remove(args[0]); err != nil {
-				return err
+				return enrichSchemaNotFound(args[0], err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "schema %q deleted\n", args[0])
 			return nil

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 
+	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/storage/secret"
 	_ "hop.top/kit/go/storage/secret/env"
 )
@@ -47,7 +48,7 @@ func WithDimension(dim int) OpenAIOption {
 func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	key := lookupOpenAIKey()
 	if key == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY not set")
+		return nil, output.UnauthorizedError("OPENAI_API_KEY not set")
 	}
 
 	e := &OpenAIEmbedder{

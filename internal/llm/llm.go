@@ -17,6 +17,7 @@ import (
 	_ "hop.top/kit/go/ai/llm/ollama"
 	_ "hop.top/kit/go/ai/llm/openai"
 	_ "hop.top/kit/go/ai/llm/routellm"
+	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/storage/secret"
 	_ "hop.top/kit/go/storage/secret/env"
 )
@@ -161,7 +162,7 @@ func buildClient(scheme, model, envVar string) (*Client, error) {
 	if envVar != "" {
 		key := lookupAPIKey(envVar)
 		if key == "" {
-			return nil, fmt.Errorf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar)
+			return nil, output.UnauthorizedError(fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar))
 		}
 		uri = fmt.Sprintf("%s://%s?api_key=%s", scheme, model, key)
 	} else {
