@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -81,11 +82,11 @@ func emitExtInfo() {
 	_ = enc.Encode(info)
 }
 
+// scrapeModes is the closed set --mode accepts.
+var scrapeModes = []string{"readability", "raw"}
+
 func newRoot() *kitcli.Root {
-	var (
-		readability bool
-		raw         bool
-	)
+	var mode string
 
 	root := kitcli.New(kitcli.Config{
 		Name:    "foo-scrape",
@@ -101,9 +102,10 @@ func newRoot() *kitcli.Root {
 	root.Cmd.Use = "foo-scrape [flags] <url>"
 	root.Cmd.Long = `foo-scrape fetches a URL and converts the page to markdown.
 
-In readability mode (default) it extracts the main article content and
-drops navigation, scripts, and chrome. In raw mode it converts the full
-HTML document. Use --ext-info to print discovery metadata as JSON.`
+With --mode readability (default) it extracts the main article content
+and drops navigation, scripts, and chrome. With --mode raw it converts
+the full HTML document. Use --ext-info to print discovery metadata as
+JSON.`
 	// Usage errors (bad flag, wrong arg count) carry exit code 2 per
 	// the cross-tool exit-code table; main reads the embedded code.
 	root.Cmd.Args = usageArgs(cobra.ExactArgs(1))
@@ -113,18 +115,17 @@ HTML document. Use --ext-info to print discovery metadata as JSON.`
 	root.Cmd.SilenceUsage = true
 	root.Cmd.SilenceErrors = true
 	root.Cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		mode := "readability"
-		if raw {
-			mode = "raw"
-		} else if readability {
-			mode = "readability"
+		if !slices.Contains(scrapeModes, mode) {
+			return output.UsageError(fmt.Sprintf(
+				"invalid --mode %q: must be one of %s",
+				mode, strings.Join(scrapeModes, ", ")))
 		}
 		return scrape(cmd, args[0], mode)
 	}
 
 	flags := root.Cmd.Flags()
-	flags.BoolVar(&readability, "readability", true, "Extract main content (default)")
-	flags.BoolVar(&raw, "raw", false, "Convert full HTML to markdown")
+	flags.StringVar(&mode, "mode", "readability",
+		"Conversion mode: readability (main content) or raw (full HTML)")
 
 	// Side-effect / idempotency contract: a fetch-and-print is a pure
 	// read, trivially idempotent against the same URL.
