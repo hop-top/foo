@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
@@ -16,9 +17,20 @@ import (
 	"golang.org/x/net/html"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/console/output"
+	kitbus "hop.top/kit/go/runtime/bus"
 )
 
 var version = "dev"
+
+// eventBus is the in-process pub/sub bus this sidecar publishes capture
+// events to. A NetworkAdapter (wired in newRoot) forwards local topics to
+// configured peers so sibling tools (aps, ctxt, tlc) observe a successful
+// scrape. nil-guarded everywhere: an unwired bus publishes to nobody and
+// never fails the scrape.
+var (
+	eventBus kitbus.Bus
+	busNet   *kitbus.NetworkAdapter
+)
 
 // extInfo is the discovery contract the host foo binary parses via
 // kit's ai/ext/discover. The four fields (name, version, description,
@@ -120,6 +132,14 @@ JSON.`
 				"invalid --mode %q: must be one of %s",
 				mode, strings.Join(scrapeModes, ", ")))
 		}
+		// Construct the in-process bus + network adapter once, lazily, so
+		// --ext-info and usage errors never touch network. A failed
+		// scrape publishes nothing; the publish call lives at the tail of
+		// scrape() past every error return.
+		if eventBus == nil {
+			eventBus = kitbus.New()
+			wireBusNetwork(cmd.Context())
+		}
 		return scrape(cmd, args[0], mode)
 	}
 
@@ -169,6 +189,7 @@ func scrape(cmd *cobra.Command, url, mode string) error {
 	if mode == "raw" {
 		md := convertNode(doc, false)
 		_, _ = fmt.Fprint(out, cleanMarkdown(md))
+		publishScraped(cmd.Context(), url, mode)
 		return nil
 	}
 
@@ -179,7 +200,54 @@ func scrape(cmd *cobra.Command, url, mode string) error {
 	}
 	md := convertNode(content, true)
 	_, _ = fmt.Fprint(out, cleanMarkdown(md))
+	publishScraped(cmd.Context(), url, mode)
 	return nil
+}
+
+// wireBusNetwork attaches a NetworkAdapter to the in-process bus so the
+// capture events this sidecar publishes reach external subscribers (aps,
+// ctxt, tlc) over WebSocket. A bare bus.New() publishes to nobody; the
+// adapter forwards every local topic to each connected peer.
+//
+// Peers are read from FOO_SCRAPE_BUS_PEERS (comma-separated ws:// URLs);
+// with no peers configured the adapter is skipped and events stay
+// in-process. An auth token from FOO_BUS_TOKEN / BUS_TOKEN is attached
+// when present. Connects are best-effort: a failure is logged at warn
+// and never fails the scrape (the sidecar has no --offline flag).
+func wireBusNetwork(ctx context.Context) {
+	if eventBus == nil {
+		return
+	}
+	raw := strings.TrimSpace(os.Getenv("FOO_SCRAPE_BUS_PEERS"))
+	if raw == "" {
+		return
+	}
+	var opts []kitbus.NetworkOption
+	if auth, ok := kitbus.AuthFromEnv("FOO_BUS_TOKEN", "BUS_TOKEN"); ok {
+		opts = append(opts, kitbus.WithAuth(auth))
+	}
+	busNet = kitbus.NewNetworkAdapter(eventBus, opts...)
+	for _, addr := range strings.Split(raw, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		if err := busNet.Connect(ctx, addr); err != nil {
+			slog.Warn("bus.network.connect.failed", slog.String("addr", addr), slog.Any("err", err))
+		}
+	}
+}
+
+// publishScraped emits the capture event for one successful scrape. It is
+// nil-guarded so an unwired bus is a no-op, and called only past every
+// error return in scrape() — a failed scrape publishes nothing.
+func publishScraped(ctx context.Context, url, mode string) {
+	if eventBus == nil {
+		return
+	}
+	payload := map[string]any{"url": url, "mode": mode}
+	_ = eventBus.Publish(ctx, kitbus.NewEvent(
+		kitbus.Topic("foo-scrape.capture.page.scraped"), "foo-scrape", payload))
 }
 
 // extractTitle finds the <title> or first <h1> in the document.
