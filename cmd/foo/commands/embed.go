@@ -14,7 +14,13 @@ import (
 	"hop.top/foo/internal/embed"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/core/xdg"
+	"hop.top/kit/go/storage/sqlstore"
 )
+
+// embedSchemaVersion is the embeddings-store schema revision recorded in
+// pre-migrate backup filenames. Bump when embed.NewStore's table layout
+// changes so backups are labeled with the version they precede.
+const embedSchemaVersion = 1
 
 func embedRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -73,6 +79,7 @@ collection is "default"; override with --collection.`,
 				return fmt.Errorf("store: %w", err)
 			}
 
+			publishEvent(cmd.Context(), "foo.knowledge.embedding.created", map[string]any{"id": storedID, "collection": collection})
 			fmt.Fprintf(cmd.OutOrStdout(), "embedded %s into %q\n", storedID, collection)
 			return nil
 		},
@@ -140,6 +147,7 @@ same content produces new rows.`,
 				}
 			}
 
+			publishEvent(cmd.Context(), "foo.knowledge.embedding.created", map[string]any{"source": filePath, "collection": collection, "chunks": len(chunks)})
 			fmt.Fprintf(cmd.OutOrStdout(), "embedded %d chunks from %s into %q\n", len(chunks), filePath, collection)
 			return nil
 		},
@@ -254,6 +262,7 @@ delete collections; embeddings themselves are added with
 			if err := store.DeleteCollection(args[0]); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.collection.deleted", map[string]any{"name": args[0]})
 			fmt.Fprintf(cmd.OutOrStdout(), "collection %q deleted\n", args[0])
 			return nil
 		},
@@ -274,6 +283,16 @@ func openEmbedStore() (*embed.Store, error) {
 	}
 
 	dbPath := filepath.Join(stateDir, "embeddings.db")
+
+	// Back up the live DB into <stateDir>/.dbs/ before NewStore runs its
+	// CREATE TABLE migrations. BackupBeforeMigrate is a no-op on first
+	// run (no file yet) and writes a timestamped copy otherwise, so a
+	// schema change never destroys recoverable data. Backups live in a
+	// hidden .dbs sibling, never beside the live DB.
+	if _, err := sqlstore.BackupBeforeMigrate(dbPath, embedSchemaVersion, sqlstore.WithBackupDir(filepath.Join(stateDir, ".dbs"))); err != nil {
+		return nil, fmt.Errorf("backup embeddings db: %w", err)
+	}
+
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

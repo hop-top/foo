@@ -12,7 +12,13 @@ import (
 	"hop.top/foo/internal/schema"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/core/xdg"
+	"hop.top/kit/go/storage/sqlstore"
 )
+
+// schemaSchemaVersion is the schema-store revision recorded in
+// pre-migrate backup filenames. Bump when schema.NewStore's table
+// layout changes.
+const schemaSchemaVersion = 1
 
 func schemaCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -75,7 +81,7 @@ func schemaShowCmd() *cobra.Command {
 
 			sc, err := store.Get(args[0])
 			if err != nil {
-				return err
+				return enrichSchemaNotFound(args[0], err)
 			}
 
 			return renderData(cmd, schemaView{Name: sc.Name, DSL: sc.DSL, Schema: sc.Schema})
@@ -111,6 +117,7 @@ persistence; the JSON path stores the schema verbatim.`,
 				if _, err := store.SetJSON(name, json.RawMessage(data)); err != nil {
 					return err
 				}
+				publishEvent(cmd.Context(), "foo.knowledge.schema.created", map[string]any{"name": name, "source": filePath})
 				fmt.Fprintf(cmd.OutOrStdout(), "schema %q saved from %s\n", name, filePath)
 				return nil
 			}
@@ -122,6 +129,7 @@ persistence; the JSON path stores the schema verbatim.`,
 			if _, err := store.Set(name, args[1]); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.schema.created", map[string]any{"name": name})
 			fmt.Fprintf(cmd.OutOrStdout(), "schema %q saved\n", name)
 			return nil
 		},
@@ -145,8 +153,9 @@ func schemaDeleteCmd() *cobra.Command {
 			}
 
 			if err := store.Remove(args[0]); err != nil {
-				return err
+				return enrichSchemaNotFound(args[0], err)
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.schema.deleted", map[string]any{"name": args[0]})
 			fmt.Fprintf(cmd.OutOrStdout(), "schema %q deleted\n", args[0])
 			return nil
 		},
@@ -166,6 +175,7 @@ func schemaCompileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.schema.compiled", map[string]any{"dsl": args[0]})
 			return renderData(cmd, schemaView{Name: "", DSL: args[0], Schema: compiled})
 		},
 	}
@@ -184,6 +194,14 @@ func openSchemaStore() (*schema.Store, error) {
 	}
 
 	dbPath := filepath.Join(stateDir, "schemas.db")
+
+	// Back up the live DB into <stateDir>/.dbs/ before NewStore migrates.
+	// No-op on first run; timestamped copy otherwise. Backups stay in a
+	// hidden .dbs sibling, never beside the live DB.
+	if _, err := sqlstore.BackupBeforeMigrate(dbPath, schemaSchemaVersion, sqlstore.WithBackupDir(filepath.Join(stateDir, ".dbs"))); err != nil {
+		return nil, fmt.Errorf("backup schemas db: %w", err)
+	}
+
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

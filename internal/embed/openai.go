@@ -8,6 +8,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"hop.top/kit/go/console/output"
+	"hop.top/kit/go/storage/secret"
+	_ "hop.top/kit/go/storage/secret/env"
 )
 
 const (
@@ -38,11 +42,13 @@ func WithDimension(dim int) OpenAIOption {
 }
 
 // NewOpenAIEmbedder creates a new OpenAI-backed Embedder.
-// Uses OPENAI_API_KEY from the environment.
+// The OpenAI API key is resolved through the kit secret store (default
+// "env" backend), so it reads OPENAI_API_KEY from the environment by
+// default but transparently honors a configured keychain/vault backend.
 func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
-	key := os.Getenv("OPENAI_API_KEY")
+	key := lookupOpenAIKey()
 	if key == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY not set")
+		return nil, output.UnauthorizedError("OPENAI_API_KEY not set")
 	}
 
 	e := &OpenAIEmbedder{
@@ -55,6 +61,20 @@ func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 		o(e)
 	}
 	return e, nil
+}
+
+// lookupOpenAIKey resolves the OpenAI API key via the kit secret store.
+// The default "env" backend maps secret key `openai_api_key` to env var
+// OPENAI_API_KEY, preserving prior behavior; a store-open failure falls
+// back to a direct env read so an env-only setup never regresses.
+func lookupOpenAIKey() string {
+	store, err := secret.Open(secret.Config{Backend: "env"})
+	if err == nil {
+		if got, getErr := store.Get(context.Background(), "openai_api_key"); getErr == nil {
+			return string(got.Value)
+		}
+	}
+	return os.Getenv("OPENAI_API_KEY")
 }
 
 func (e *OpenAIEmbedder) Dimension() int { return e.dim }

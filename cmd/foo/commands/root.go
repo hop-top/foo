@@ -9,11 +9,12 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
-	"charm.land/log/v2"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/log/v2"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"hop.top/foo/internal/config"
@@ -29,9 +30,12 @@ import (
 	extdiscover "hop.top/kit/go/ai/ext/discover"
 	extdispatch "hop.top/kit/go/ai/ext/dispatch"
 	kitllm "hop.top/kit/go/ai/llm"
+	"hop.top/kit/go/console/alias"
 	kitcli "hop.top/kit/go/console/cli"
-	"hop.top/kit/go/console/output"
+	kitcliconfig "hop.top/kit/go/console/cli/config"
 	kitlog "hop.top/kit/go/console/log"
+	"hop.top/kit/go/console/output"
+	coreconfig "hop.top/kit/go/core/config"
 	"hop.top/kit/go/core/upgrade"
 	"hop.top/kit/go/core/xdg"
 	kitbus "hop.top/kit/go/runtime/bus"
@@ -60,12 +64,20 @@ var (
 	budgetTier      string
 	pickerDebug     bool
 
-	cfg     = config.Default()
-	root    *kitcli.Root
-	logger  *log.Logger
+	// Delegation-safety / scope globals (§8). Registered via
+	// Config.Globals so they live on the root's persistent flag set and
+	// every subcommand inherits them.
+	offline      bool
+	profileName  string
+	instanceName string
+
+	cfg      = config.Default()
+	root     *kitcli.Root
+	logger   *log.Logger
 	eventBus kitbus.Bus
-	mgr     *wsm.Manager
-	ws      *wsm.Workspace
+	busNet   *kitbus.NetworkAdapter
+	mgr      *wsm.Manager
+	ws       *wsm.Workspace
 )
 
 var commandGroups = map[string]string{
@@ -77,6 +89,8 @@ var commandGroups = map[string]string{
 	"embed":    "knowledge",
 	"model":    "organize",
 	"provider": "organize",
+	"config":   "management",
+	"alias":    "management",
 	"upgrade":  "management",
 }
 
@@ -98,12 +112,22 @@ func New(v string) *kitcli.Root {
 		Short:   "LLM workflows from the terminal",
 		Accent:  config.DefaultAccent,
 		Help: kitcli.HelpConfig{
-			Disclaimer: longDescription,
+			Disclaimer:  longDescription,
+			ShowAliases: true,
 			Groups: []kitcli.GroupConfig{
 				{ID: "knowledge", Title: "KNOWLEDGE"},
 				{ID: "organize", Title: "ORGANIZE"},
 				{ID: "interact", Title: "INTERACT"},
 			},
+		},
+		// Scope/delegation globals (§8). --config -c is registered by kit
+		// automatically; these three complete the required set. Bound to
+		// package-level pointers so initializeRuntime can honor them
+		// without round-tripping through viper.
+		Globals: []kitcli.Flag{
+			{Name: "offline", Usage: "Disable all network access (skips upgrade check and remote calls)", BoolVar: &offline},
+			{Name: "profile", Usage: "Select the aps profile scoping config + secret lookups", StringVar: &profileName},
+			{Name: "instance", Usage: "Select the backend instance (single-instance build: currently a no-op)", StringVar: &instanceName},
 		},
 	}, kitcli.WithStatus(kitcli.StatusConfig{}))
 	logger = kitlog.New(root.Viper)
@@ -146,6 +170,8 @@ func New(v string) *kitcli.Root {
 	root.Cmd.AddCommand(schemaCmd())
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
+	root.Cmd.AddCommand(configCmd())
+	root.Cmd.AddCommand(aliasCmd())
 	root.Cmd.AddCommand(upgradeCmd())
 
 	registerExtPlugins(root.Cmd)
@@ -223,15 +249,38 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	}
 	cfg = loaded
 
+	// --profile scopes the secret store: the aps profile name namespaces
+	// credential lookups so two profiles never collide on a bare key like
+	// "openai_api_key". Empty leaves the config-file Service intact.
+	//
+	// --instance selects a backend instance. foo is a single-instance
+	// local-state build (one embeddings.db, one schemas.db under the XDG
+	// state dir), so the flag is wired and plumbed but currently has no
+	// backend to switch — it is recorded for forward-compat and surfaced
+	// via config.Secrets.Service when both are set.
+	if profileName != "" {
+		cfg.Secrets.Service = profileName
+		if instanceName != "" {
+			cfg.Secrets.Service = profileName + "/" + instanceName
+		}
+	} else if instanceName != "" {
+		cfg.Secrets.Service = instanceName
+	}
+
 	verbose, _ := cmd.Root().PersistentFlags().GetCount("verbose")
 	logger = kitlog.WithVerbose(root.Viper, verbose)
 	slog.SetDefault(slog.New(logger))
 
-	if cmd.Name() != "upgrade" {
+	// --offline suppresses every network call. The upgrade check is the
+	// one unconditional network touch in the runtime init path; gate it
+	// here. Downstream LLM/embedding calls read the same flag via
+	// networkAllowed().
+	if !offline && cmd.Name() != "upgrade" {
 		upgrade.NotifyIfAvailable(cmd.Context(), newUpgradeChecker(), cmd.ErrOrStderr())
 	}
 	if eventBus == nil {
 		eventBus = kitbus.New()
+		wireBusNetwork(cmd.Context())
 	}
 
 	if cmd.CommandPath() == "foo" || cmd.CommandPath() == "foo repl" {
@@ -473,6 +522,7 @@ applied to any prompt via --pattern.`,
 			if err := pattern.Create(cfg.PatternsPath, args[0], systemPrompt); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.pattern.created", map[string]any{"name": args[0]})
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q saved\n", args[0])
 			return nil
 		},
@@ -493,6 +543,7 @@ applied to any prompt via --pattern.`,
 			if err := pattern.Import(cfg.PatternsPath, args[0], name); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.pattern.imported", map[string]any{"path": args[0], "name": name})
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "pattern imported")
 			return nil
 		},
@@ -510,6 +561,7 @@ applied to any prompt via --pattern.`,
 			if err := pattern.Delete(cfg.PatternsPath, args[0]); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.knowledge.pattern.deleted", map[string]any{"name": args[0]})
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pattern %q deleted\n", args[0])
 			return nil
 		},
@@ -578,6 +630,7 @@ supplied on the command line.`,
 			if err := cfg.Save(); err != nil {
 				return err
 			}
+			publishEvent(cmd.Context(), "foo.organize.model.selected", map[string]any{"model": cfg.Model})
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default model set to %q\n", cfg.Model)
 			return nil
 		},
@@ -648,6 +701,53 @@ credentials they expect are present in the configured secret store.`,
 	return cmd
 }
 
+// configCmd is the `config` parent. It owns no behavior of its own; the
+// shared `path` / `paths` introspection subcommands are attached by
+// kit's cli/config helper. The resolver adapts core/config's foo-scoped
+// precedence chain to the cli/config.ResolvedPath wire type (identical
+// fields, distinct package).
+func configCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Inspect foo configuration",
+		Long:  "Inspect the foo configuration precedence chain. `config path` prints the highest-precedence existing config file; `config paths` prints the full ordered chain.",
+		Args:  cobra.NoArgs,
+	}
+	resolver := func(cwd string) []kitcliconfig.ResolvedPath {
+		raw := coreconfig.PathsForTool(cwd, "foo")
+		out := make([]kitcliconfig.ResolvedPath, len(raw))
+		for i, r := range raw {
+			out[i] = kitcliconfig.ResolvedPath{
+				Path:   r.Path,
+				Source: r.Source,
+				Scope:  r.Scope,
+				Exists: r.Exists,
+			}
+		}
+		return out
+	}
+	kitcliconfig.RegisterPathSubcommands(cmd, "foo", kitcliconfig.WithResolver(resolver))
+	return cmd
+}
+
+// aliasCmd wires kit's alias store and management command. Aliases are
+// persisted as YAML under the foo config dir; kit's (*Root).AliasCmd
+// supplies list/add/remove leaves and, with Config.Help.ShowAliases
+// set, surfaces them in help output. A store-load failure is
+// non-fatal: the command still mounts against an empty store so
+// `alias add` keeps working.
+func aliasCmd() *cobra.Command {
+	confDir, err := xdg.ConfigDir("foo")
+	if err != nil {
+		confDir = ""
+	}
+	store := alias.NewStore(filepath.Join(confDir, "aliases.yaml"))
+	if loadErr := store.Load(); loadErr != nil {
+		slog.Warn("alias.load.failed", slog.Any("err", loadErr))
+	}
+	return root.AliasCmd(store)
+}
+
 func upgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade",
@@ -655,6 +755,9 @@ func upgradeCmd() *cobra.Command {
 		Long: `Check the GitHub releases for a newer version of foo and apply
 the upgrade in-place when one is available. Local binary mutation.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !networkAllowed() {
+				return fmt.Errorf("`foo upgrade` requires network access; drop --offline and retry")
+			}
 			return upgrade.RunCLI(cmd.Context(), newUpgradeChecker(), upgrade.CLIOptions{})
 		},
 	}
@@ -849,6 +952,47 @@ func applyCommandGroups() {
 	}
 }
 
+// networkAllowed reports whether outbound network access is permitted.
+// It is false when --offline is set, letting callers short-circuit
+// remote work (upgrade self-update, event-bus peer connect) without
+// each re-reading the flag.
+func networkAllowed() bool { return !offline }
+
+// wireBusNetwork attaches a NetworkAdapter to the in-process bus so the
+// domain events foo publishes reach external subscribers (aps, ctxt,
+// tlc) over WebSocket. A bare bus.New() publishes to nobody; the adapter
+// subscribes to every local topic ("#") and forwards to each connected
+// peer.
+//
+// Peers are read from FOO_BUS_PEERS (comma-separated ws:// URLs);
+// connects are best-effort (kit retries with backoff). When --offline
+// is set, or no peers are configured, the adapter is skipped and events
+// stay in-process. An auth token from FOO_BUS_TOKEN / BUS_TOKEN is
+// attached when present.
+func wireBusNetwork(ctx context.Context) {
+	if !networkAllowed() || eventBus == nil {
+		return
+	}
+	raw := strings.TrimSpace(os.Getenv("FOO_BUS_PEERS"))
+	if raw == "" {
+		return
+	}
+	var opts []kitbus.NetworkOption
+	if auth, ok := kitbus.AuthFromEnv("FOO_BUS_TOKEN", "BUS_TOKEN"); ok {
+		opts = append(opts, kitbus.WithAuth(auth))
+	}
+	busNet = kitbus.NewNetworkAdapter(eventBus, opts...)
+	for _, addr := range strings.Split(raw, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		if err := busNet.Connect(ctx, addr); err != nil {
+			slog.Warn("bus.network.connect.failed", slog.String("addr", addr), slog.Any("err", err))
+		}
+	}
+}
+
 func publishEvent(ctx context.Context, topic string, payload any) {
 	if eventBus == nil {
 		return
@@ -898,33 +1042,37 @@ func providerAuthRequirement(scheme string) (key string, authType string) {
 // pointer, and `pattern import` syntax for promoting project-local
 // patterns. Falls back to the original error if listing fails — the
 // hint is best-effort, never blocking.
+//
+// Returns a typed output.NotFoundError (exit code 3) so main.go maps
+// the failure to the semantic not-found exit status.
 func enrichPatternNotFound(want string, orig error) error {
 	names, listErr := pattern.List(cfg.PatternsPath)
 	if listErr != nil || len(names) == 0 {
-		return fmt.Errorf("%w; run `foo pattern list` to see available patterns, or `foo pattern import <path> %s` to promote a project-local pattern", orig, want)
+		return output.NotFoundError(fmt.Sprintf("%s; run `foo pattern list` to see available patterns, or `foo pattern import <path> %s` to promote a project-local pattern", orig, want))
 	}
 	if guess := suggest.Closest(want, names, 2); guess != "" {
-		return fmt.Errorf("%w; did you mean %q? (run `foo pattern list` to see all)", orig, guess)
+		return output.NotFoundError(fmt.Sprintf("%s; did you mean %q? (run `foo pattern list` to see all)", orig, guess))
 	}
-	return fmt.Errorf("%w; available patterns: %s (run `foo pattern import <path> %s` to add a project-local pattern globally)", orig, strings.Join(names, ", "), want)
+	return output.NotFoundError(fmt.Sprintf("%s; available patterns: %s (run `foo pattern import <path> %s` to add a project-local pattern globally)", orig, strings.Join(names, ", "), want))
 }
 
 // enrichSchemaNotFound wraps the schema lookup failure with a closest
 // suggestion, falling back to a list of available schemas. Errors from
-// listing are silent; the hint is best-effort.
+// listing are silent; the hint is best-effort. Returns a typed
+// output.NotFoundError (exit code 3).
 func enrichSchemaNotFound(want string, orig error) error {
 	store, err := openSchemaStore()
 	if err != nil {
-		return orig
+		return output.NotFoundError(orig.Error())
 	}
 	names, listErr := store.List()
 	if listErr != nil || len(names) == 0 {
-		return fmt.Errorf("%w; run `foo schema list` to see stored schemas, or supply a valid DSL string like \"name, age int\"", orig)
+		return output.NotFoundError(fmt.Sprintf("%s; run `foo schema list` to see stored schemas, or supply a valid DSL string like \"name, age int\"", orig))
 	}
 	if guess := suggest.Closest(want, names, 2); guess != "" {
-		return fmt.Errorf("%w; did you mean %q? (run `foo schema list` to see all)", orig, guess)
+		return output.NotFoundError(fmt.Sprintf("%s; did you mean %q? (run `foo schema list` to see all)", orig, guess))
 	}
-	return fmt.Errorf("%w; available schemas: %s", orig, strings.Join(names, ", "))
+	return output.NotFoundError(fmt.Sprintf("%s; available schemas: %s", orig, strings.Join(names, ", ")))
 }
 
 type patternRow struct {
