@@ -3,108 +3,251 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/net/html"
+	kitcli "hop.top/kit/go/console/cli"
+	"hop.top/kit/go/console/output"
+	kitbus "hop.top/kit/go/runtime/bus"
 )
 
 var version = "dev"
 
+// eventBus is the in-process pub/sub bus this sidecar publishes capture
+// events to. A NetworkAdapter (wired in newRoot) forwards local topics to
+// configured peers so sibling tools (aps, ctxt, tlc) observe a successful
+// scrape. nil-guarded everywhere: an unwired bus publishes to nobody and
+// never fails the scrape.
+var (
+	eventBus kitbus.Bus
+	busNet   *kitbus.NetworkAdapter
+)
+
+// extInfo is the discovery contract the host foo binary parses via
+// kit's ai/ext/discover. The four fields (name, version, description,
+// capabilities) are a hard wire contract — keep them stable.
+type extInfo struct {
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Description  string   `json:"description"`
+	Capabilities []string `json:"capabilities"`
+}
+
 func main() {
-	var (
-		readability = true
-		raw         = false
-		extInfo     = false
-		url         string
-	)
-
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--readability":
-			readability = true
-			raw = false
-		case "--raw":
-			raw = true
-			readability = false
-		case "--ext-info":
-			extInfo = true
-		case "--help", "-h":
-			printUsage()
-			return
-		default:
-			if strings.HasPrefix(args[i], "-") {
-				fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[i])
-				os.Exit(1)
-			}
-			url = args[i]
-		}
-	}
-
-	if extInfo {
-		info := map[string]any{
-			"name":         "scrape",
-			"version":      version,
-			"description":  "URL to markdown conversion with readability",
-			"capabilities": []string{"discover"},
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "")
-		_ = enc.Encode(info)
+	// --ext-info is a hard wire contract: the host discovers this
+	// sidecar by executing it with --ext-info and parsing the JSON
+	// below. Intercept before cobra so discovery never depends on
+	// arg-count validation or flag parsing succeeding.
+	if hasExtInfo(os.Args[1:]) {
+		emitExtInfo()
 		return
 	}
 
-	if url == "" {
-		fmt.Fprintln(os.Stderr, "error: URL argument required")
-		printUsage()
-		os.Exit(1)
+	root := newRoot()
+	if err := root.Execute(context.Background()); err != nil {
+		os.Exit(exitCode(err))
+	}
+}
+
+// exitCode maps a returned error to a process exit code. Errors that
+// carry a kit error envelope (usage errors → 2, etc.) honor the
+// embedded code; everything else is a generic failure (1).
+func exitCode(err error) int {
+	var ce interface{ AsCLIError() *output.Error }
+	if errors.As(err, &ce) {
+		if env := ce.AsCLIError(); env != nil && env.ExitCode != 0 {
+			return env.ExitCode
+		}
+	}
+	return 1
+}
+
+// hasExtInfo reports whether --ext-info appears anywhere in args.
+func hasExtInfo(args []string) bool {
+	for _, a := range args {
+		if a == "--ext-info" {
+			return true
+		}
+	}
+	return false
+}
+
+// emitExtInfo prints the discovery JSON and is the only path that
+// must keep emitting exactly the four-field contract.
+func emitExtInfo() {
+	info := extInfo{
+		Name:         "scrape",
+		Version:      version,
+		Description:  "URL to markdown conversion with readability",
+		Capabilities: []string{"discover"},
+	}
+	enc := json.NewEncoder(os.Stdout)
+	_ = enc.Encode(info)
+}
+
+// scrapeModes is the closed set --mode accepts.
+var scrapeModes = []string{"readability", "raw"}
+
+func newRoot() *kitcli.Root {
+	var mode string
+
+	root := kitcli.New(kitcli.Config{
+		Name:    "foo-scrape",
+		Version: version,
+		Short:   "Convert a URL to markdown",
+		// Single-file sidecar: no subcommands, no status command, so
+		// the leaf/status validators don't apply. Annotations below
+		// keep the side-effect/idempotency contract declared for any
+		// downstream consumer that does inspect them.
+		DisableValidate: true,
+	})
+
+	root.Cmd.Use = "foo-scrape [flags] <url>"
+	root.Cmd.Long = `foo-scrape fetches a URL and converts the page to markdown.
+
+With --mode readability (default) it extracts the main article content
+and drops navigation, scripts, and chrome. With --mode raw it converts
+the full HTML document. Use --ext-info to print discovery metadata as
+JSON.`
+	// Usage errors (bad flag, wrong arg count) carry exit code 2 per
+	// the cross-tool exit-code table; main reads the embedded code.
+	root.Cmd.Args = usageArgs(cobra.ExactArgs(1))
+	root.Cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return output.UsageError(err.Error())
+	})
+	root.Cmd.SilenceUsage = true
+	root.Cmd.SilenceErrors = true
+	root.Cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !slices.Contains(scrapeModes, mode) {
+			return output.UsageError(fmt.Sprintf(
+				"invalid --mode %q: must be one of %s",
+				mode, strings.Join(scrapeModes, ", ")))
+		}
+		// Construct the in-process bus + network adapter once, lazily, so
+		// --ext-info and usage errors never touch network. A failed
+		// scrape publishes nothing; the publish call lives at the tail of
+		// scrape() past every error return.
+		if eventBus == nil {
+			eventBus = kitbus.New()
+			wireBusNetwork(cmd.Context())
+		}
+		return scrape(cmd, args[0], mode)
 	}
 
+	flags := root.Cmd.Flags()
+	flags.StringVar(&mode, "mode", "readability",
+		"Conversion mode: readability (main content) or raw (full HTML)")
+
+	// Side-effect / idempotency contract: a fetch-and-print is a pure
+	// read, trivially idempotent against the same URL.
+	kitcli.SetSideEffect(root.Cmd, kitcli.SideEffectRead)
+	kitcli.SetIdempotency(root.Cmd, kitcli.IdempotencyYes)
+
+	return root
+}
+
+// usageArgs wraps a cobra positional-args validator so a failure
+// surfaces as a kit usage error (exit code 2) instead of a generic
+// exit-1 error.
+func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := v(cmd, args); err != nil {
+			return output.UsageError(err.Error())
+		}
+		return nil
+	}
+}
+
+// scrape fetches url and writes the converted markdown to the command's
+// stdout. mode is "readability" or "raw".
+func scrape(cmd *cobra.Command, url, mode string) error {
 	resp, err := http.Get(url)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error fetching URL: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("fetching URL: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "error: HTTP %d\n", resp.StatusCode)
-		os.Exit(1)
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	doc, err := html.Parse(resp.Body)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error parsing HTML: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	if raw {
+	out := cmd.OutOrStdout()
+	if mode == "raw" {
 		md := convertNode(doc, false)
-		fmt.Print(cleanMarkdown(md))
-	} else if readability {
-		title := extractTitle(doc)
-		content := extractArticleContent(doc)
-		if title != "" {
-			fmt.Printf("# %s\n\n", title)
+		_, _ = fmt.Fprint(out, cleanMarkdown(md))
+		publishScraped(cmd.Context(), url, mode)
+		return nil
+	}
+
+	title := extractTitle(doc)
+	content := extractArticleContent(doc)
+	if title != "" {
+		_, _ = fmt.Fprintf(out, "# %s\n\n", title)
+	}
+	md := convertNode(content, true)
+	_, _ = fmt.Fprint(out, cleanMarkdown(md))
+	publishScraped(cmd.Context(), url, mode)
+	return nil
+}
+
+// wireBusNetwork attaches a NetworkAdapter to the in-process bus so the
+// capture events this sidecar publishes reach external subscribers (aps,
+// ctxt, tlc) over WebSocket. A bare bus.New() publishes to nobody; the
+// adapter forwards every local topic to each connected peer.
+//
+// Peers are read from FOO_SCRAPE_BUS_PEERS (comma-separated ws:// URLs);
+// with no peers configured the adapter is skipped and events stay
+// in-process. An auth token from FOO_BUS_TOKEN / BUS_TOKEN is attached
+// when present. Connects are best-effort: a failure is logged at warn
+// and never fails the scrape (the sidecar has no --offline flag).
+func wireBusNetwork(ctx context.Context) {
+	if eventBus == nil {
+		return
+	}
+	raw := strings.TrimSpace(os.Getenv("FOO_SCRAPE_BUS_PEERS"))
+	if raw == "" {
+		return
+	}
+	var opts []kitbus.NetworkOption
+	if auth, ok := kitbus.AuthFromEnv("FOO_BUS_TOKEN", "BUS_TOKEN"); ok {
+		opts = append(opts, kitbus.WithAuth(auth))
+	}
+	busNet = kitbus.NewNetworkAdapter(eventBus, opts...)
+	for _, addr := range strings.Split(raw, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
 		}
-		md := convertNode(content, true)
-		fmt.Print(cleanMarkdown(md))
+		if err := busNet.Connect(ctx, addr); err != nil {
+			slog.Warn("bus.network.connect.failed", slog.String("addr", addr), slog.Any("err", err))
+		}
 	}
 }
 
-func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: foo-scrape [flags] <url>")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Flags:")
-	fmt.Fprintln(os.Stderr, "  --readability  Extract main content (default)")
-	fmt.Fprintln(os.Stderr, "  --raw          Convert full HTML to markdown")
-	fmt.Fprintln(os.Stderr, "  --ext-info     Print plugin info as JSON")
-	fmt.Fprintln(os.Stderr, "  -h, --help     Show help")
+// publishScraped emits the capture event for one successful scrape. It is
+// nil-guarded so an unwired bus is a no-op, and called only past every
+// error return in scrape() — a failed scrape publishes nothing.
+func publishScraped(ctx context.Context, url, mode string) {
+	if eventBus == nil {
+		return
+	}
+	payload := map[string]any{"url": url, "mode": mode}
+	_ = eventBus.Publish(ctx, kitbus.NewEvent(
+		kitbus.Topic("foo-scrape.capture.page.scraped"), "foo-scrape", payload))
 }
 
 // extractTitle finds the <title> or first <h1> in the document.
@@ -416,6 +559,3 @@ func cleanMarkdown(s string) string {
 	}
 	return result
 }
-
-// Ensure http.Get is used (suppress unused import lint).
-var _ = io.Discard
