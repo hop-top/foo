@@ -15,8 +15,8 @@ require (
 	golang.org/x/term v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	hop.top/aim v0.1.0-alpha.0
-	hop.top/kit v0.4.0-alpha.7
-	hop.top/wsm v0.0.0-00010101000000-000000000000
+	hop.top/kit v0.4.0-alpha.9
+	hop.top/wsm v0.0.0-20260427064031-cd509944d726
 )
 
 require (
@@ -87,17 +87,11 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
-	hop.top/uri v0.2.0-alpha.0 // indirect
+	hop.top/cite v0.1.0 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.48.2 // indirect
 )
 
-replace hop.top/wsm => /Users/jadb/.w/ideacrafterslabs/wsm/hops/main
-
-replace hop.top/rux => /Users/jadb/.w/ideacrafterslabs/rux/hops/main
-
 replace charm.land/fantasy => github.com/charmbracelet/fantasy v0.17.1
-
-replace hop.top/stem => /Users/jadb/.w/ideacrafterslabs/poly-stem/hops/feat/crtx-multi-agent-provenance/go
