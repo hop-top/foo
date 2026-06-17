@@ -1,15 +1,83 @@
+// foo-youtube is a standalone binary that extracts a YouTube video's
+// transcript and metadata as markdown. It is an external plugin for
+// foo: the host discovers it on $PATH and interrogates it via
+// --ext-info (kit ai/ext/discover). It imports zero foo internal
+// packages.
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/spf13/cobra"
+	kitcli "hop.top/kit/go/console/cli"
+	"hop.top/kit/go/console/output"
+	kitbus "hop.top/kit/go/runtime/bus"
 )
 
 var version = "dev"
+
+// eventBus carries capture events to external subscribers (aps, ctxt,
+// tlc) via the network adapter. A bare bus.New() publishes in-process to
+// nobody; wireBusNetwork attaches the adapter when peers are configured.
+// nil until run() initializes it; publishEvent tolerates the nil bus.
+var (
+	eventBus kitbus.Bus
+	busNet   *kitbus.NetworkAdapter
+)
+
+// Exit codes follow the kit cross-tool convention (§8.1): 1 generic,
+// 2 usage (bad/missing args), 5 a missing external dependency. Fetch
+// failures are runtime errors against an otherwise-valid request, so
+// they map to the generic 1. Cobra itself exits 2 on flag/arg parse
+// failures, which lines up with exitUsage.
+const (
+	exitFetch      = 1
+	exitUsage      = 2
+	exitMissingDep = 5
+)
+
+// codeMissingDep is the structured error code emitted when the yt-dlp
+// dependency is absent. Its exit code (5) matches the §8.1 slot kit
+// reserves for environment/auth failures; the label is plugin-specific.
+const codeMissingDep = "MISSING_DEPENDENCY"
+
+// exitError carries a kit structured-error envelope out of RunE. kit's
+// RunE middleware reads AsCLIError to render + return the envelope; main
+// then reads its ExitCode to pick the process exit status (§8.1).
+type exitError struct {
+	cli *output.Error
+}
+
+func (e *exitError) Error() string { return e.cli.Error() }
+
+func (e *exitError) AsCLIError() *output.Error { return e.cli }
+
+func usageErrorf(format string, a ...any) *exitError {
+	return &exitError{cli: output.UsageError(fmt.Sprintf(format, a...))}
+}
+
+func missingDepError(err error) *exitError {
+	return &exitError{cli: &output.Error{
+		Code:     codeMissingDep,
+		Message:  err.Error(),
+		ExitCode: exitMissingDep,
+	}}
+}
+
+func fetchErrorf(format string, a ...any) *exitError {
+	return &exitError{cli: &output.Error{
+		Code:     output.CodeGeneric,
+		Message:  fmt.Sprintf(format, a...),
+		ExitCode: exitFetch,
+	}}
+}
 
 type extInfo struct {
 	Name         string   `json:"name"`
@@ -33,80 +101,242 @@ type comment struct {
 	Text   string `json:"text"`
 }
 
+// extInfoArg is the host's discovery probe. kit's ai/ext/discover runs
+// the binary as `foo-youtube --ext-info` and json-decodes stdout, so
+// this is a hard wire contract: emit ONLY the JSON object, exit 0.
+const extInfoArg = "--ext-info"
+
 func main() {
-	transcript := flag.Bool("transcript", true, "Extract transcript")
-	timestamps := flag.Bool("timestamps", false, "Include timestamps in transcript")
-	comments := flag.Bool("comments", false, "Include top comments")
-	metadata := flag.Bool("metadata", true, "Include video metadata")
-	showExtInfo := flag.Bool("ext-info", false, "Print extension info as JSON")
-
-	flag.Parse()
-
-	if *showExtInfo {
-		info := extInfo{
-			Name:         "youtube",
-			Version:      version,
-			Description:  "YouTube transcript and metadata extraction",
-			Capabilities: []string{"discover"},
+	// Honor the --ext-info wire contract before cobra parses anything.
+	// The host invokes the binary with exactly this single flag and
+	// parses stdout as JSON, so we must keep stdout clean of any cobra
+	// help/usage chrome and guarantee exit 0.
+	for _, a := range os.Args[1:] {
+		if a == extInfoArg {
+			if err := printExtInfo(os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "error encoding ext-info: %v\n", err)
+				os.Exit(exitFetch)
+			}
+			return
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(info); err != nil {
-			fmt.Fprintf(os.Stderr, "error encoding ext-info: %v\n", err)
-			os.Exit(1)
-		}
-		return
 	}
 
-	args := flag.Args()
+	root := newRoot()
+	if err := root.Execute(context.Background()); err != nil {
+		os.Exit(exitCodeFor(err))
+	}
+}
+
+// exitCodeFor maps a RunE error onto the §8.1 exit-code set. kit's RunE
+// middleware returns the *output.Error envelope it rendered, so its
+// ExitCode is authoritative. A bare *exitError (no middleware in the
+// path) and cobra's own flag/arg errors fall back sensibly.
+func exitCodeFor(err error) int {
+	var oe *output.Error
+	if errors.As(err, &oe) && oe.ExitCode != 0 {
+		return oe.ExitCode
+	}
+	var ee *exitError
+	if errors.As(err, &ee) && ee.cli != nil && ee.cli.ExitCode != 0 {
+		return ee.cli.ExitCode
+	}
+	// Cobra reports bad flags / too many args as a plain error before
+	// our RunE runs; treat those as usage errors.
+	return exitUsage
+}
+
+func printExtInfo(w *os.File) error {
+	info := extInfo{
+		Name:         "youtube",
+		Version:      version,
+		Description:  "YouTube transcript and metadata extraction",
+		Capabilities: []string{"discover"},
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(info)
+}
+
+func newRoot() *kitcli.Root {
+	var (
+		transcript bool
+		timestamps bool
+		comments   bool
+		metadata   bool
+	)
+
+	root := kitcli.New(kitcli.Config{
+		Name:    "foo-youtube",
+		Version: version,
+		Short:   "YouTube transcript and metadata extraction",
+		Help: kitcli.HelpConfig{
+			Disclaimer: `foo-youtube fetches a YouTube video's transcript and metadata
+via yt-dlp and renders them as markdown on stdout.
+
+Arguments:
+  <url>   YouTube video URL (youtube.com/watch, youtu.be, or
+          youtube.com/shorts). Required.
+
+It is an external plugin for foo: the host discovers it on $PATH and
+interrogates it with --ext-info.`,
+		},
+	}, kitcli.WithStatus(kitcli.StatusConfig{}))
+
+	root.Cmd.Use = "foo-youtube [flags] <url>"
+	root.Cmd.Args = cobra.MaximumNArgs(1)
+	root.Cmd.SilenceUsage = true
+	root.Cmd.SilenceErrors = true
+
+	flags := root.Cmd.Flags()
+	flags.BoolVar(&metadata, "metadata", true, "Include video metadata")
+	flags.BoolVar(&metadata, "no-metadata", false, "Skip video metadata")
+	flags.BoolVar(&transcript, "transcript", true, "Extract transcript")
+	flags.BoolVar(&transcript, "no-transcript", false, "Skip transcript extraction")
+	flags.BoolVar(&timestamps, "timestamps", false, "Include timestamps in transcript")
+	flags.BoolVar(&comments, "comments", false, "Include top comments")
+
+	// --ext-info is registered for help/discoverability parity; the real
+	// handling happens pre-cobra in main so the JSON contract stays
+	// clean. Hidden because it is a host-facing probe, not a user verb.
+	var extInfoFlag bool
+	flags.BoolVar(&extInfoFlag, "ext-info", false, "Print extension info as JSON (used by the foo host)")
+	_ = flags.MarkHidden("ext-info")
+
+	root.Cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		// Paired negation: --no-X overrides the default-true switch.
+		if cmd.Flags().Changed("no-metadata") {
+			metadata = !boolFlag(cmd, "no-metadata")
+		}
+		if cmd.Flags().Changed("no-transcript") {
+			transcript = !boolFlag(cmd, "no-transcript")
+		}
+		return run(cmd, args, runOpts{
+			metadata:   metadata,
+			transcript: transcript,
+			timestamps: timestamps,
+			comments:   comments,
+		})
+	}
+
+	kitcli.SetSideEffect(root.Cmd, kitcli.SideEffectRead)
+	kitcli.SetIdempotency(root.Cmd, kitcli.IdempotencyYes)
+	return root
+}
+
+func boolFlag(cmd *cobra.Command, name string) bool {
+	v, _ := cmd.Flags().GetBool(name)
+	return v
+}
+
+type runOpts struct {
+	metadata   bool
+	transcript bool
+	timestamps bool
+	comments   bool
+}
+
+func run(cmd *cobra.Command, args []string, opts runOpts) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: YouTube URL required")
-		fmt.Fprintln(os.Stderr, "usage: foo-youtube [flags] <url>")
-		os.Exit(1)
+		return usageErrorf("YouTube URL required")
 	}
 
 	url := args[0]
 	if !isYouTubeURL(url) {
-		fmt.Fprintf(os.Stderr, "error: invalid YouTube URL: %s\n", url)
-		os.Exit(1)
+		return usageErrorf("invalid YouTube URL: %s", url)
 	}
 
 	if err := checkYTDLP(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return missingDepError(err)
+	}
+
+	// Wire the event bus once the request is validated and the dependency
+	// is present, before any extraction runs. A failed fetch below
+	// returns early and publishes nothing.
+	if eventBus == nil {
+		eventBus = kitbus.New()
+		wireBusNetwork(cmd.Context())
 	}
 
 	var md *videoMetadata
-	if *metadata {
+	if opts.metadata {
 		var err error
 		md, err = fetchMetadata(url)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error fetching metadata: %v\n", err)
-			os.Exit(1)
+			return fetchErrorf("fetching metadata: %v", err)
 		}
+		publishEvent(cmd.Context(), "foo-youtube.capture.metadata.fetched", map[string]any{"url": url})
 	}
 
 	var transcriptText string
-	if *transcript {
+	if opts.transcript {
 		var err error
-		transcriptText, err = fetchTranscript(url, *timestamps)
+		transcriptText, err = fetchTranscript(url, opts.timestamps)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error fetching transcript: %v\n", err)
-			os.Exit(1)
+			return fetchErrorf("fetching transcript: %v", err)
 		}
+		publishEvent(cmd.Context(), "foo-youtube.capture.transcript.fetched", map[string]any{"url": url})
 	}
 
 	var commentList []comment
-	if *comments {
+	if opts.comments {
 		var err error
 		commentList, err = fetchComments(url)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not fetch comments: %v\n", err)
-			// Non-fatal: continue without comments
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not fetch comments: %v\n", err)
+			// Non-fatal: continue without comments.
 		}
 	}
 
-	renderMarkdown(os.Stdout, md, transcriptText, commentList)
+	out, ok := cmd.OutOrStdout().(*os.File)
+	if !ok {
+		out = os.Stdout
+	}
+	renderMarkdown(out, md, transcriptText, commentList)
+	return nil
+}
+
+// wireBusNetwork attaches a NetworkAdapter to the in-process bus so the
+// capture events foo-youtube publishes reach external subscribers (aps,
+// ctxt, tlc) over WebSocket. A bare bus.New() publishes to nobody; the
+// adapter subscribes to every local topic and forwards to each peer.
+//
+// Peers are read from FOO_YOUTUBE_BUS_PEERS (comma-separated ws:// URLs);
+// with none set, the adapter is skipped and events stay in-process.
+// Connects are best-effort: a failure is logged and never fatal. An auth
+// token from FOO_BUS_TOKEN / BUS_TOKEN is attached when present, sharing
+// the host's token names.
+func wireBusNetwork(ctx context.Context) {
+	if eventBus == nil {
+		return
+	}
+	raw := strings.TrimSpace(os.Getenv("FOO_YOUTUBE_BUS_PEERS"))
+	if raw == "" {
+		return
+	}
+	var opts []kitbus.NetworkOption
+	if auth, ok := kitbus.AuthFromEnv("FOO_BUS_TOKEN", "BUS_TOKEN"); ok {
+		opts = append(opts, kitbus.WithAuth(auth))
+	}
+	busNet = kitbus.NewNetworkAdapter(eventBus, opts...)
+	for _, addr := range strings.Split(raw, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		if err := busNet.Connect(ctx, addr); err != nil {
+			slog.Warn("bus.network.connect.failed", slog.String("addr", addr), slog.Any("err", err))
+		}
+	}
+}
+
+// publishEvent emits one capture event onto the bus, tolerating a nil
+// bus (no-op). The source segment is the binary name so subscribers can
+// filter foo-youtube traffic from the host and sibling sidecars.
+func publishEvent(ctx context.Context, topic string, payload any) {
+	if eventBus == nil {
+		return
+	}
+	_ = eventBus.Publish(ctx, kitbus.NewEvent(kitbus.Topic(topic), "foo-youtube", payload))
 }
 
 func isYouTubeURL(url string) bool {
