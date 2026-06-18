@@ -1,8 +1,9 @@
 name: release-please
 
+# Manual-only: no push trigger, so merges to main never auto-cut a
+# release PR or tag. Run from the Actions tab (workflow_dispatch) when
+# a release is intentionally desired.
 on:
-  push:
-    branches: [main]
   workflow_dispatch: {}
 
 permissions:
