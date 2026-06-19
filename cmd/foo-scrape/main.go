@@ -12,12 +12,15 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/net/html"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/console/output"
 	kitbus "hop.top/kit/go/runtime/bus"
+	"hop.top/kit/go/storage/httpcache"
+	"hop.top/kit/go/storage/kv"
 )
 
 var version = "dev"
@@ -167,10 +170,40 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
+// httpClient builds the client used to fetch the page. When
+// FOO_SCRAPE_CACHE names a writable path, fetches go through a kit
+// httpcache backed by a sqlite kv store (TTL via FOO_SCRAPE_CACHE_TTL,
+// default 24h) so repeated scrapes of the same URL skip the network.
+// With the env unset, or if the store can't be opened, it returns the
+// default client — caching is a best-effort optimization, never a
+// hard dependency of a scrape. Mirrors the opt-in FOO_SCRAPE_BUS_PEERS
+// idiom: configured by env, silent no-op otherwise.
+func httpClient() *http.Client {
+	path := strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE"))
+	if path == "" {
+		return http.DefaultClient
+	}
+	store, err := kv.Open(kv.Config{Backend: "sqlite", Path: path})
+	if err != nil {
+		slog.Warn("scrape.cache.open.failed", slog.String("path", path), slog.Any("err", err))
+		return http.DefaultClient
+	}
+	ttl, ok := store.(kv.TTLStore)
+	if !ok {
+		_ = store.Close()
+		return http.DefaultClient
+	}
+	opts := []httpcache.Option{httpcache.WithPrefix("foo-scrape:")}
+	if d, derr := time.ParseDuration(strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE_TTL"))); derr == nil {
+		opts = append(opts, httpcache.WithTTL(d))
+	}
+	return &http.Client{Transport: httpcache.New(ttl, http.DefaultTransport, opts...)}
+}
+
 // scrape fetches url and writes the converted markdown to the command's
 // stdout. mode is "readability" or "raw".
 func scrape(cmd *cobra.Command, url, mode string) error {
-	resp, err := http.Get(url)
+	resp, err := httpClient().Get(url)
 	if err != nil {
 		return fmt.Errorf("fetching URL: %w", err)
 	}
