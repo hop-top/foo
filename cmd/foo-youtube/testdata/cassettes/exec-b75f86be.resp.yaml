@@ -1,0 +1,9 @@
+xrr: "1"
+adapter: exec
+fingerprint: b75f86be
+recorded_at: "2026-06-19T00:00:00Z"
+payload:
+    stdout: |
+        {"title":"Rick Astley - Never Gonna Give You Up","channel":"Rick Astley","upload_date":"20091025","duration":213,"view_count":1600000000,"like_count":17000000}
+    stderr: ""
+    exit_code: 0
