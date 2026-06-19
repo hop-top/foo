@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"hop.top/kit/go/storage/kv"
 	xrr "hop.top/xrr"
 	xexec "hop.top/xrr/adapters/exec"
-	"hop.top/kit/go/storage/kv"
 )
 
 // cassetteDir holds committed xrr exec cassettes capturing yt-dlp output,
@@ -139,4 +141,83 @@ func TestRunYTDLP_DistinctArgvDistinctKey(t *testing.T) {
 	if got := calls.Load(); got != 2 {
 		t.Errorf("runner calls = %d, want 2 (distinct argv must not collide)", got)
 	}
+}
+
+// TestResolveCachePath covers the path precedence for foo-youtube, whose
+// resolver takes an explicit dbName: plugin-specific env -> shared
+// FOO_CACHE (dir + dbName) -> XDG default.
+func TestResolveCachePath(t *testing.T) {
+	const db = "ytdlp-cache.db"
+
+	t.Run("specific env wins (exact path)", func(t *testing.T) {
+		t.Setenv("FOO_YOUTUBE_CACHE", "/tmp/yt.db")
+		t.Setenv("FOO_CACHE", "/ignored")
+		got, err := resolveCachePath("foo-youtube", db, "FOO_YOUTUBE_CACHE")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if got != "/tmp/yt.db" {
+			t.Errorf("got %q, want /tmp/yt.db", got)
+		}
+	})
+
+	t.Run("shared FOO_CACHE is a dir, dbName filed under it", func(t *testing.T) {
+		t.Setenv("FOO_YOUTUBE_CACHE", "")
+		t.Setenv("FOO_CACHE", "/shared/cache")
+		got, err := resolveCachePath("foo-youtube", db, "FOO_YOUTUBE_CACHE")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if want := filepath.Join("/shared/cache", db); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no env falls back to XDG default", func(t *testing.T) {
+		t.Setenv("FOO_YOUTUBE_CACHE", "")
+		t.Setenv("FOO_CACHE", "")
+		got, err := resolveCachePath("foo-youtube", db, "FOO_YOUTUBE_CACHE")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if !strings.HasSuffix(got, filepath.Join("foo-youtube", db)) {
+			t.Errorf("XDG default should end in foo-youtube/%s; got %q", db, got)
+		}
+	})
+}
+
+// TestResolveCacheTTL covers the TTL precedence:
+// plugin-specific env -> shared FOO_CACHE_TTL -> 24h default.
+func TestResolveCacheTTL(t *testing.T) {
+	t.Run("specific env wins", func(t *testing.T) {
+		t.Setenv("FOO_YOUTUBE_CACHE_TTL", "1h")
+		t.Setenv("FOO_CACHE_TTL", "9h")
+		if got := resolveCacheTTL("FOO_YOUTUBE_CACHE_TTL"); got != time.Hour {
+			t.Errorf("got %v, want 1h", got)
+		}
+	})
+
+	t.Run("falls back to shared FOO_CACHE_TTL", func(t *testing.T) {
+		t.Setenv("FOO_YOUTUBE_CACHE_TTL", "")
+		t.Setenv("FOO_CACHE_TTL", "30m")
+		if got := resolveCacheTTL("FOO_YOUTUBE_CACHE_TTL"); got != 30*time.Minute {
+			t.Errorf("got %v, want 30m", got)
+		}
+	})
+
+	t.Run("unparseable specific falls through to shared", func(t *testing.T) {
+		t.Setenv("FOO_YOUTUBE_CACHE_TTL", "nope")
+		t.Setenv("FOO_CACHE_TTL", "2h")
+		if got := resolveCacheTTL("FOO_YOUTUBE_CACHE_TTL"); got != 2*time.Hour {
+			t.Errorf("got %v, want 2h", got)
+		}
+	})
+
+	t.Run("no env defaults to 24h", func(t *testing.T) {
+		t.Setenv("FOO_YOUTUBE_CACHE_TTL", "")
+		t.Setenv("FOO_CACHE_TTL", "")
+		if got := resolveCacheTTL("FOO_YOUTUBE_CACHE_TTL"); got != 24*time.Hour {
+			t.Errorf("got %v, want 24h", got)
+		}
+	})
 }
