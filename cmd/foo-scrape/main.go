@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/net/html"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/console/output"
+	"hop.top/kit/go/core/xdg"
 	kitbus "hop.top/kit/go/runtime/bus"
 	"hop.top/kit/go/storage/httpcache"
 	"hop.top/kit/go/storage/kv"
@@ -101,7 +103,10 @@ func emitExtInfo() {
 var scrapeModes = []string{"readability", "raw"}
 
 func newRoot() *kitcli.Root {
-	var mode string
+	var (
+		mode    string
+		noCache bool
+	)
 
 	root := kitcli.New(kitcli.Config{
 		Name:    "foo-scrape",
@@ -143,12 +148,14 @@ JSON.`
 			eventBus = kitbus.New()
 			wireBusNetwork(cmd.Context())
 		}
-		return scrape(cmd, args[0], mode)
+		return scrape(cmd, args[0], mode, noCache)
 	}
 
 	flags := root.Cmd.Flags()
 	flags.StringVar(&mode, "mode", "readability",
 		"Conversion mode: readability (main content) or raw (full HTML)")
+	flags.BoolVar(&noCache, "no-cache", false,
+		"Bypass the page cache for this run")
 
 	// Side-effect / idempotency contract: a fetch-and-print is a pure
 	// read, trivially idempotent against the same URL.
@@ -170,17 +177,22 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
-// httpClient builds the client used to fetch the page. When
-// FOO_SCRAPE_CACHE names a writable path, fetches go through a kit
-// httpcache backed by a sqlite kv store (TTL via FOO_SCRAPE_CACHE_TTL,
-// default 24h) so repeated scrapes of the same URL skip the network.
-// With the env unset, or if the store can't be opened, it returns the
-// default client — caching is a best-effort optimization, never a
-// hard dependency of a scrape. Mirrors the opt-in FOO_SCRAPE_BUS_PEERS
-// idiom: configured by env, silent no-op otherwise.
-func httpClient() *http.Client {
-	path := strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE"))
-	if path == "" {
+// httpClient builds the client used to fetch the page. Caching is ON by
+// default: fetches go through a kit httpcache backed by a sqlite kv store
+// so repeated scrapes of the same URL skip the network. The db path and
+// TTL resolve from env (see resolveCachePath / resolveCacheTTL), the
+// default being the XDG cache dir at 24h.
+//
+// noCache (the --no-cache flag) bypasses caching for a single run.
+// Caching is best-effort: a path-resolve or store-open failure falls back
+// to the default client and never fails a scrape.
+func httpClient(noCache bool) *http.Client {
+	if noCache {
+		return http.DefaultClient
+	}
+	path, err := resolveCachePath("foo-scrape", "FOO_SCRAPE_CACHE")
+	if err != nil {
+		slog.Warn("scrape.cache.path.failed", slog.Any("err", err))
 		return http.DefaultClient
 	}
 	store, err := kv.Open(kv.Config{Backend: "sqlite", Path: path})
@@ -193,17 +205,44 @@ func httpClient() *http.Client {
 		_ = store.Close()
 		return http.DefaultClient
 	}
-	opts := []httpcache.Option{httpcache.WithPrefix("foo-scrape:")}
-	if d, derr := time.ParseDuration(strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE_TTL"))); derr == nil {
-		opts = append(opts, httpcache.WithTTL(d))
+	return &http.Client{Transport: httpcache.New(ttl, http.DefaultTransport,
+		httpcache.WithPrefix("foo-scrape:"),
+		httpcache.WithTTL(resolveCacheTTL("FOO_SCRAPE_CACHE_TTL")),
+	)}
+}
+
+// resolveCachePath picks the cache db path with this precedence:
+// the plugin-specific env (e.g. FOO_SCRAPE_CACHE) → the shared FOO_CACHE
+// → the XDG cache dir for tool. A shared env value is treated as a
+// directory and the per-tool db filename is joined under it, so two
+// plugins sharing FOO_CACHE keep distinct files.
+func resolveCachePath(tool, specificEnv string) (string, error) {
+	if p := strings.TrimSpace(os.Getenv(specificEnv)); p != "" {
+		return p, nil
 	}
-	return &http.Client{Transport: httpcache.New(ttl, http.DefaultTransport, opts...)}
+	dbName := tool + "-cache.db"
+	if dir := strings.TrimSpace(os.Getenv("FOO_CACHE")); dir != "" {
+		return filepath.Join(dir, dbName), nil
+	}
+	return xdg.CacheFile(tool, dbName)
+}
+
+// resolveCacheTTL reads the plugin-specific TTL env, falling back to the
+// shared FOO_CACHE_TTL, then to 24h. An unparseable value falls through
+// to the next source.
+func resolveCacheTTL(specificEnv string) time.Duration {
+	for _, env := range []string{specificEnv, "FOO_CACHE_TTL"} {
+		if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv(env))); err == nil {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // scrape fetches url and writes the converted markdown to the command's
 // stdout. mode is "readability" or "raw".
-func scrape(cmd *cobra.Command, url, mode string) error {
-	resp, err := httpClient().Get(url)
+func scrape(cmd *cobra.Command, url, mode string, noCache bool) error {
+	resp, err := httpClient(noCache).Get(url)
 	if err != nil {
 		return fmt.Errorf("fetching URL: %w", err)
 	}
