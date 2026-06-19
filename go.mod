@@ -17,6 +17,7 @@ require (
 	hop.top/aim v0.1.0-alpha.0
 	hop.top/kit v0.5.0-alpha.1
 	hop.top/wsm v0.0.0-20260427064031-cd509944d726
+	hop.top/xrr v0.1.0-alpha.4
 )
 
 require (

@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,14 +16,27 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/console/output"
+	"hop.top/kit/go/core/xdg"
 	kitbus "hop.top/kit/go/runtime/bus"
+	"hop.top/kit/go/storage/kv"
 )
 
 var version = "dev"
+
+// ytCache caches raw yt-dlp invocation output keyed by argv, so repeated
+// extractions of the same video skip the subprocess + network. nil when
+// caching is disabled (--no-cache or a store-open failure); runYTDLP
+// tolerates the nil cache and just execs. Initialized once in run().
+var ytCache kv.TTLStore
+
+// ytCacheTTL is the freshness window for cached yt-dlp output. Overridable
+// via FOO_YOUTUBE_CACHE_TTL (a Go duration); default 24h.
+var ytCacheTTL = 24 * time.Hour
 
 // eventBus carries capture events to external subscribers (aps, ctxt,
 // tlc) via the network adapter. A bare bus.New() publishes in-process to
@@ -163,6 +178,7 @@ func newRoot() *kitcli.Root {
 		timestamps bool
 		comments   bool
 		metadata   bool
+		noCache    bool
 	)
 
 	root := kitcli.New(kitcli.Config{
@@ -194,6 +210,7 @@ interrogates it with --ext-info.`,
 	flags.BoolVar(&transcript, "no-transcript", false, "Skip transcript extraction")
 	flags.BoolVar(&timestamps, "timestamps", false, "Include timestamps in transcript")
 	flags.BoolVar(&comments, "comments", false, "Include top comments")
+	flags.BoolVar(&noCache, "no-cache", false, "Bypass the yt-dlp output cache for this run")
 
 	// --ext-info is registered for help/discoverability parity; the real
 	// handling happens pre-cobra in main so the JSON contract stays
@@ -215,6 +232,7 @@ interrogates it with --ext-info.`,
 			transcript: transcript,
 			timestamps: timestamps,
 			comments:   comments,
+			noCache:    noCache,
 		})
 	}
 
@@ -233,6 +251,7 @@ type runOpts struct {
 	transcript bool
 	timestamps bool
 	comments   bool
+	noCache    bool
 }
 
 func run(cmd *cobra.Command, args []string, opts runOpts) error {
@@ -249,38 +268,45 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 		return missingDepError(err)
 	}
 
+	// Open the yt-dlp output cache unless the run opted out. Best-effort:
+	// a failed open leaves ytCache nil and runYTDLP execs directly.
+	ctx := cmd.Context()
+	if !opts.noCache {
+		openYTCache()
+	}
+
 	// Wire the event bus once the request is validated and the dependency
 	// is present, before any extraction runs. A failed fetch below
 	// returns early and publishes nothing.
 	if eventBus == nil {
 		eventBus = kitbus.New()
-		wireBusNetwork(cmd.Context())
+		wireBusNetwork(ctx)
 	}
 
 	var md *videoMetadata
 	if opts.metadata {
 		var err error
-		md, err = fetchMetadata(url)
+		md, err = fetchMetadata(ctx, url)
 		if err != nil {
 			return fetchErrorf("fetching metadata: %v", err)
 		}
-		publishEvent(cmd.Context(), "foo-youtube.capture.metadata.fetched", map[string]any{"url": url})
+		publishEvent(ctx, "foo-youtube.capture.metadata.fetched", map[string]any{"url": url})
 	}
 
 	var transcriptText string
 	if opts.transcript {
 		var err error
-		transcriptText, err = fetchTranscript(url, opts.timestamps)
+		transcriptText, err = fetchTranscript(ctx, url, opts.timestamps)
 		if err != nil {
 			return fetchErrorf("fetching transcript: %v", err)
 		}
-		publishEvent(cmd.Context(), "foo-youtube.capture.transcript.fetched", map[string]any{"url": url})
+		publishEvent(ctx, "foo-youtube.capture.transcript.fetched", map[string]any{"url": url})
 	}
 
 	var commentList []comment
 	if opts.comments {
 		var err error
-		commentList, err = fetchComments(url)
+		commentList, err = fetchComments(ctx, url)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not fetch comments: %v\n", err)
 			// Non-fatal: continue without comments.
@@ -353,16 +379,100 @@ func checkYTDLP() error {
 	return nil
 }
 
-func fetchMetadata(url string) (*videoMetadata, error) {
-	cmd := exec.Command("yt-dlp",
+// openYTCache initializes the package-level yt-dlp output cache. The db
+// path defaults to the XDG cache dir (FOO_YOUTUBE_CACHE overrides it),
+// and FOO_YOUTUBE_CACHE_TTL overrides the freshness window. Best-effort:
+// any failure logs at warn and leaves ytCache nil so runYTDLP execs
+// directly — caching is an optimization, never a hard dependency.
+func openYTCache() {
+	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv("FOO_YOUTUBE_CACHE_TTL"))); err == nil {
+		ytCacheTTL = d
+	}
+
+	path := strings.TrimSpace(os.Getenv("FOO_YOUTUBE_CACHE"))
+	if path == "" {
+		p, err := xdg.CacheFile("foo-youtube", "ytdlp-cache.db")
+		if err != nil {
+			slog.Warn("youtube.cache.path.failed", slog.Any("err", err))
+			return
+		}
+		path = p
+	}
+
+	store, err := kv.Open(kv.Config{Backend: "sqlite", Path: path})
+	if err != nil {
+		slog.Warn("youtube.cache.open.failed", slog.String("path", path), slog.Any("err", err))
+		return
+	}
+	ttl, ok := store.(kv.TTLStore)
+	if !ok {
+		_ = store.Close()
+		return
+	}
+	ytCache = ttl
+}
+
+// runYTDLP execs `yt-dlp <args>` and returns its stdout. When the cache
+// is enabled, output is keyed by the full argv: a hit returns the stored
+// bytes without spawning yt-dlp, a miss execs and stores the result.
+// Caching is best-effort — a read/decode failure degrades to a fresh
+// exec, and a store-write failure is swallowed. stderr always streams to
+// the process stderr so yt-dlp diagnostics surface on both paths.
+func runYTDLP(ctx context.Context, args []string) ([]byte, error) {
+	key := ytCacheKey(args)
+	if ytCache != nil {
+		if raw, ok, err := ytCache.Get(ctx, key); err == nil && ok {
+			return raw, nil
+		}
+	}
+
+	out, err := ytRunner(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if ytCache != nil {
+		if ytCacheTTL > 0 {
+			_ = ytCache.PutWithTTL(ctx, key, out, ytCacheTTL)
+		} else {
+			_ = ytCache.Put(ctx, key, out)
+		}
+	}
+	return out, nil
+}
+
+// ytRunner is the single seam through which yt-dlp is executed. It
+// defaults to a real subprocess; tests swap it for an xrr-backed runner
+// so the suite replays recorded yt-dlp output instead of shelling out.
+var ytRunner = execYTDLP
+
+// execYTDLP runs the real yt-dlp subprocess, streaming its stderr so
+// diagnostics surface to the user, and returns stdout.
+func execYTDLP(_ context.Context, args []string) ([]byte, error) {
+	cmd := exec.Command("yt-dlp", args...)
+	cmd.Stderr = os.Stderr
+	return cmd.Output()
+}
+
+// ytCacheKey derives a stable key from the yt-dlp argv. The "yt-dlp\x00"
+// prefix and NUL separators keep distinct argv from colliding.
+func ytCacheKey(args []string) string {
+	h := sha256.New()
+	h.Write([]byte("yt-dlp\x00"))
+	for _, a := range args {
+		h.Write([]byte(a))
+		h.Write([]byte{0})
+	}
+	return "foo-youtube:" + hex.EncodeToString(h.Sum(nil))
+}
+
+func fetchMetadata(ctx context.Context, url string) (*videoMetadata, error) {
+	out, err := runYTDLP(ctx, []string{
 		"--dump-json",
 		"--no-download",
 		"--no-playlist",
 		url,
-	)
-	cmd.Stderr = os.Stderr
-
-	out, err := cmd.Output()
+	})
 	if err != nil {
 		return nil, fmt.Errorf("yt-dlp metadata: %w", err)
 	}
@@ -375,8 +485,8 @@ func fetchMetadata(url string) (*videoMetadata, error) {
 	return &md, nil
 }
 
-func fetchTranscript(url string, withTimestamps bool) (string, error) {
-	args := []string{
+func fetchTranscript(ctx context.Context, url string, withTimestamps bool) (string, error) {
+	out, err := runYTDLP(ctx, []string{
 		"--skip-download",
 		"--write-subs",
 		"--write-auto-subs",
@@ -385,23 +495,18 @@ func fetchTranscript(url string, withTimestamps bool) (string, error) {
 		"--no-playlist",
 		"-o", "-",
 		url,
-	}
-
-	cmd := exec.Command("yt-dlp", args...)
-	cmd.Stderr = os.Stderr
-
-	out, err := cmd.Output()
+	})
 	if err != nil {
 		// Fallback: try getting subtitles via different approach
-		return fetchTranscriptFallback(url, withTimestamps)
+		return fetchTranscriptFallback(ctx, url, withTimestamps)
 	}
 
 	return parseTranscript(out, withTimestamps)
 }
 
-func fetchTranscriptFallback(url string, withTimestamps bool) (string, error) {
+func fetchTranscriptFallback(ctx context.Context, url string, withTimestamps bool) (string, error) {
 	// Use yt-dlp to get subtitle file
-	args := []string{
+	out, err := runYTDLP(ctx, []string{
 		"--skip-download",
 		"--write-subs",
 		"--write-auto-subs",
@@ -410,12 +515,7 @@ func fetchTranscriptFallback(url string, withTimestamps bool) (string, error) {
 		"--print", "subtitle",
 		"--no-playlist",
 		url,
-	}
-
-	cmd := exec.Command("yt-dlp", args...)
-	cmd.Stderr = os.Stderr
-
-	out, err := cmd.Output()
+	})
 	if err != nil {
 		return "", fmt.Errorf("yt-dlp transcript: %w", err)
 	}
@@ -433,8 +533,8 @@ type json3Transcript struct {
 }
 
 type json3Event struct {
-	TStartMs int         `json:"tStartMs"`
-	Segs     []json3Seg  `json:"segs"`
+	TStartMs int        `json:"tStartMs"`
+	Segs     []json3Seg `json:"segs"`
 }
 
 type json3Seg struct {
@@ -485,18 +585,15 @@ func formatTimestamp(ms int) string {
 	return fmt.Sprintf("%d:%02d", m, s)
 }
 
-func fetchComments(url string) ([]comment, error) {
-	cmd := exec.Command("yt-dlp",
+func fetchComments(ctx context.Context, url string) ([]comment, error) {
+	out, err := runYTDLP(ctx, []string{
 		"--dump-json",
 		"--no-download",
 		"--write-comments",
 		"--no-playlist",
 		"--extractor-args", "youtube:max_comments=20",
 		url,
-	)
-	cmd.Stderr = os.Stderr
-
-	out, err := cmd.Output()
+	})
 	if err != nil {
 		return nil, fmt.Errorf("yt-dlp comments: %w", err)
 	}
