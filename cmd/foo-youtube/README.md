@@ -37,6 +37,7 @@ foo-youtube [flags] <url>
 | `--no-transcript` | — | Skip transcript |
 | `--timestamps` | `false` | Prefix transcript lines with timestamps |
 | `--comments` | `false` | Include up to 20 top comments |
+| `--no-cache` | `false` | Bypass the yt-dlp output cache for this run |
 | `--ext-info` | — | Print discovery JSON and exit (host-facing; hidden) |
 
 Flags are parsed by this binary, not by foo — the host forwards argv
@@ -101,6 +102,32 @@ Comments are best-effort: a fetch failure there warns on stderr and
 continues (does not fail the run). A non-zero exit produces no stdout,
 which downstream surfaces as `no prompt provided (stdin was empty)` —
 see [@../../docs/troubleshooting.md](../../docs/troubleshooting.md#empty-pipe-into-foo).
+
+## Caching
+
+Raw `yt-dlp` output is cached **on by default**, keyed by the full
+invocation argv — so metadata, transcript, and comments are cached
+independently and repeated extractions of the same video skip the
+subprocess and network. Backed by a sqlite `kv` store from
+`hop.top/kit/go/storage/kv`.
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `--no-cache` | off | Bypass the cache for a single run |
+| `FOO_YOUTUBE_CACHE` | — | Override the cache db **path** (file) |
+| `FOO_CACHE` | — | Shared cache **dir** for all foo plugins (db filed under it) |
+| `FOO_YOUTUBE_CACHE_TTL` | — | Freshness window (Go duration; `0` = no expiry) |
+| `FOO_CACHE_TTL` | — | Shared TTL fallback for all foo plugins |
+| (default) | `$XDG_CACHE_HOME/foo-youtube/ytdlp-cache.db`, `24h` | when no env set |
+
+Path precedence: `FOO_YOUTUBE_CACHE` → `FOO_CACHE` → XDG default. TTL
+precedence: `FOO_YOUTUBE_CACHE_TTL` → `FOO_CACHE_TTL` → `24h`. The shared
+`FOO_CACHE`/`FOO_CACHE_TTL` let one setting cover every foo plugin while
+each keeps a distinct db file.
+
+Caching is best-effort: a store open/read/write failure falls back to a
+live `yt-dlp` exec — it never fails a fetch. Use `--no-cache` when a
+video changed and you need a fresh pull.
 
 ## Events
 
