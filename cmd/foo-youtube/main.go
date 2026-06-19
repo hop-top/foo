@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -385,18 +386,12 @@ func checkYTDLP() error {
 // any failure logs at warn and leaves ytCache nil so runYTDLP execs
 // directly — caching is an optimization, never a hard dependency.
 func openYTCache() {
-	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv("FOO_YOUTUBE_CACHE_TTL"))); err == nil {
-		ytCacheTTL = d
-	}
+	ytCacheTTL = resolveCacheTTL("FOO_YOUTUBE_CACHE_TTL")
 
-	path := strings.TrimSpace(os.Getenv("FOO_YOUTUBE_CACHE"))
-	if path == "" {
-		p, err := xdg.CacheFile("foo-youtube", "ytdlp-cache.db")
-		if err != nil {
-			slog.Warn("youtube.cache.path.failed", slog.Any("err", err))
-			return
-		}
-		path = p
+	path, err := resolveCachePath("foo-youtube", "ytdlp-cache.db", "FOO_YOUTUBE_CACHE")
+	if err != nil {
+		slog.Warn("youtube.cache.path.failed", slog.Any("err", err))
+		return
 	}
 
 	store, err := kv.Open(kv.Config{Backend: "sqlite", Path: path})
@@ -410,6 +405,33 @@ func openYTCache() {
 		return
 	}
 	ytCache = ttl
+}
+
+// resolveCachePath picks the cache db path with this precedence: the
+// plugin-specific env (FOO_YOUTUBE_CACHE) → the shared FOO_CACHE → the
+// XDG cache dir under tool. A shared FOO_CACHE value is treated as a
+// directory and dbName is joined under it, so plugins sharing FOO_CACHE
+// keep distinct files.
+func resolveCachePath(tool, dbName, specificEnv string) (string, error) {
+	if p := strings.TrimSpace(os.Getenv(specificEnv)); p != "" {
+		return p, nil
+	}
+	if dir := strings.TrimSpace(os.Getenv("FOO_CACHE")); dir != "" {
+		return filepath.Join(dir, dbName), nil
+	}
+	return xdg.CacheFile(tool, dbName)
+}
+
+// resolveCacheTTL reads the plugin-specific TTL env, falling back to the
+// shared FOO_CACHE_TTL, then to 24h. An unparseable value falls through
+// to the next source.
+func resolveCacheTTL(specificEnv string) time.Duration {
+	for _, env := range []string{specificEnv, "FOO_CACHE_TTL"} {
+		if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv(env))); err == nil {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // runYTDLP execs `yt-dlp <args>` and returns its stdout. When the cache
