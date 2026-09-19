@@ -21,7 +21,8 @@ the real `cobra.Command.Use` strings; descriptions come from
 |------|-------|---------|-------------|
 | `--pattern` | `-p` | (none) | Pattern (system prompt) to apply |
 | `--strategy` | `-s` | (none) | Strategy wrapper to apply |
-| `--model` | `-m` | (config) | Model override for this call |
+| `--model` | `-m` | (config) | Model override for this call (bare id, or a full `scheme://model` URI) |
+| `--max-tokens` | | `0` | Cap completion length in tokens (`0` = provider default, field omitted) |
 | `--no-stream` | | `false` | Wait for full response |
 | `--dry-run` | | `false` | Print assembled prompt and exit |
 | `--tool` | `-T` | (none) | Enable specific tools by name (repeatable) |

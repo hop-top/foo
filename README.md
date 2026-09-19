@@ -54,6 +54,7 @@ or `--budget premium` for the most capable. Full tour:
 | Manage structured-output schemas | [docs/how-to/manage-schemas.md](docs/how-to/manage-schemas.md) |
 | Apply chain-of-thought + other strategies | [docs/how-to/use-strategies.md](docs/how-to/use-strategies.md) |
 | Switch or default a model | [docs/how-to/configure-models.md](docs/how-to/configure-models.md) |
+| Use a local or self-hosted endpoint | [docs/how-to/use-a-local-endpoint.md](docs/how-to/use-a-local-endpoint.md) |
 | Route across models (pool + --budget, fallback chain, RouteLLM) | [docs/how-to/route-across-models.md](docs/how-to/route-across-models.md) |
 | Run destructive commands in scripts | [docs/how-to/confirm-destructive-ops.md](docs/how-to/confirm-destructive-ops.md) |
 | Upgrade foo in place | [docs/how-to/upgrade-foo.md](docs/how-to/upgrade-foo.md) |

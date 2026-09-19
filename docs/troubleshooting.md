@@ -203,9 +203,45 @@ foo status -V
 Address the specific entry and re-run; status is purely
 informational and never mutates state.
 
+## Local endpoint: wrong host, or a nonsensical context-length error
+
+Two symptoms when pointing foo at a self-hosted OpenAI-compatible
+server.
+
+**Requests still reach `api.openai.com`.** The `base_url` never
+resolved. It belongs under `providers:` → `openai:` in
+`~/.config/hop/llm.yaml` (not at the top level):
+
+```yaml
+providers:
+  openai:
+    base_url: http://127.0.0.1:8000/v1
+```
+
+`LLM_BASE_URL` overrides the file, and `?base_url=` on `--model`
+overrides both.
+
+**A context-length error that does not match your prompt**, e.g.
+"maximum context length is 8192 tokens, however your messages
+resulted in at least 19 tokens". The server is asking for an
+explicit cap, not reporting a real overflow:
+
+```sh
+foo --max-tokens 512 -m my-local-model "hello"
+```
+
+**`model "..." not available`** against a local server is kit
+mapping a 404. Check the id against `curl -s
+http://127.0.0.1:8000/v1/models`, and check that `base_url` is not
+doubling the prefix (`/v1/v1/chat/completions`).
+
+Full walkthrough:
+[how-to/use-a-local-endpoint.md](how-to/use-a-local-endpoint.md).
+
 ## Related docs
 
 - [How to: confirm destructive ops](how-to/confirm-destructive-ops.md)
 - [How to: configure models](how-to/configure-models.md)
+- [How to: use a local endpoint](how-to/use-a-local-endpoint.md)
 - [Reference: schema DSL](reference/schema-dsl.md)
 - [Reference: config](reference/config.md)

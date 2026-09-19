@@ -105,7 +105,7 @@ fallback:
 |-------|------|---------|
 | `default` | string | URI used when no model is specified. Overridden by `LLM_PROVIDER` env. |
 | `providers.<scheme>.api_key` | string | Provider key. Overridden by the per-provider env var (e.g. `OPENAI_API_KEY`). |
-| `providers.<scheme>.base_url` | string | Custom base URL. Overridden by `LLM_BASE_URL` env. |
+| `providers.<scheme>.base_url` | string | Custom base URL. Overridden by `LLM_BASE_URL` env, and by a `?base_url=` param on `--model`. See [use a local endpoint](../how-to/use-a-local-endpoint.md). |
 | `providers.<scheme>.model` | string | Default model for this scheme; URI model wins when set. |
 | `providers.routellm.routellm.base_url` | string | RouteLLM server URL. Overridden by `ROUTELLM_BASE_URL`. |
 | `providers.routellm.routellm.strong_model` | string | Strong-tier model RouteLLM picks above threshold. Overridden by `ROUTELLM_STRONG_MODEL`. |
@@ -144,7 +144,7 @@ take effect on every `foo` invocation.
 |----------|---------|---------|
 | `LLM_PROVIDER` | `LoadConfig` | Default URI when no model is specified. Overrides `default:` in `llm.yaml`. |
 | `LLM_API_KEY` | `LoadConfig` | Generic provider key fallback when no per-provider env var is set. |
-| `LLM_BASE_URL` | `LoadConfig` | Custom base URL for the resolved provider. |
+| `LLM_BASE_URL` | `LoadConfig` | Custom base URL for the resolved provider. Overrides `providers.<scheme>.base_url`; a `?base_url=` param on `--model` overrides both. |
 | `LLM_FALLBACK` | `LoadConfig` | Comma-separated fallback URIs. Overrides `fallback:` in `llm.yaml`. |
 | `LLM_POOL_DISABLE` | `LoadPool` | Comma list of `alias` or `<scheme>:<model>` entries to mute without removing. |
 | `LLM_PICKER_TRACE` | picker | When set to a truthy value (`1`, `true`, `on`, `yes`) emits one structured slog line per pick on stderr. `--picker-debug` sets this implicitly. |
