@@ -66,7 +66,9 @@ var (
 
 	// Delegation-safety / scope globals (§8). Registered via
 	// Config.Globals so they live on the root's persistent flag set and
-	// every subcommand inherits them.
+	// every subcommand inherits them. --offline is the exception: kit
+	// reserves and registers it in cli.New, so it is read back off the
+	// root's viper binding in initializeRuntime rather than declared here.
 	offline      bool
 	profileName  string
 	instanceName string
@@ -120,12 +122,11 @@ func New(v string) *kitcli.Root {
 				{ID: "interact", Title: "INTERACT"},
 			},
 		},
-		// Scope/delegation globals (§8). --config -c is registered by kit
-		// automatically; these three complete the required set. Bound to
-		// package-level pointers so initializeRuntime can honor them
-		// without round-tripping through viper.
+		// Scope/delegation globals (§8). --config -c and --offline are
+		// registered by kit automatically; these two complete the required
+		// set. Bound to package-level pointers so initializeRuntime can
+		// honor them without round-tripping through viper.
 		Globals: []kitcli.Flag{
-			{Name: "offline", Usage: "Disable all network access (skips upgrade check and remote calls)", BoolVar: &offline},
 			{Name: "profile", Usage: "Select the aps profile scoping config + secret lookups", StringVar: &profileName},
 			{Name: "instance", Usage: "Select the backend instance (single-instance build: currently a no-op)", StringVar: &instanceName},
 		},
@@ -270,6 +271,12 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	verbose, _ := cmd.Root().PersistentFlags().GetCount("verbose")
 	logger = kitlog.WithVerbose(root.Viper, verbose)
 	slog.SetDefault(slog.New(logger))
+
+	// --offline is a kit-reserved global (registered in cli.New), so its
+	// value arrives via the root's viper binding rather than a local
+	// BoolVar. Mirror it into the package-level flag that networkAllowed()
+	// and wireBusNetwork() read.
+	offline = root.Offline()
 
 	// --offline suppresses every network call. The upgrade check is the
 	// one unconditional network touch in the runtime init path; gate it

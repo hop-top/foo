@@ -21,6 +21,9 @@ import (
 	kitbus "hop.top/kit/go/runtime/bus"
 	"hop.top/kit/go/storage/httpcache"
 	"hop.top/kit/go/storage/kv"
+	// kit v0.5 splits kv backends into separately-imported packages;
+	// the blank import runs the init() that registers "sqlite".
+	_ "hop.top/kit/go/storage/kv/sqlite"
 )
 
 var version = "dev"

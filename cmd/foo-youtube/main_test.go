@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"hop.top/kit/go/storage/kv"
 	xrr "hop.top/xrr"
 	xexec "hop.top/xrr/adapters/exec"
-	"hop.top/kit/go/storage/kv"
 )
 
 // cassetteDir holds committed xrr exec cassettes capturing yt-dlp output,
