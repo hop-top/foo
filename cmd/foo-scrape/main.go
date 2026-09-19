@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -181,32 +183,43 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // default client — caching is a best-effort optimization, never a
 // hard dependency of a scrape. Mirrors the opt-in FOO_SCRAPE_BUS_PEERS
 // idiom: configured by env, silent no-op otherwise.
-func httpClient() *http.Client {
+// The returned observedStore is nil when caching is off; callers must
+// nil-check it before asking whether the fetch was a cache hit.
+func httpClient() (*http.Client, *observedStore) {
 	path := strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE"))
 	if path == "" {
-		return http.DefaultClient
+		return http.DefaultClient, nil
 	}
 	store, err := kv.Open(kv.Config{Backend: "sqlite", Path: path})
 	if err != nil {
 		slog.Warn("scrape.cache.open.failed", slog.String("path", path), slog.Any("err", err))
-		return http.DefaultClient
+		return http.DefaultClient, nil
 	}
 	ttl, ok := store.(kv.TTLStore)
 	if !ok {
 		_ = store.Close()
-		return http.DefaultClient
+		return http.DefaultClient, nil
 	}
 	opts := []httpcache.Option{httpcache.WithPrefix("foo-scrape:")}
 	if d, derr := time.ParseDuration(strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE_TTL"))); derr == nil {
 		opts = append(opts, httpcache.WithTTL(d))
 	}
-	return &http.Client{Transport: httpcache.New(ttl, http.DefaultTransport, opts...)}
+	// The store is wrapped before the transport gets it so the
+	// transport's own cache lookup is observable — see observedStore.
+	obs := newObservedStore(ttl)
+	return &http.Client{Transport: httpcache.New(obs, http.DefaultTransport, opts...)}, obs
 }
 
 // scrape fetches url and writes the converted markdown to the command's
 // stdout. mode is "readability" or "raw".
 func scrape(cmd *cobra.Command, url, mode string) error {
-	resp, err := httpClient().Get(url)
+	ctx := cmd.Context()
+	started = time.Now()
+
+	emitFetchStart(ctx, url)
+
+	client, obs := httpClient()
+	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("fetching URL: %w", err)
 	}
@@ -216,27 +229,38 @@ func scrape(cmd *cobra.Command, url, mode string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	doc, err := html.Parse(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading body: %w", err)
+	}
+	// obs is nil when caching is off; an unwired cache is reported as a
+	// plain fetch, which is what it is.
+	emitCacheOutcome(ctx, url, obs != nil && obs.hit(), len(body))
+
+	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
+	// Build the markdown in a buffer so the completion event can report
+	// its size and token estimate, then write it to stdout in one go.
+	var buf strings.Builder
 	if mode == "raw" {
-		md := convertNode(doc, false)
-		_, _ = fmt.Fprint(out, cleanMarkdown(md))
-		publishScraped(cmd.Context(), url, mode)
-		return nil
+		buf.WriteString(cleanMarkdown(convertNode(doc, false)))
+	} else {
+		if title := extractTitle(doc); title != "" {
+			fmt.Fprintf(&buf, "# %s\n\n", title)
+		}
+		buf.WriteString(cleanMarkdown(convertNode(extractArticleContent(doc), true)))
 	}
 
-	title := extractTitle(doc)
-	content := extractArticleContent(doc)
-	if title != "" {
-		_, _ = fmt.Fprintf(out, "# %s\n\n", title)
+	md := buf.String()
+	if _, err := io.WriteString(cmd.OutOrStdout(), md); err != nil {
+		return fmt.Errorf("writing markdown: %w", err)
 	}
-	md := convertNode(content, true)
-	_, _ = fmt.Fprint(out, cleanMarkdown(md))
-	publishScraped(cmd.Context(), url, mode)
+
+	publishScraped(ctx, url, mode)
+	emitDone(ctx, url, int64(len(md)), estimateTokens(md))
 	return nil
 }
 

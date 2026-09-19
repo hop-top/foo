@@ -6,12 +6,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -164,7 +166,7 @@ func exitCodeFor(err error) int {
 	return exitUsage
 }
 
-func printExtInfo(w *os.File) error {
+func printExtInfo(w io.Writer) error {
 	info := extInfo{
 		Name:         "youtube",
 		Version:      version,
@@ -183,6 +185,7 @@ func newRoot() *kitcli.Root {
 		comments   bool
 		metadata   bool
 		noCache    bool
+		debug      bool
 	)
 
 	root := kitcli.New(kitcli.Config{
@@ -216,6 +219,11 @@ interrogates it with --ext-info.`,
 	flags.BoolVar(&timestamps, "timestamps", false, "Include timestamps in transcript")
 	flags.BoolVar(&comments, "comments", false, "Include top comments")
 	flags.BoolVar(&noCache, "no-cache", false, "Bypass the yt-dlp output cache for this run")
+	// yt-dlp's own stderr is suppressed by default so it never mixes
+	// with this sidecar's progress lines; --debug restores the raw
+	// passthrough for diagnosis. -V/--verbose is kit-owned (log level),
+	// so -v is free for this.
+	flags.BoolVarP(&debug, "debug", "v", false, "Pass yt-dlp's raw stderr through for diagnosis")
 
 	// --ext-info is registered for help/discoverability parity; the real
 	// handling happens pre-cobra in main so the JSON contract stays
@@ -238,6 +246,7 @@ interrogates it with --ext-info.`,
 			timestamps: timestamps,
 			comments:   comments,
 			noCache:    noCache,
+			debug:      debug,
 		})
 	}
 
@@ -257,6 +266,7 @@ type runOpts struct {
 	timestamps bool
 	comments   bool
 	noCache    bool
+	debug      bool
 }
 
 func run(cmd *cobra.Command, args []string, opts runOpts) error {
@@ -272,6 +282,11 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 	if !ok {
 		return usageErrorf("invalid YouTube URL: %s", args[0])
 	}
+
+	// Start the telemetry clock and set the raw-passthrough gate before
+	// any yt-dlp work runs.
+	started = time.Now()
+	ytDebug = opts.debug
 
 	if err := checkYTDLP(); err != nil {
 		return missingDepError(err)
@@ -322,11 +337,17 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 		}
 	}
 
-	out, ok := cmd.OutOrStdout().(*os.File)
-	if !ok {
-		out = os.Stdout
+	// Render to a buffer first so the completion event can report the
+	// payload's size and token estimate, then write it to stdout in one
+	// go. Stdout carries the markdown and nothing else; every progress
+	// line went to the reporter's stderr stream.
+	var buf bytes.Buffer
+	renderMarkdown(&buf, md, transcriptText, commentList)
+	if _, err := cmd.OutOrStdout().Write(buf.Bytes()); err != nil {
+		return fetchErrorf("writing markdown: %v", err)
 	}
-	renderMarkdown(out, md, transcriptText, commentList)
+
+	emitDone(ctx, url, int64(buf.Len()), estimateTokens(buf.String()))
 	return nil
 }
 
@@ -449,12 +470,17 @@ func openYTCache() {
 // is enabled, output is keyed by the full argv: a hit returns the stored
 // bytes without spawning yt-dlp, a miss execs and stores the result.
 // Caching is best-effort — a read/decode failure degrades to a fresh
-// exec, and a store-write failure is swallowed. stderr always streams to
-// the process stderr so yt-dlp diagnostics surface on both paths.
+// exec, and a store-write failure is swallowed. Each call reports a
+// fetch start and its cache outcome on the progress reporter; yt-dlp's
+// own stderr is suppressed unless --debug is set (see execYTDLP).
 func runYTDLP(ctx context.Context, args []string) ([]byte, error) {
+	item := ytProgressItem(args)
+	emitFetchStart(ctx, item)
+
 	key := ytCacheKey(args)
 	if ytCache != nil {
 		if raw, ok, err := ytCache.Get(ctx, key); err == nil && ok {
+			emitCacheOutcome(ctx, item, true, len(raw))
 			return raw, nil
 		}
 	}
@@ -463,6 +489,7 @@ func runYTDLP(ctx context.Context, args []string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	emitCacheOutcome(ctx, item, false, len(out))
 
 	if ytCache != nil {
 		if ytCacheTTL > 0 {
@@ -479,12 +506,55 @@ func runYTDLP(ctx context.Context, args []string) ([]byte, error) {
 // so the suite replays recorded yt-dlp output instead of shelling out.
 var ytRunner = execYTDLP
 
-// execYTDLP runs the real yt-dlp subprocess, streaming its stderr so
-// diagnostics surface to the user, and returns stdout.
+// ytDebug gates raw yt-dlp stderr passthrough. Set from --debug/-v in
+// run(); false by default so yt-dlp's progress bars and diagnostics
+// never mix with this sidecar's own progress lines.
+var ytDebug bool
+
+// ytStderr is where raw yt-dlp stderr goes when ytDebug is set. A
+// package var so tests can capture it instead of the process stderr.
+var ytStderr io.Writer = os.Stderr
+
+// execYTDLP runs the real yt-dlp subprocess and returns its stdout.
+//
+// By default yt-dlp's stderr is captured rather than streamed: its
+// progress output is verbose, unstructured, and duplicates the
+// progress events this sidecar emits. Capturing is not swallowing —
+// on a non-zero exit the captured text is folded into the returned
+// error so a failing yt-dlp still explains itself. With --debug the
+// stream is passed through verbatim for diagnosis.
 func execYTDLP(_ context.Context, args []string) ([]byte, error) {
 	cmd := exec.Command("yt-dlp", args...)
-	cmd.Stderr = os.Stderr
-	return cmd.Output()
+	if ytDebug {
+		cmd.Stderr = ytStderr
+		return cmd.Output()
+	}
+
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(errBuf.String()); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
+// ytProgressItem picks the human-facing label for a yt-dlp invocation:
+// the URL argument when present, else the first flag. Keeps progress
+// lines readable without echoing the whole argv.
+func ytProgressItem(args []string) string {
+	for _, a := range args {
+		if strings.HasPrefix(a, "http://") || strings.HasPrefix(a, "https://") {
+			return a
+		}
+	}
+	if len(args) > 0 {
+		return args[0]
+	}
+	return "yt-dlp"
 }
 
 // ytCacheKey derives a stable key from the yt-dlp argv. The "yt-dlp\x00"
@@ -653,7 +723,7 @@ func fetchComments(ctx context.Context, url string) ([]comment, error) {
 	return result, nil
 }
 
-func renderMarkdown(w *os.File, md *videoMetadata, transcript string, comments []comment) {
+func renderMarkdown(w io.Writer, md *videoMetadata, transcript string, comments []comment) {
 	if md != nil {
 		title := md.Title
 		if title == "" {
