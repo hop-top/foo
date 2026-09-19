@@ -27,8 +27,24 @@ Wraps `yt-dlp` for transcript extraction.
 ## CLI Interface
 
 ```
-foo-youtube [flags] <youtube-url>
+foo-youtube [flags] <url|id>
 ```
+
+### Argument
+
+The sole positional argument is either:
+
+| Form | Example |
+|------|---------|
+| Watch URL | `https://www.youtube.com/watch?v=dQw4w9WgXcQ` |
+| Short URL | `https://youtu.be/dQw4w9WgXcQ` |
+| Shorts URL | `https://www.youtube.com/shorts/dQw4w9WgXcQ` |
+| Bare video ID | `dQw4w9WgXcQ` |
+
+A bare ID must match `[A-Za-z0-9_-]{11}` exactly; it is normalized to
+`https://www.youtube.com/watch?v=<id>` before yt-dlp is invoked, so the
+ID and URL forms of the same video share one cache entry. Anything else
+is rejected with a usage error (exit 2).
 
 ### Flags
 

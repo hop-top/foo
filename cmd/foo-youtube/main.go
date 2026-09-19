@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -193,15 +194,16 @@ func newRoot() *kitcli.Root {
 via yt-dlp and renders them as markdown on stdout.
 
 Arguments:
-  <url>   YouTube video URL (youtube.com/watch, youtu.be, or
-          youtube.com/shorts). Required.
+  <url|id>  YouTube video URL (youtube.com/watch, youtu.be, or
+            youtube.com/shorts), or a bare 11-character video ID
+            such as dQw4w9WgXcQ. Required.
 
 It is an external plugin for foo: the host discovers it on $PATH and
 interrogates it with --ext-info.`,
 		},
 	}, kitcli.WithStatus(kitcli.StatusConfig{}))
 
-	root.Cmd.Use = "foo-youtube [flags] <url>"
+	root.Cmd.Use = "foo-youtube [flags] <url|id>"
 	root.Cmd.Args = cobra.MaximumNArgs(1)
 	root.Cmd.SilenceUsage = true
 	root.Cmd.SilenceErrors = true
@@ -262,9 +264,13 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 		return usageErrorf("YouTube URL required")
 	}
 
-	url := args[0]
-	if !isYouTubeURL(url) {
-		return usageErrorf("invalid YouTube URL: %s", url)
+	// Normalize before anything downstream sees the argument: a bare
+	// video ID becomes the canonical watch URL here, so metadata,
+	// transcript, comments and the yt-dlp cache key all observe the same
+	// string for both input forms.
+	url, ok := normalizeVideoArg(args[0])
+	if !ok {
+		return usageErrorf("invalid YouTube URL: %s", args[0])
 	}
 
 	if err := checkYTDLP(); err != nil {
@@ -372,6 +378,30 @@ func isYouTubeURL(url string) bool {
 	return strings.Contains(url, "youtube.com/") ||
 		strings.Contains(url, "youtu.be/") ||
 		strings.Contains(url, "youtube.com/shorts/")
+}
+
+// videoIDPattern is the canonical YouTube video ID shape: exactly eleven
+// characters drawn from the URL-safe base64 alphabet. Ten- and
+// twelve-character strings are deliberately outside it.
+var videoIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+
+// isVideoID reports whether s is a bare YouTube video ID.
+func isVideoID(s string) bool { return videoIDPattern.MatchString(s) }
+
+// normalizeVideoArg resolves the sole positional argument to a URL
+// yt-dlp can consume. A supported YouTube URL is returned unchanged; a
+// bare video ID is expanded to its canonical watch URL. Anything else
+// yields ok=false, which run() reports as the usage error.
+func normalizeVideoArg(arg string) (string, bool) {
+	arg = strings.TrimSpace(arg)
+	switch {
+	case isYouTubeURL(arg):
+		return arg, true
+	case isVideoID(arg):
+		return "https://www.youtube.com/watch?v=" + arg, true
+	default:
+		return "", false
+	}
 }
 
 func checkYTDLP() error {
