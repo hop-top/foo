@@ -24,6 +24,12 @@ import (
 
 type Client struct {
 	client *kitllm.Client
+
+	// maxTokens caps completion length on every request this client
+	// issues. Zero means unset: the field is omitted and the provider
+	// default applies, matching kit's Request.MaxTokens semantics.
+	// Some OpenAI-compatible servers reject requests that omit it.
+	maxTokens int
 }
 
 // ClientOpts threads invocation-time choices through NewClient. Model is
@@ -40,6 +46,10 @@ type ClientOpts struct {
 	Profile  kitllm.RequestProfile
 	Budget   kitllm.BudgetTier
 	Registry *aim.Registry
+
+	// MaxTokens caps completion length. Zero means unset (provider
+	// default). Threaded onto every request the client issues.
+	MaxTokens int
 }
 
 // defaultRegistry is the process-wide aim registry foo lends to the
@@ -131,11 +141,128 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 			// through envVarForScheme which trusts the registry value.
 			scheme := picked.Provider
 			envVar := envVarForScheme(scheme)
-			return buildClient(scheme, picked.ID, envVar)
+			return buildClient(scheme, picked.ID, envVar, opts.MaxTokens)
 		}
 	}
 
-	// Paths 1 and 2: explicit model. Detect scheme from prefix.
+	// Paths 1 and 2: explicit model.
+	return newClientFromModel(model, opts.MaxTokens)
+}
+
+// modelIsURI reports whether a --model value is already a
+// scheme-qualified URI ("openai://gpt-4o") rather than a bare model id
+// ("gpt-4o").
+//
+// The test is "://" and not ":" on purpose: routellm pins carry a
+// threshold separator ("router-mf:0.5") that is not a scheme delimiter.
+//
+// Only the portion before the first "?" is examined. A bare model id may
+// carry a query string whose value is itself a URL
+// ("qwen3.6-colibri?base_url=http://host/v1"); the "://" in that value
+// belongs to the param, not to the model.
+func modelIsURI(model string) bool {
+	head, _, _ := strings.Cut(model, "?")
+	return strings.Contains(head, "://")
+}
+
+// newClientFromModel handles the explicit-model paths (1 and 2).
+//
+// A URI-shaped value is handed to kit untouched. Re-wrapping it the way
+// the bare-id path does yields "openai://openai://<model>?api_key=...",
+// which sends the whole URI as the model name and drops the api_key —
+// the provider then 404s and kit maps that to the misleading
+// "model not available". Kit's Resolve already reads api_key and
+// base_url out of the URI's query params, so the caller keeps full
+// control of both.
+func newClientFromModel(model string, maxTokens int) (*Client, error) {
+	uri, err := resolvedURIForModel(model)
+	if err != nil {
+		return nil, err
+	}
+	return buildClientFromURI(uri, maxTokens)
+}
+
+// buildClient is the common URI-build + fallback-wiring step shared by
+// every NewClient code path. Centralizes the API-key precheck so any
+// future scheme picked up by the pool picker honors the same error
+// shape.
+func buildClient(scheme, model, envVar string, maxTokens int) (*Client, error) {
+	uri, err := buildURI(scheme, model, envVar)
+	if err != nil {
+		return nil, err
+	}
+	return buildClientFromURI(uri, maxTokens)
+}
+
+// buildURI assembles the provider URI for a bare model id, running the
+// API-key precheck for keyed schemes.
+//
+// A bare model id may already carry query params
+// ("qwen3.6-colibri?base_url=..."), so the api_key separator is "&" in
+// that case. Always emitting "?" produced a second question mark, which
+// kit's parser folds into the preceding value.
+func buildURI(scheme, model, envVar string) (string, error) {
+	if envVar == "" {
+		return fmt.Sprintf("%s://%s", scheme, model), nil
+	}
+	key := lookupAPIKey(envVar)
+	if key == "" {
+		return "", output.UnauthorizedError(fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar))
+	}
+	return fmt.Sprintf("%s://%s%sapi_key=%s", scheme, model, querySep(model), key), nil
+}
+
+// querySep returns the separator that appends a param to s: "?" when s
+// has no query string yet, "&" when it does.
+func querySep(s string) string {
+	if strings.Contains(s, "?") {
+		return "&"
+	}
+	return "?"
+}
+
+// applyConfiguredBaseURL folds the base_url resolved by kit's LoadConfig
+// (llm.yaml `providers.<scheme>.base_url`, overridden by LLM_BASE_URL)
+// into the URI as a param.
+//
+// foo builds a URI by hand and hands it to kitllm.Resolve, which reads
+// the URI alone — so neither documented lever reached the provider and
+// requests went to the provider's public endpoint regardless. LoadConfig
+// is the function that applies both layers, so it resolves them here.
+//
+// A base_url already present on the URI is left alone: it came from the
+// caller's --model value and outranks both file and env.
+func applyConfiguredBaseURL(uri string) string {
+	parsed, err := kitllm.ParseURI(uri)
+	if err != nil {
+		return uri
+	}
+	if _, explicit := parsed.Params["base_url"]; explicit {
+		return uri
+	}
+	cfg, err := kitllm.LoadConfig(uri)
+	if err != nil || cfg.Provider.BaseURL == "" {
+		return uri
+	}
+	// Host-form URIs ("scheme://host:port/model") already encode an
+	// endpoint; LoadConfig echoes it back as BaseURL, so appending it
+	// as a param would be redundant.
+	if parsed.Host != "" {
+		return uri
+	}
+	return uri + querySep(uri) + "base_url=" + cfg.Provider.BaseURL
+}
+
+// resolvedURIForModel returns the provider URI a given --model value
+// resolves to, without constructing a client. It mirrors
+// newClientFromModel's branching exactly so tests can assert on the URI
+// that reaches kit — the corruption this guards against produces a
+// malformed URI that Resolve accepts without error, so the URI itself is
+// the only observable short of the wire.
+func resolvedURIForModel(model string) (string, error) {
+	if modelIsURI(model) {
+		return model, nil
+	}
 	scheme, envVar := schemeForModel(model)
 	if scheme == "routellm" {
 		// router- prefix: strip the marker so the URI ends up as
@@ -150,25 +277,17 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 		// docs/how-to/route-across-models.md#pool-routing-vs-router-x
 		model = strings.TrimPrefix(model, "router-")
 	}
-	return buildClient(scheme, model, envVar)
+	uri, err := buildURI(scheme, model, envVar)
+	if err != nil {
+		return "", err
+	}
+	return applyConfiguredBaseURL(uri), nil
 }
 
-// buildClient is the common URI-build + fallback-wiring step shared by
-// every NewClient code path. Centralizes the API-key precheck so any
-// future scheme picked up by the pool picker honors the same error
-// shape.
-func buildClient(scheme, model, envVar string) (*Client, error) {
-	var uri string
-	if envVar != "" {
-		key := lookupAPIKey(envVar)
-		if key == "" {
-			return nil, output.UnauthorizedError(fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar))
-		}
-		uri = fmt.Sprintf("%s://%s?api_key=%s", scheme, model, key)
-	} else {
-		uri = fmt.Sprintf("%s://%s", scheme, model)
-	}
-
+// buildClientFromURI resolves a fully-formed provider URI and wires the
+// fallback chain. Shared by the bare-id path (which assembles the URI)
+// and the URI passthrough path (which received one from --model).
+func buildClientFromURI(uri string, maxTokens int) (*Client, error) {
 	p, err := kitllm.Resolve(uri)
 	if err != nil {
 		return nil, err
@@ -190,7 +309,8 @@ func buildClient(scheme, model, envVar string) (*Client, error) {
 	}
 
 	return &Client{
-		client: kitllm.NewClient(p, clientOpts...),
+		client:    kitllm.NewClient(p, clientOpts...),
+		maxTokens: maxTokens,
 	}, nil
 }
 
@@ -282,6 +402,7 @@ func (c *Client) Prompt(ctx context.Context, prompt string) (string, error) {
 		Messages: []kitllm.Message{
 			{Role: "user", Content: prompt},
 		},
+		MaxTokens: c.maxTokens,
 	})
 	if err != nil {
 		return "", err
@@ -298,7 +419,8 @@ func (c *Client) CallWithTools(
 	tools []kitllm.ToolDef,
 ) (kitllm.ToolResponse, error) {
 	return c.client.CallWithTools(ctx, kitllm.Request{
-		Messages: messages,
+		Messages:  messages,
+		MaxTokens: c.maxTokens,
 	}, tools)
 }
 
@@ -309,6 +431,7 @@ func (c *Client) PromptStream(ctx context.Context, w io.Writer, prompt string) e
 		Messages: []kitllm.Message{
 			{Role: "user", Content: prompt},
 		},
+		MaxTokens: c.maxTokens,
 	}
 
 	iter, err := c.client.Stream(ctx, req)

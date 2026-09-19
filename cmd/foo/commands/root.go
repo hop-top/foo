@@ -53,6 +53,7 @@ var (
 	modelName       string
 	noStream        bool
 	dryRun          bool
+	maxTokens       int
 	toolNames       []string
 	chainLimit      int
 	toolsDebug      bool
@@ -147,6 +148,7 @@ func New(v string) *kitcli.Root {
 	flags.StringVarP(&strategyName, "strategy", "s", "", "Strategy to wrap the system prompt")
 	flags.StringVarP(&modelName, "model", "m", "", "Model override")
 	flags.BoolVar(&noStream, "no-stream", false, "Disable streaming output")
+	flags.IntVar(&maxTokens, "max-tokens", 0, "Cap completion length in tokens (0 = provider default)")
 	flags.BoolVar(&dryRun, "dry-run", false, "Print assembled prompt without calling the model")
 	flags.StringSliceVarP(&toolNames, "tool", "T", nil, "Enable specific tools by name")
 	flags.IntVar(&chainLimit, "chain-limit", 5, "Maximum tool-call iterations")
@@ -930,7 +932,8 @@ func selectedModel() string {
 // before the prompt is known (REPL).
 func clientOptsFromFlags(promptText string) llm.ClientOpts {
 	opts := llm.ClientOpts{
-		Model: selectedModel(),
+		Model:     selectedModel(),
+		MaxTokens: maxTokens,
 		Profile: llm.DeriveProfile(llm.ProfileOpts{
 			SchemaSelected:       schemaName != "" || schemaMulti != "",
 			ToolNames:            toolNames,
