@@ -76,15 +76,18 @@ the removal version, and the recommended replacement.
 
 ## Local-model status
 
-Local model runtimes (Ollama, LM Studio, llama.cpp) are not yet
-supported. There is no `base_url` config to point at a local
-endpoint. Track [hop-top/foo](https://github.com/hop-top/foo) for
-release notes on this.
+Local model runtimes (Ollama, LM Studio, llama.cpp, vLLM) are
+supported through their OpenAI-compatible HTTP surface. Point foo
+at the endpoint with `providers.<scheme>.base_url` in `llm.yaml`,
+the `LLM_BASE_URL` env var, or a `?base_url=` param on `--model`
+— in that order of increasing precedence.
 
-Workaround: use any OpenAI-compatible HTTP gateway. Unknown model
-schemes fall back to the OpenAI scheme; with `OPENAI_API_KEY` set,
-that fallback works with gateways such as OpenRouter, Groq, and
-Together.
+Unknown model schemes fall back to the OpenAI scheme, so the same
+path serves hosted gateways such as OpenRouter, Groq, and
+Together. `OPENAI_API_KEY` must be non-empty; servers that do not
+authenticate ignore its value.
+
+See [use a local endpoint](../how-to/use-a-local-endpoint.md).
 
 ## Related docs
 

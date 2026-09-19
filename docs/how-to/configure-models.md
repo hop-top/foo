@@ -120,12 +120,21 @@ matching provider; unknown prefixes fall back to the OpenAI
 scheme. With `OPENAI_API_KEY` set, that fallback works with
 OpenAI-compatible endpoints (OpenRouter, Groq, Together, etc.).
 
-### Local models are not yet supported
+### Local and self-hosted models
 
-There is no `base_url` config to point at an Ollama, LM Studio, or
-llama.cpp server. Local model support is tracked for a future
-release. For now, point at an OpenAI-compatible HTTP gateway or
-use a hosted provider.
+The same fallback reaches a server you run yourself — llama.cpp,
+vLLM, LM Studio, Ollama's OpenAI shim — once you point foo at its
+endpoint. Set `providers.openai.base_url` in `llm.yaml`, export
+`LLM_BASE_URL`, or attach `?base_url=` to `-m`; the param wins,
+then the env var, then the file.
+
+```sh
+foo -m "my-local-model?base_url=http://127.0.0.1:8000/v1" "hello"
+```
+
+See [use a local endpoint](use-a-local-endpoint.md) for the full
+walkthrough, including model-id discovery and the `--max-tokens`
+requirement some servers impose.
 
 ## Options
 
@@ -138,6 +147,7 @@ use a hosted provider.
 ## Related docs
 
 - [Route across models](route-across-models.md) — pool routing with `--budget` (the primary mechanism), fallback chains, RouteLLM strong/weak routing.
+- [Use a local endpoint](use-a-local-endpoint.md) — point foo at a self-hosted OpenAI-compatible server.
 - [Reference: config](../reference/config.md) — model + secrets config keys.
 - [Reference: commands](../reference/commands.md#model) — `model` and `provider` surface.
 - [Concepts: assembly pipeline](../concepts.md#the-prompt-assembly-pipeline) — how the model fits in.
