@@ -177,11 +177,15 @@ var modelFilteredSource = func(f llm.Filter) llm.CatalogSource {
 // a flag whatever its type — filter flags landing on this command later
 // need only be named here.
 var catalogOnlyFlags = []string{
-	"min-context",
-	"max-cost",
-	"reasoning",
+	"provider",
+	"family",
+	"input",
+	"output",
+	"query",
 	"tool-call",
+	"reasoning",
 	"open-weights",
+	"structured-output",
 }
 
 // checkCatalogOnlyFlags rejects catalog-only filters combined with a

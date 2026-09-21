@@ -762,30 +762,29 @@ func TestModelList_FallsBackToCatalogWithNoEndpoint(t *testing.T) {
 // refused by name rather than silently returning everything or printing
 // empty columns.
 //
-// The filter flags land in a concurrent change; this drives the check
-// through a flag registered on the fly so the rejection logic is proven
-// now and picks up the real flags as they are added to catalogOnlyFlags.
+// Driven through the real command surface rather than a stand-in flag:
+// the filter flags exist now, so the guard is exercised against what
+// ships. TestCatalogOnlyFlags_CoversEveryFilterFlag keeps the list and
+// the flag surface from drifting apart.
 func TestModelList_CatalogOnlyFlagRejectedWithEndpoint(t *testing.T) {
-	cmd := &cobra.Command{Use: "list"}
-	var minContext int
-	cmd.Flags().IntVar(&minContext, "min-context", 0, "test stand-in")
+	cmd := modelListCmd()
 
 	// Not passed: nothing to reject.
 	if err := checkCatalogOnlyFlags(cmd); err != nil {
 		t.Fatalf("unset flag must not be rejected: %v", err)
 	}
 
-	if err := cmd.Flags().Set("min-context", "8192"); err != nil {
+	if err := cmd.Flags().Set("provider", "openai"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	err := checkCatalogOnlyFlags(cmd)
 	if err == nil {
-		t.Fatal("--min-context with --endpoint must be rejected")
+		t.Fatal("--provider with --endpoint must be rejected")
 	}
 	if !errors.Is(err, llm.ErrEndpointFlagUnsupported) {
 		t.Errorf("error does not unwrap to ErrEndpointFlagUnsupported: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--min-context") {
+	if !strings.Contains(err.Error(), "--provider") {
 		t.Errorf("error must name the offending flag, got: %v", err)
 	}
 }
@@ -826,5 +825,45 @@ func TestModelListCmd_EndpointFlagWiring(t *testing.T) {
 	}
 	if f.Usage == "" {
 		t.Error("--endpoint has no usage string")
+	}
+}
+
+// TestCatalogOnlyFlags_CoversEveryFilterFlag guards the seam between the
+// filter flags and the endpoint guard. catalogOnlyFlags is a hand-kept
+// list, so a filter flag added later is silently ignored against an
+// endpoint rather than rejected — the user gets unfiltered rows and no
+// indication the filter was dropped.
+//
+// Every registered filter flag must be named in catalogOnlyFlags; none
+// of the entries may name a flag that does not exist.
+func TestCatalogOnlyFlags_CoversEveryFilterFlag(t *testing.T) {
+	cmd := modelListCmd()
+
+	filterFlags := []string{
+		"provider", "family", "input", "output", "query",
+		"tool-call", "reasoning", "open-weights", "structured-output",
+	}
+
+	named := make(map[string]bool, len(catalogOnlyFlags))
+	for _, n := range catalogOnlyFlags {
+		named[n] = true
+	}
+
+	for _, f := range filterFlags {
+		if cmd.Flags().Lookup(f) == nil {
+			t.Errorf("filter flag %q is not registered on model list", f)
+			continue
+		}
+		if !named[f] {
+			t.Errorf("filter flag %q missing from catalogOnlyFlags; it would be silently ignored with --endpoint", f)
+		}
+	}
+
+	// A stale entry naming a flag that no longer exists is inert, and
+	// hides the fact that the guard is not doing what the list implies.
+	for _, n := range catalogOnlyFlags {
+		if cmd.Flags().Lookup(n) == nil {
+			t.Errorf("catalogOnlyFlags names %q, which is not a registered flag", n)
+		}
 	}
 }
