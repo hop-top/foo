@@ -15,6 +15,7 @@ cause → fix; the longer sections below give the detail.
 |---------|--------------|-----|
 | `missing X_API_KEY for model "..."` | API key env var unset | [Set an API key](#api-key-missing-or-invalid) |
 | `auth error (provider "...")` | API key set but rejected by the provider | [Check your key + provider config](#api-key-missing-or-invalid) |
+| `model "..." not available (provider "openai")` for an id you never meant to send to OpenAI | Unrecognised model id; foo assumed an OpenAI-compatible provider | [Point foo at the right endpoint](#unknown-model-id-routed-to-openai) |
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
@@ -54,6 +55,44 @@ foo "hello"
 `foo provider list` shows registered schemes; `foo provider show
 <scheme>` shows whether the expected key is visible to foo. See
 [how-to/configure-models.md](how-to/configure-models.md).
+
+## Unknown model id routed to OpenAI
+
+foo maps a bare `--model` id to a provider by prefix: `gpt-`/`o1`/`o3`
+to OpenAI, `claude-` to Anthropic, `gemini-` to Google, `llama`/
+`mistral`/`deepseek-r1` to Ollama, `router-` to RouteLLM. An id
+matching none of these is assumed to be OpenAI-compatible, because most
+aggregators (OpenRouter, Groq, Together) are.
+
+A RouteLLM tier name is the common surprise. `private`, `coding`,
+`deep` and `fast` are legitimate ids on a RouteLLM server, but they
+match no prefix, so foo sends them to OpenAI and the failure names a
+provider you never asked for:
+
+```sh
+foo -m private "hi"
+# model "private" not available (provider "openai"); "private" matched no
+# known model prefix, so foo assumed an OpenAI-compatible provider ...
+```
+
+The request never reached your router. foo cannot tell a tier name from
+a typo without asking a server, so name the endpoint yourself. Per
+invocation:
+
+```sh
+foo -m 'private?base_url=http://127.0.0.1:6060/v1' "hi"
+```
+
+Or set it once for every call via `providers.openai.base_url` in
+`llm.yaml`, or `LLM_BASE_URL` for one shell — see
+[Use a local endpoint](how-to/use-a-local-endpoint.md).
+
+To confirm which ids foo can actually reach, run `foo model list`.
+
+When the same message names an id you *did* mean for OpenAI (say
+`gpt-4o-mini` misspelled), no hint is appended: the prefix matched, so
+foo made no assumption to explain. Check the spelling against
+`foo model list`.
 
 ## Pattern / fragment / schema not found
 
