@@ -46,8 +46,8 @@ func NewExternalTool(
 	}
 }
 
-func (t *ExternalTool) Name() string              { return t.name }
-func (t *ExternalTool) Description() string        { return t.description }
+func (t *ExternalTool) Name() string                { return t.name }
+func (t *ExternalTool) Description() string         { return t.description }
 func (t *ExternalTool) Parameters() json.RawMessage { return t.parameters }
 
 // Execute runs the external binary with JSON stdin/stdout protocol.

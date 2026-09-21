@@ -13,8 +13,8 @@ import (
 // AliasEntry is the JSON stored in StateStore under "fragment:alias:<name>".
 type AliasEntry struct {
 	ArtifactID string `json:"artifact_id"`
-	Source      string `json:"source"`
-	SourceRef   string `json:"source_ref,omitempty"`
+	Source     string `json:"source"`
+	SourceRef  string `json:"source_ref,omitempty"`
 	CreatedAt  string `json:"created_at"`
 }
 

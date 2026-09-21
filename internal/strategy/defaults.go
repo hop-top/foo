@@ -35,7 +35,7 @@ var builtinStrategies = []Strategy{
 	{
 		Name:        "reflexion",
 		Description: "Self-evaluate and improve your answer",
-		Prefix: "Answer the following, then critique your own answer.",
+		Prefix:      "Answer the following, then critique your own answer.",
 		Suffix: "Now review your answer above:\n" +
 			"- What assumptions did you make?\n" +
 			"- What did you miss?\n" +

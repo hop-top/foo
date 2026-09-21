@@ -94,7 +94,7 @@ func (a *WSMAdapter) ListSessions(ctx context.Context, workspaceID string) ([]st
 }
 
 func (a *WSMAdapter) LogEvent(ctx context.Context, event Event) error {
-	// Convert workspace.Event back to wsm model types if necessary, 
+	// Convert workspace.Event back to wsm model types if necessary,
 	// though they are currently aliased.
 	_, err := a.manager.RecordEvent(ctx, a.ws.ID, wsm_core.EventType(event.Type), event.Data)
 	return err

@@ -121,11 +121,11 @@ func TestCLI_Destructive_ConfirmPolicy(t *testing.T) {
 	ensureBinary(t)
 
 	cases := []struct {
-		name           string
-		seed           [][]string
-		deleteArgs     []string
-		successOutput  string
-		listArgs       []string
+		name          string
+		seed          [][]string
+		deleteArgs    []string
+		successOutput string
+		listArgs      []string
 	}{
 		{
 			name:          "pattern",

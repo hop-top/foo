@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
 	"hop.top/kit/go/core/config"
 	"hop.top/kit/go/core/xdg"
 	"hop.top/kit/go/storage/secret"
 	_ "hop.top/kit/go/storage/secret/env"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -87,7 +87,7 @@ func (c Config) Save() error {
 		return err
 	}
 	userConfig := filepath.Join(confDir, "config.yaml")
-	
+
 	if err := os.MkdirAll(filepath.Dir(userConfig), 0755); err != nil {
 		return err
 	}

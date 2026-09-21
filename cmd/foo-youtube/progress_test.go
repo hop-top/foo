@@ -59,8 +59,8 @@ func TestRunYTDLP_EmitsCacheHitAndMiss(t *testing.T) {
 		wantSource []string
 	}{
 		{
-			name:       "miss then hit",
-			runs:       2,
+			name: "miss then hit",
+			runs: 2,
 			// Each call emits a fetch start plus its outcome, so two
 			// runs are four events: start, miss, start, hit.
 			wantPhases: []string{phaseFetch, phaseFetch, phaseFetch, phaseCache},
