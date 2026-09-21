@@ -185,6 +185,12 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // idiom: configured by env, silent no-op otherwise.
 // The returned observedStore is nil when caching is off; callers must
 // nil-check it before asking whether the fetch was a cache hit.
+// httpClientFor is the injection seam for the fetch path, mirroring
+// foo-youtube's ytRunner. Tests swap it to replay an xrr cassette so the
+// suite exercises real recorded markup instead of a hand-rolled fixture
+// served from httptest.
+var httpClientFor = httpClient
+
 func httpClient() (*http.Client, *observedStore) {
 	path := strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE"))
 	if path == "" {
@@ -218,7 +224,7 @@ func scrape(cmd *cobra.Command, url, mode string) error {
 
 	emitFetchStart(ctx, url)
 
-	client, obs := httpClient()
+	client, obs := httpClientFor()
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("fetching URL: %w", err)

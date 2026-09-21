@@ -1,0 +1,7 @@
+xrr: "1"
+adapter: http
+fingerprint: e32ffb1d
+recorded_at: "2026-09-21T03:51:37Z"
+payload:
+    method: GET
+    url: https://example.com
