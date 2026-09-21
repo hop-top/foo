@@ -16,5 +16,9 @@ clean:
 	go clean
 
 lint:
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "not gofmt-formatted (run 'gofmt -w .'):"; echo "$$unformatted"; exit 1; \
+	fi
 	go vet ./...
 	@command -v actionlint >/dev/null 2>&1 && actionlint -color || echo "actionlint not installed; skipping"

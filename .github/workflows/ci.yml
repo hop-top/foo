@@ -38,6 +38,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-formatted; run 'gofmt -w .'"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
       - name: go build
         run: go build ./...
         env:
