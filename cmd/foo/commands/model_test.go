@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -295,5 +296,223 @@ func TestModelListCmd_Wiring(t *testing.T) {
 	// rather than left unannotated.
 	if len(found.Annotations) == 0 {
 		t.Error("no side-effect annotation set; want SideEffectRead")
+	}
+}
+
+// captureFilter swaps the filtered-source factory for one that records
+// the filter the command assembled and returns canned rows. It is the
+// only way to assert flag wiring without a models.dev fetch: filtering
+// is pushed down into the source, so the filter is not observable on
+// the rendered rows.
+func captureFilter(t *testing.T, entries []llm.ModelEntry) *llm.Filter {
+	t.Helper()
+	var got llm.Filter
+	prevFactory := modelFilteredSource
+	modelFilteredSource = func(f llm.Filter) llm.CatalogSource {
+		got = f
+		return stubCatalog{entries: entries}
+	}
+	// The injected source short-circuits the factory, so it must be
+	// cleared for the filtered path to be reached at all.
+	prevSrc := modelCatalogSource
+	modelCatalogSource = nil
+	t.Cleanup(func() {
+		modelFilteredSource = prevFactory
+		modelCatalogSource = prevSrc
+	})
+	return &got
+}
+
+// TestModelList_FilterFlagsRegistered fails if a flag is dropped from
+// the surface: a green filter unit test proves nothing if the flag was
+// never declared.
+func TestModelList_FilterFlagsRegistered(t *testing.T) {
+	parent := modelCmd()
+	var list *cobra.Command
+	for _, sub := range parent.Commands() {
+		if sub.Name() == "list" {
+			list = sub
+		}
+	}
+	if list == nil {
+		t.Fatal("`list` not registered")
+	}
+	for _, name := range []string{
+		"provider", "family", "input", "output", "query",
+		"tool-call", "reasoning", "open-weights", "structured-output",
+	} {
+		f := list.Flags().Lookup(name)
+		if f == nil {
+			t.Errorf("--%s not declared", name)
+			continue
+		}
+		if f.Usage == "" {
+			t.Errorf("--%s has no usage string", name)
+		}
+	}
+}
+
+// TestModelList_UnsetCapabilitiesStayNil is the regression test for the
+// tristate trap. A bare `foo model list` must send nil for every
+// capability: a non-nil false would silently drop every model lacking
+// that capability, on every invocation, with nothing on screen to say
+// so.
+func TestModelList_UnsetCapabilitiesStayNil(t *testing.T) {
+	// A filter is needed to reach the factory at all, so set a
+	// non-capability field and assert the capabilities stay untouched.
+	got := captureFilter(t, sampleEntries())
+	if _, _, err := runList(t, "--provider=anthropic"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		val  *bool
+	}{
+		{"tool-call", got.ToolCall},
+		{"reasoning", got.Reasoning},
+		{"open-weights", got.OpenWeights},
+		{"structured-output", got.StructuredOutput},
+	} {
+		if c.val != nil {
+			t.Errorf("--%s unset but lowered to %v; every invocation "+
+				"would filter on it", c.name, *c.val)
+		}
+	}
+}
+
+// TestModelList_CapabilityTristates walks all three states for every
+// capability flag through the real command line.
+func TestModelList_CapabilityTristates(t *testing.T) {
+	read := map[string]func(llm.Filter) *bool{
+		"tool-call":         func(f llm.Filter) *bool { return f.ToolCall },
+		"reasoning":         func(f llm.Filter) *bool { return f.Reasoning },
+		"open-weights":      func(f llm.Filter) *bool { return f.OpenWeights },
+		"structured-output": func(f llm.Filter) *bool { return f.StructuredOutput },
+	}
+	for flag, get := range read {
+		t.Run(flag+"/unset", func(t *testing.T) {
+			got := captureFilter(t, sampleEntries())
+			if _, _, err := runList(t, "--provider=x"); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if v := get(*got); v != nil {
+				t.Errorf("unset --%s: got %v, want nil", flag, *v)
+			}
+		})
+		t.Run(flag+"/true", func(t *testing.T) {
+			got := captureFilter(t, sampleEntries())
+			if _, _, err := runList(t, "--"+flag); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			v := get(*got)
+			if v == nil || !*v {
+				t.Errorf("--%s: got %v, want true", flag, v)
+			}
+		})
+		t.Run(flag+"/false", func(t *testing.T) {
+			got := captureFilter(t, sampleEntries())
+			if _, _, err := runList(t, "--"+flag+"=false"); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			v := get(*got)
+			if v == nil {
+				t.Fatalf("--%s=false lowered to nil; explicit false "+
+					"must be distinguishable from unset", flag)
+			}
+			if *v {
+				t.Errorf("--%s=false: got true", flag)
+			}
+		})
+	}
+}
+
+// TestModelList_ScalarAndRepeatableFlags covers the non-tristate flags,
+// including that --input/--output accumulate across repeats.
+func TestModelList_ScalarAndRepeatableFlags(t *testing.T) {
+	got := captureFilter(t, sampleEntries())
+	_, _, err := runList(t,
+		"--provider=openai", "--family=gpt-4",
+		"--input=text", "--input=image", "--output=text")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got.Provider != "openai" {
+		t.Errorf("provider: got %q", got.Provider)
+	}
+	if got.Family != "gpt-4" {
+		t.Errorf("family: got %q", got.Family)
+	}
+	if want := []string{"text", "image"}; !reflect.DeepEqual(got.Input, want) {
+		t.Errorf("input: got %v, want %v (repeats must accumulate)", got.Input, want)
+	}
+	if want := []string{"text"}; !reflect.DeepEqual(got.Output, want) {
+		t.Errorf("output: got %v, want %v", got.Output, want)
+	}
+}
+
+// TestModelList_QueryFlagReachesFilter proves --query is carried rather
+// than dropped.
+func TestModelList_QueryFlagReachesFilter(t *testing.T) {
+	got := captureFilter(t, sampleEntries())
+	if _, _, err := runList(t, "--query=provider:anthropic reasoning:true"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got.Query != "provider:anthropic reasoning:true" {
+		t.Errorf("query: got %q", got.Query)
+	}
+}
+
+// TestModelList_BadQuerySurfacesError: a malformed expression must fail
+// the command, naming the offending key, rather than quietly listing
+// the unfiltered catalog.
+func TestModelList_BadQuerySurfacesError(t *testing.T) {
+	prev := modelCatalogSource
+	modelCatalogSource = nil
+	t.Cleanup(func() { modelCatalogSource = prev })
+
+	_, _, err := runList(t, "--query=bogus:1")
+	if err == nil {
+		t.Fatal("expected error for unknown tag key")
+	}
+	if !strings.Contains(err.Error(), `unknown tag key "bogus"`) {
+		t.Errorf("error must name the offending key verbatim, got %q", err)
+	}
+}
+
+// TestModelList_NoFilterKeepsInjectedSource pins the fast path: with no
+// filter flags the command must not build a filtered source, so the
+// unfiltered behaviour stays byte-identical.
+func TestModelList_NoFilterKeepsInjectedSource(t *testing.T) {
+	called := false
+	prevFactory := modelFilteredSource
+	modelFilteredSource = func(llm.Filter) llm.CatalogSource {
+		called = true
+		return stubCatalog{}
+	}
+	t.Cleanup(func() { modelFilteredSource = prevFactory })
+
+	withCatalog(t, stubCatalog{entries: sampleEntries()})
+	if _, _, err := runList(t); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if called {
+		t.Error("no filter flags given, but a filtered source was built")
+	}
+}
+
+// TestModelList_FilteredRowsStillRankedAndTruncated proves filtering
+// composes with the existing display pipeline rather than bypassing it.
+func TestModelList_FilteredRowsStillRankedAndTruncated(t *testing.T) {
+	captureFilter(t, sampleEntries())
+	stdout, stderr, err := runList(t, "--provider=anthropic", "--limit=2", "--format=csv")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// header + 2 rows, ranked order preserved
+	if got := strings.Count(strings.TrimSpace(stdout), "\n") + 1; got != 3 {
+		t.Errorf("lines: got %d, want 3: %q", got, stdout)
+	}
+	if !strings.Contains(stderr, "2 more model(s)") {
+		t.Errorf("truncation hint missing from stderr: %q", stderr)
 	}
 }
