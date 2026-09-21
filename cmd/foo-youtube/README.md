@@ -176,7 +176,9 @@ subprocess and network. Backed by a sqlite `kv` store from
 |---------|---------|--------|
 | `--no-cache` | off | Bypass the cache for a single run |
 | `FOO_YOUTUBE_CACHE` | — | Override the cache db **path** (file) |
-| `FOO_YOUTUBE_CACHE_TTL` | `24h` | Freshness window (Go duration; `0` = no expiry) |
+| `FOO_YOUTUBE_CACHE_TTL` | `24h` | Freshness window (Go duration); `0` disables caching |
+| `FOO_CACHE` | — | foo's own cache **directory**, inherited when `FOO_YOUTUBE_CACHE` is unset |
+| `FOO_CACHE_TTL` | — | foo's own TTL, inherited when `FOO_YOUTUBE_CACHE_TTL` is unset |
 | (default path) | `$XDG_CACHE_HOME/foo-youtube/ytdlp-cache.db` | when `FOO_YOUTUBE_CACHE` is unset |
 
 Caching is best-effort: a path-resolve or store open/read/write failure

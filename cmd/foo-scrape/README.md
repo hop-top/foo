@@ -29,6 +29,7 @@ foo-scrape [flags] <url>
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--mode` | `readability` | `readability` (main article content) or `raw` (full HTML) |
+| `--no-cache` | `false` | Bypass the cache for this run |
 | `--quiet` | `false` | Suppress progress output on stderr |
 | `--format` | `table` | Output format for kit-rendered output (`csv`, `human`, `json`, `table`, `text`, `yaml`) |
 | `--ext-info` | — | Print discovery JSON and exit (host-facing probe) |
@@ -69,8 +70,8 @@ Human lines (the default):
 | `cache` | Payload served from the cache (`source: cache`) |
 | `done` | Terminal event: elapsed time, markdown size, estimated tokens |
 
-The `cache` phase appears only when caching is enabled (see below); with
-caching off every run reports `(fetched)`.
+The `cache` phase appears on a cache hit; a cold fetch, `--no-cache`, or
+`FOO_SCRAPE_CACHE_TTL=0` reports `(fetched)` instead.
 
 `--format json` emits the same sequence as JSONL on stderr, with
 `phase`, `item`, `bytes` and an `extra` object carrying `source` on the
@@ -106,24 +107,38 @@ The full discovery/dispatch mechanism lives in
 
 ## Caching
 
-Caching is **opt-in**: with no cache environment set, every scrape goes
-to the network. Set `FOO_SCRAPE_CACHE` to a writable db path and fetches
-go through a caching `http.RoundTripper`
-(`hop.top/kit/go/storage/httpcache`) backed by a sqlite `kv` store, so
-repeated scrapes of the same URL skip the network.
+Caching is **on by default**. Fetches go through a caching
+`http.RoundTripper` (`hop.top/kit/go/storage/httpcache`) backed by a
+sqlite `kv` store, so repeated scrapes of the same URL skip the network.
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| `FOO_SCRAPE_CACHE` | — (unset: caching off) | Cache db **path** (file); enables caching |
-| `FOO_SCRAPE_CACHE_TTL` | `24h` | Freshness window (Go duration) |
+| `FOO_SCRAPE_CACHE` | XDG cache dir | Cache db **path** (file) for this extension |
+| `FOO_SCRAPE_CACHE_TTL` | `10h` | Freshness window (Go duration); `0` disables caching |
+| `FOO_CACHE` | — | foo's own cache **directory**, inherited when the prefixed name is unset |
+| `FOO_CACHE_TTL` | — | foo's own TTL, inherited when the prefixed name is unset |
+
+The unprefixed `FOO_CACHE` is foo's host-level setting, which every
+extension inherits as its default; `FOO_SCRAPE_CACHE` belongs to this
+extension and overrides it. Any future extension follows the same two
+names.
 
 ```sh
-FOO_SCRAPE_CACHE=~/.cache/foo-scrape/cache.db foo scrape "https://example.com"
+# Default: cached for 10h
+foo scrape "https://example.com"
+
+# Bypass for one run
+foo scrape --no-cache "https://example.com"
+
+# Disable entirely
+FOO_SCRAPE_CACHE_TTL=0 foo scrape "https://example.com"
+
+# Share one cache directory across extensions
+FOO_CACHE=~/.cache/foo foo scrape "https://example.com"
 ```
 
 Caching is best-effort: a store-open failure falls back to a direct
-fetch and never fails a scrape. There is no per-run bypass flag — unset
-`FOO_SCRAPE_CACHE` for a guaranteed fresh pull.
+fetch and never fails a scrape.
 
 ## Exit codes
 
