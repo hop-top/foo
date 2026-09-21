@@ -1,0 +1,11 @@
+xrr: "1"
+adapter: exec
+fingerprint: dd6334e7
+recorded_at: "2026-09-21T03:44:16Z"
+payload:
+    argv:
+        - yt-dlp
+        - --dump-json
+        - --no-download
+        - --no-playlist
+        - https://www.youtube.com/watch?v=dQw4w9WgXcQ

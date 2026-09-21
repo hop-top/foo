@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -49,12 +50,26 @@ func xrrRunner(mode xrr.Mode) func(context.Context, []string) ([]byte, error) {
 	}
 }
 
+// updateCassettes re-records every cassette against a live yt-dlp
+// instead of replaying. Run with:
+//
+//	go test ./cmd/foo-youtube/ -update
+//
+// Requires yt-dlp on PATH and network access; commit the refreshed
+// YAML alongside the test.
+var updateCassettes = flag.Bool("update", false, "re-record xrr cassettes against live yt-dlp")
+
 // withReplay swaps ytRunner for the cassette-backed runner for the test's
-// duration and restores it after.
+// duration and restores it after. Under -update the session records
+// instead, refreshing the cassette from a live run.
 func withReplay(t *testing.T) {
 	t.Helper()
+	mode := xrr.ModeReplay
+	if *updateCassettes {
+		mode = xrr.ModeRecord
+	}
 	prev := ytRunner
-	ytRunner = xrrRunner(xrr.ModeReplay)
+	ytRunner = xrrRunner(mode)
 	t.Cleanup(func() { ytRunner = prev })
 }
 
@@ -138,5 +153,37 @@ func TestRunYTDLP_DistinctArgvDistinctKey(t *testing.T) {
 	_, _ = runYTDLP(ctx, []string{"--dump-json", "https://youtu.be/b"})
 	if got := calls.Load(); got != 2 {
 		t.Errorf("runner calls = %d, want 2 (distinct argv must not collide)", got)
+	}
+}
+
+// TestFetchMetadata_BareIDFromCassette covers the bare-video-ID entry
+// point end to end: normalizeVideoArg expands the ID, and the resulting
+// canonical watch URL is what reaches yt-dlp.
+//
+// The URL-form test above cannot catch a normalization regression — it
+// passes a URL through unchanged. This one fingerprints the expanded
+// argv, so a change to the canonical form is a cassette miss, not a
+// silent pass.
+func TestFetchMetadata_BareIDFromCassette(t *testing.T) {
+	withReplay(t)
+	ytCache = nil // exercise the runner, not the cache
+
+	url, ok := normalizeVideoArg("dQw4w9WgXcQ")
+	if !ok {
+		t.Fatal("normalizeVideoArg rejected a valid bare video ID")
+	}
+	if url != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" {
+		t.Fatalf("canonical URL = %q, want the watch?v= form", url)
+	}
+
+	md, err := fetchMetadata(context.Background(), url)
+	if err != nil {
+		t.Fatalf("fetchMetadata(%q): %v", url, err)
+	}
+	if md.Title == "" {
+		t.Error("expected a non-empty title from the cassette")
+	}
+	if md.Channel == "" {
+		t.Error("expected a non-empty channel from the cassette")
 	}
 }

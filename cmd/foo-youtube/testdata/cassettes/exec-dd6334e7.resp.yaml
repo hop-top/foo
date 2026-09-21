@@ -1,0 +1,8 @@
+xrr: '1'
+adapter: exec
+fingerprint: dd6334e7
+recorded_at: '2026-09-21T03:44:16Z'
+payload:
+  stdout: |
+    {"title":"Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)","channel":"Rick Astley","upload_date":"20091025","description":"The official video for \u201cNever Gonna Give You Up\u201d by Rick Astley. ","duration":213,"view_count":1818211464,"like_count":19384697}
+  exit_code: 0
