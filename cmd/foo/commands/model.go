@@ -40,6 +40,10 @@ type modelListFilterFlags struct {
 // modelListFlags backs the filter flags on `foo model list`.
 var modelListFlags modelListFilterFlags
 
+// modelListEndpoint backs --endpoint: list from a live OpenAI-compatible
+// server's /v1/models instead of the aim catalog.
+var modelListEndpoint string
+
 // modelCatalogSource is the row producer `foo model list` reads from.
 // nil means "the aim catalog through foo's shared registry". It is a
 // package var so a test can substitute a fixture source without a
@@ -69,11 +73,18 @@ pass --reasoning for models that have it, --reasoning=false for models
 that do not. --input and --output are repeatable and require every
 listed modality. --query takes a catalog expression such as
 "provider:openai reasoning:true"; where it names the same thing as an
-explicit flag, the flag wins.`,
+explicit flag, the flag wins.
+
+The catalog cannot know about a model you serve yourself. When an
+endpoint is configured (` + "`providers.<scheme>.base_url`" + ` in llm.yaml, or
+LLM_BASE_URL), this lists that server's own models instead; --endpoint
+points at one for a single invocation. Endpoint rows carry only an id —
+the /v1/models response has no cost, context window or capability data —
+so the SOURCE column marks where each row came from.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runModelList(cmd.Context(), cmd, modelListLimit,
-				modelListFilter(cmd, modelListFlags))
+				modelListFilter(cmd, modelListFlags), modelListEndpoint)
 		},
 	}
 	cmd.Flags().IntVar(&modelListLimit, "limit", llm.DefaultListLimit,
@@ -98,6 +109,8 @@ explicit flag, the flag wins.`,
 		"only models with (--structured-output) or without (--structured-output=false) structured output")
 	f.StringVar(&modelListFlags.query, "query", "",
 		`catalog query expression, e.g. "provider:openai reasoning:true"`)
+	f.StringVar(&modelListEndpoint, "endpoint", "",
+		"list models from this OpenAI-compatible base URL instead of the catalog")
 
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
 	return cmd
@@ -152,24 +165,82 @@ var modelFilteredSource = func(f llm.Filter) llm.CatalogSource {
 	return llm.NewFilteredAimCatalog(nil, f)
 }
 
-// modelListSource picks the row producer for one invocation.
+// catalogOnlyFlags are flags whose data only the aim catalog carries.
 //
-// An explicitly injected modelCatalogSource always wins, so a test
-// fixture is never silently swapped out for a network-backed source.
-// Otherwise an empty filter keeps the plain catalog — byte-identical to
-// the unfiltered path — and a non-empty one gets the filtered source.
-func modelListSource(filter llm.Filter) llm.CatalogSource {
-	if modelCatalogSource != nil || filter.IsZero() {
-		return modelCatalogSource
+// A live /v1/models response is ids and nothing else, so any filter over
+// cost, context window, capability or licensing has nothing to act on.
+// Rejecting the combination by name beats the two silent alternatives:
+// applying the filter to zero values quietly drops every row, ignoring
+// it quietly returns rows the user asked to exclude.
+//
+// The list is keyed by flag name and checked with Changed, so it covers
+// a flag whatever its type — filter flags landing on this command later
+// need only be named here.
+var catalogOnlyFlags = []string{
+	"min-context",
+	"max-cost",
+	"reasoning",
+	"tool-call",
+	"open-weights",
+}
+
+// checkCatalogOnlyFlags rejects catalog-only filters combined with a
+// live endpoint. It reports the first offender by name rather than
+// listing all of them, so the message stays actionable.
+func checkCatalogOnlyFlags(cmd *cobra.Command) error {
+	for _, name := range catalogOnlyFlags {
+		f := cmd.Flags().Lookup(name)
+		if f != nil && f.Changed {
+			return &llm.CatalogOnlyFlagError{Flag: name}
+		}
 	}
-	return modelFilteredSource(filter)
+	return nil
+}
+
+// modelListSource picks the row producer for one invocation and reports
+// the endpoint it resolved, if any.
+//
+// This is the selection point the CatalogSource seam exists for: RunE
+// does not branch on source, it just receives one. Precedence mirrors
+// the completion path so `foo model list` and `foo "hello"` never
+// disagree about which server is in play — --endpoint (this
+// invocation) beats the configured endpoint (llm.yaml < LLM_BASE_URL,
+// resolved by kit), which beats the catalog.
+//
+// A source injected for tests wins outright: it stands in for whichever
+// source the flags would have selected.
+//
+// Filters apply to the catalog only. An endpoint's /v1/models carries
+// no filterable data, so the combination is rejected upstream by
+// checkCatalogOnlyFlags rather than silently ignored here.
+func modelListSource(filter llm.Filter, endpoint string) (llm.CatalogSource, string) {
+	if modelCatalogSource != nil {
+		return modelCatalogSource, endpoint
+	}
+	if endpoint == "" {
+		endpoint = llm.ResolveConfiguredEndpoint()
+	}
+	if endpoint != "" {
+		return llm.NewEndpointCatalog(endpoint, nil), endpoint
+	}
+	if filter.IsZero() {
+		return nil, ""
+	}
+	return modelFilteredSource(filter), ""
 }
 
 // runModelList is split out of RunE so tests drive the whole path —
 // source read, ranking, truncation, render, hint — against a fixture
 // source and a captured writer.
-func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm.Filter) error {
-	entries, err := llm.ListModels(ctx, modelListSource(filter))
+func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm.Filter, endpoint string) error {
+	src, endpoint := modelListSource(filter, endpoint)
+	if endpoint != "" {
+		if err := checkCatalogOnlyFlags(cmd); err != nil {
+			return err
+		}
+	}
+
+	entries, err := llm.ListModels(ctx, src)
 	if err != nil {
 		return err
 	}
@@ -179,7 +250,10 @@ func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm
 	for _, e := range shown {
 		rows = append(rows, modelRowFromEntry(e))
 	}
-	if err := renderData(cmd, rows); err != nil {
+	// Source earns a table column only once a listing can mix origins.
+	// With an endpoint in play the distinction is load-bearing: an
+	// endpoint row's empty CONTEXT means "not reported", not "zero".
+	if err := renderData(cmd, withSourceColumn(rows, endpoint != "")); err != nil {
 		return err
 	}
 
@@ -223,4 +297,38 @@ type modelRow struct {
 	Reasoning bool   `json:"reasoning" yaml:"reasoning" table:"REASONING,priority=5"`
 	Released  string `json:"released,omitempty" yaml:"released,omitempty" table:"RELEASED,priority=4"`
 	Source    string `json:"source" yaml:"source"`
+}
+
+// sourcedModelRow is modelRow with SOURCE promoted to a table column.
+//
+// Column visibility is fixed in the struct tag, so making SOURCE
+// conditional needs a second type rather than a runtime toggle. The
+// json/yaml tags are identical to modelRow's: the structured formats
+// already carried source unconditionally and must not shift shape
+// depending on which source answered.
+//
+// SOURCE sorts below the descriptive columns but above RELEASED, which
+// endpoint rows never populate.
+type sourcedModelRow struct {
+	Provider  string `json:"provider" yaml:"provider" table:"PROVIDER,priority=9"`
+	ID        string `json:"id" yaml:"id" table:"ID,priority=8"`
+	Context   int    `json:"context" yaml:"context" table:"CONTEXT,priority=7"`
+	ToolCall  bool   `json:"tool_call" yaml:"tool_call" table:"TOOLS,priority=6"`
+	Reasoning bool   `json:"reasoning" yaml:"reasoning" table:"REASONING,priority=5"`
+	Released  string `json:"released,omitempty" yaml:"released,omitempty" table:"RELEASED,priority=3"`
+	Source    string `json:"source" yaml:"source" table:"SOURCE,priority=4"`
+}
+
+// withSourceColumn returns rows carrying a SOURCE table column when the
+// listing can mix origins, and the plain rows otherwise. Returning `any`
+// keeps the choice of row type at this one call site.
+func withSourceColumn(rows []modelRow, show bool) any {
+	if !show {
+		return rows
+	}
+	out := make([]sourcedModelRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sourcedModelRow(r))
+	}
+	return out
 }

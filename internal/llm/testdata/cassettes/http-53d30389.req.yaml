@@ -1,0 +1,7 @@
+xrr: "1"
+adapter: http
+fingerprint: 53d30389
+recorded_at: "2026-09-21T06:36:10Z"
+payload:
+    method: GET
+    url: http://127.0.0.1:11434/v1/models

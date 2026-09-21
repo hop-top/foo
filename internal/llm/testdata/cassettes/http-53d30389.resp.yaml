@@ -1,0 +1,8 @@
+xrr: "1"
+adapter: http
+fingerprint: 53d30389
+recorded_at: "2026-09-21T06:36:10Z"
+payload:
+    status: 200
+    body: |
+        {"object":"list","data":[{"id":"qwen2.5:7b-instruct","object":"model","created":1787191418,"owned_by":"library"},{"id":"llama3.2:3b","object":"model","created":1787184512,"owned_by":"library"}]}

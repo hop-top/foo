@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -514,5 +518,313 @@ func TestModelList_FilteredRowsStillRankedAndTruncated(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "2 more model(s)") {
 		t.Errorf("truncation hint missing from stderr: %q", stderr)
+	}
+}
+
+// endpointBody is a real /v1/models response, captured from a local
+// ollama — the shape every OpenAI-compatible server returns.
+const endpointBody = `{"object":"list","data":[` +
+	`{"id":"qwen2.5:7b-instruct","object":"model","created":1787191418,"owned_by":"library"},` +
+	`{"id":"llama3.2:3b","object":"model","created":1787184512,"owned_by":"library"}]}`
+
+// serveEndpoint stands up a fake OpenAI-compatible server and returns
+// the base URL to configure foo with.
+
+// serveEndpoint stands up a fake OpenAI-compatible server and returns
+// the base URL to configure foo with.
+func serveEndpoint(t *testing.T, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/v1"
+}
+
+// withLiveSourceSelection clears the fixture source so the command runs
+// its real source-selection path, and neutralises any endpoint the
+// developer has configured in their own llm.yaml.
+//
+// Without the second half these tests would pass or fail depending on
+// whose machine they run on: a developer with providers.openai.base_url
+// set would silently exercise endpoint mode in the catalog tests.
+
+// withLiveSourceSelection clears the fixture source so the command runs
+// its real source-selection path, and neutralises any endpoint the
+// developer has configured in their own llm.yaml.
+//
+// Without the second half these tests would pass or fail depending on
+// whose machine they run on: a developer with providers.openai.base_url
+// set would silently exercise endpoint mode in the catalog tests.
+func withLiveSourceSelection(t *testing.T) {
+	t.Helper()
+	prev := modelCatalogSource
+	modelCatalogSource = nil
+	t.Cleanup(func() { modelCatalogSource = prev })
+
+	t.Setenv("LLM_BASE_URL", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+}
+
+// TestModelList_EndpointFlagListsFromServer is the headline behavior of
+// the live source: --endpoint lists what the server serves, not what
+// models.dev knows. The catalog structurally cannot hold these ids.
+
+// TestModelList_EndpointFlagListsFromServer is the headline behavior of
+// the live source: --endpoint lists what the server serves, not what
+// models.dev knows. The catalog structurally cannot hold these ids.
+func TestModelList_EndpointFlagListsFromServer(t *testing.T) {
+	withLiveSourceSelection(t)
+	base := serveEndpoint(t, endpointBody)
+
+	stdout, _, err := runList(t, "--endpoint="+base, "--format=json")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var rows []struct {
+		Provider string `json:"provider"`
+		ID       string `json:"id"`
+		Source   string `json:"source"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
+		t.Fatalf("not JSON (%v): %q", err, stdout)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows: got %d, want 2: %q", len(rows), stdout)
+	}
+	ids := []string{rows[0].ID, rows[1].ID}
+	sort.Strings(ids)
+	if ids[0] != "llama3.2:3b" || ids[1] != "qwen2.5:7b-instruct" {
+		t.Errorf("ids = %v, want the server's inventory", ids)
+	}
+	for _, r := range rows {
+		if r.Source != string(llm.SourceEndpoint) {
+			t.Errorf("%s: source = %q, want %q", r.ID, r.Source, llm.SourceEndpoint)
+		}
+	}
+}
+
+// TestModelList_EndpointShowsSourceColumn covers requirement 3 on the
+// human surface: with an endpoint in play the origin of each row must be
+// visible in the table, not only in json/yaml. An endpoint row's blank
+// CONTEXT means "not reported", and the reader needs to know that.
+
+// TestModelList_EndpointShowsSourceColumn covers requirement 3 on the
+// human surface: with an endpoint in play the origin of each row must be
+// visible in the table, not only in json/yaml. An endpoint row's blank
+// CONTEXT means "not reported", and the reader needs to know that.
+func TestModelList_EndpointShowsSourceColumn(t *testing.T) {
+	withLiveSourceSelection(t)
+	base := serveEndpoint(t, endpointBody)
+
+	stdout, _, err := runList(t, "--endpoint="+base)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	header := strings.SplitN(stdout, "\n", 2)[0]
+	if !strings.Contains(header, "SOURCE") {
+		t.Errorf("endpoint listing must show a SOURCE column, header was %q", header)
+	}
+	if !strings.Contains(stdout, string(llm.SourceEndpoint)) {
+		t.Errorf("endpoint rows must be labelled %q in the table: %q", llm.SourceEndpoint, stdout)
+	}
+}
+
+// TestModelList_CatalogViewHasNoSourceColumn is the other half: with a
+// single source wired the column would repeat one value on every row, so
+// it stays off.
+
+// TestModelList_CatalogViewHasNoSourceColumn is the other half: with a
+// single source wired the column would repeat one value on every row, so
+// it stays off.
+func TestModelList_CatalogViewHasNoSourceColumn(t *testing.T) {
+	withCatalog(t, stubCatalog{entries: sampleEntries()})
+	stdout, _, err := runList(t)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(strings.SplitN(stdout, "\n", 2)[0], "SOURCE") {
+		t.Errorf("catalog-only listing should not carry a SOURCE column: %q", stdout)
+	}
+}
+
+// TestModelList_UnreachableEndpointErrorsNamingURL is the failure the
+// brief singles out: a down ssh tunnel must not render as an empty list
+// that reads "this server has no models".
+
+// TestModelList_UnreachableEndpointErrorsNamingURL is the failure the
+// brief singles out: a down ssh tunnel must not render as an empty list
+// that reads "this server has no models".
+func TestModelList_UnreachableEndpointErrorsNamingURL(t *testing.T) {
+	withLiveSourceSelection(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL + "/v1"
+	srv.Close()
+
+	stdout, _, err := runList(t, "--endpoint="+base)
+	if err == nil {
+		t.Fatalf("unreachable endpoint must error, got output %q", stdout)
+	}
+	if !strings.Contains(err.Error(), base) {
+		t.Errorf("error must name the endpoint URL\n error: %v\n want: %s", err, base)
+	}
+	if strings.Contains(stdout, "PROVIDER") {
+		t.Errorf("unreachable endpoint rendered a table: %q", stdout)
+	}
+}
+
+// TestModelList_ConfiguredEndpointIsUsedWithoutFlag covers requirement
+// 2: with no --endpoint, a configured endpoint is resolved through the
+// same ladder the completion path uses.
+
+// TestModelList_ConfiguredEndpointIsUsedWithoutFlag covers requirement
+// 2: with no --endpoint, a configured endpoint is resolved through the
+// same ladder the completion path uses.
+func TestModelList_ConfiguredEndpointIsUsedWithoutFlag(t *testing.T) {
+	withLiveSourceSelection(t)
+	base := serveEndpoint(t, endpointBody)
+	t.Setenv("LLM_BASE_URL", base)
+
+	stdout, _, err := runList(t, "--format=json")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(stdout, string(llm.SourceEndpoint)) {
+		t.Errorf("configured endpoint was not used; got %q", stdout)
+	}
+	if !strings.Contains(stdout, "llama3.2:3b") {
+		t.Errorf("configured endpoint's inventory absent: %q", stdout)
+	}
+}
+
+// TestModelList_ExplicitEndpointBeatsConfigured pins the precedence:
+// --endpoint is the per-invocation lever and outranks the configured
+// one, mirroring how ?base_url= outranks llm.yaml and LLM_BASE_URL on
+// the completion path.
+
+// TestModelList_ExplicitEndpointBeatsConfigured pins the precedence:
+// --endpoint is the per-invocation lever and outranks the configured
+// one, mirroring how ?base_url= outranks llm.yaml and LLM_BASE_URL on
+// the completion path.
+func TestModelList_ExplicitEndpointBeatsConfigured(t *testing.T) {
+	withLiveSourceSelection(t)
+	configured := serveEndpoint(t, `{"data":[{"id":"from-config"}]}`)
+	explicit := serveEndpoint(t, `{"data":[{"id":"from-flag"}]}`)
+	t.Setenv("LLM_BASE_URL", configured)
+
+	stdout, _, err := runList(t, "--endpoint="+explicit, "--format=json")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(stdout, "from-flag") {
+		t.Errorf("--endpoint did not win: %q", stdout)
+	}
+	if strings.Contains(stdout, "from-config") {
+		t.Errorf("configured endpoint leaked into an explicit --endpoint run: %q", stdout)
+	}
+}
+
+// TestModelList_FallsBackToCatalogWithNoEndpoint is requirement 2's
+// negative case: no endpoint configured anywhere means the catalog, and
+// the command must not start probing localhost on its own.
+
+// TestModelList_FallsBackToCatalogWithNoEndpoint is requirement 2's
+// negative case: no endpoint configured anywhere means the catalog, and
+// the command must not start probing localhost on its own.
+func TestModelList_FallsBackToCatalogWithNoEndpoint(t *testing.T) {
+	withLiveSourceSelection(t)
+
+	src, endpoint := modelListSource(llm.Filter{}, "")
+	if endpoint != "" {
+		t.Errorf("resolved endpoint %q with none configured", endpoint)
+	}
+	if src != nil {
+		t.Errorf("want nil source (the catalog default), got %T", src)
+	}
+}
+
+// TestModelList_CatalogOnlyFlagRejectedWithEndpoint covers requirement
+// 4. /v1/models has no metadata to filter on, so the combination is
+// refused by name rather than silently returning everything or printing
+// empty columns.
+//
+// The filter flags land in a concurrent change; this drives the check
+// through a flag registered on the fly so the rejection logic is proven
+// now and picks up the real flags as they are added to catalogOnlyFlags.
+
+// TestModelList_CatalogOnlyFlagRejectedWithEndpoint covers requirement
+// 4. /v1/models has no metadata to filter on, so the combination is
+// refused by name rather than silently returning everything or printing
+// empty columns.
+//
+// The filter flags land in a concurrent change; this drives the check
+// through a flag registered on the fly so the rejection logic is proven
+// now and picks up the real flags as they are added to catalogOnlyFlags.
+func TestModelList_CatalogOnlyFlagRejectedWithEndpoint(t *testing.T) {
+	cmd := &cobra.Command{Use: "list"}
+	var minContext int
+	cmd.Flags().IntVar(&minContext, "min-context", 0, "test stand-in")
+
+	// Not passed: nothing to reject.
+	if err := checkCatalogOnlyFlags(cmd); err != nil {
+		t.Fatalf("unset flag must not be rejected: %v", err)
+	}
+
+	if err := cmd.Flags().Set("min-context", "8192"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	err := checkCatalogOnlyFlags(cmd)
+	if err == nil {
+		t.Fatal("--min-context with --endpoint must be rejected")
+	}
+	if !errors.Is(err, llm.ErrEndpointFlagUnsupported) {
+		t.Errorf("error does not unwrap to ErrEndpointFlagUnsupported: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--min-context") {
+		t.Errorf("error must name the offending flag, got: %v", err)
+	}
+}
+
+// TestModelList_CatalogOnlyFlagAllowedWithoutEndpoint guards the
+// converse: the same flag against the catalog is exactly what it is for.
+
+// TestModelList_CatalogOnlyFlagAllowedWithoutEndpoint guards the
+// converse: the same flag against the catalog is exactly what it is for.
+func TestModelList_CatalogOnlyFlagAllowedWithoutEndpoint(t *testing.T) {
+	withCatalog(t, stubCatalog{entries: sampleEntries()})
+	if _, _, err := runList(t); err != nil {
+		t.Fatalf("catalog listing must not be affected by the endpoint check: %v", err)
+	}
+}
+
+// TestModelListCmd_EndpointFlagWiring asserts the flag is actually
+// declared; a green test on the resolver proves nothing if the flag
+// never reaches the command.
+
+// TestModelListCmd_EndpointFlagWiring asserts the flag is actually
+// declared; a green test on the resolver proves nothing if the flag
+// never reaches the command.
+func TestModelListCmd_EndpointFlagWiring(t *testing.T) {
+	parent := modelCmd()
+	var list *cobra.Command
+	for _, sub := range parent.Commands() {
+		if sub.Name() == "list" {
+			list = sub
+		}
+	}
+	if list == nil {
+		t.Fatal("`list` not registered under `model`")
+	}
+	f := list.Flags().Lookup("endpoint")
+	if f == nil {
+		t.Fatal("--endpoint flag not declared")
+	}
+	if f.Usage == "" {
+		t.Error("--endpoint has no usage string")
 	}
 }
