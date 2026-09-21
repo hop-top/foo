@@ -22,13 +22,13 @@ func (f fixtureCatalog) ListModels(context.Context) ([]ModelEntry, error) {
 
 // ent builds a fixture row. Every ranking input is explicit because the
 // ordering assertions below are meaningless if a field defaults.
-func ent(provider, id, released string, reachable bool) ModelEntry {
+func ent(provider, id, released string, routable bool) ModelEntry {
 	return ModelEntry{
-		Source:    SourceCatalog,
-		Provider:  provider,
-		ID:        id,
-		Released:  released,
-		Reachable: reachable,
+		Source:   SourceCatalog,
+		Provider: provider,
+		ID:       id,
+		Released: released,
+		Routable: routable,
 	}
 }
 
@@ -56,12 +56,12 @@ func requireOrder(t *testing.T, got []ModelEntry, want ...string) {
 	}
 }
 
-// TestRank_RotatesAcrossReachableProviders is the central ranking
+// TestRank_RotatesAcrossRoutableProviders is the central ranking
 // guarantee: a provider with many models must not monopolise the head
 // of the list. "big" holds three models newer than anything anthropic
 // serves, so a flat recency sort would emit all three before
 // anthropic's first. Round-robin must interleave them instead.
-func TestRank_RotatesAcrossReachableProviders(t *testing.T) {
+func TestRank_RotatesAcrossRoutableProviders(t *testing.T) {
 	got := Rank([]ModelEntry{
 		ent("big", "b-1", "2026-09-09", true),
 		ent("big", "b-2", "2026-09-08", true),
@@ -87,10 +87,10 @@ func TestRank_NewestFirstWithinProvider(t *testing.T) {
 	requireOrder(t, got, "p/newest", "p/mid", "p/old")
 }
 
-// TestRank_ReachableBeforeUnreachable proves the truncated default view
+// TestRank_RoutableBeforeUnroutable proves the truncated default view
 // never spends a slot on a provider foo has no adapter for, even when
-// the unreachable model is far newer.
-func TestRank_ReachableBeforeUnreachable(t *testing.T) {
+// the unroutable model is far newer.
+func TestRank_RoutableBeforeUnroutable(t *testing.T) {
 	got := Rank([]ModelEntry{
 		ent("exotic", "x-1", "2026-12-31", false),
 		ent("exotic", "x-2", "2026-12-30", false),
@@ -103,7 +103,7 @@ func TestRank_ReachableBeforeUnreachable(t *testing.T) {
 		t.Fatalf("omitted: got %d, want 2", omitted)
 	}
 	if key(shown[0]) != "openai/o-1" {
-		t.Fatalf("truncated head: got %q, want reachable openai/o-1", key(shown[0]))
+		t.Fatalf("truncated head: got %q, want routable openai/o-1", key(shown[0]))
 	}
 }
 
@@ -210,8 +210,8 @@ func TestEntryFromAim_ProjectsFields(t *testing.T) {
 	if got.Source != SourceCatalog {
 		t.Errorf("Source: got %q, want %q", got.Source, SourceCatalog)
 	}
-	if !got.Reachable {
-		t.Error("openai is a compiled-in scheme; want Reachable")
+	if !got.Routable {
+		t.Error("openai is a compiled-in scheme; want Routable")
 	}
 
 	t.Run("nil cost", func(t *testing.T) {
@@ -221,25 +221,25 @@ func TestEntryFromAim_ProjectsFields(t *testing.T) {
 		}
 	})
 
-	t.Run("unreachable provider", func(t *testing.T) {
+	t.Run("unroutable provider", func(t *testing.T) {
 		e := entryFromAim(aim.Model{ID: "x", Provider: "some-aggregator-foo-cannot-reach"})
-		if e.Reachable {
-			t.Error("provider with no compiled-in adapter must not be Reachable")
+		if e.Routable {
+			t.Error("provider with no compiled-in adapter must not be Routable")
 		}
 	})
 }
 
-// TestReachableProviders_DerivedFromKit guards against the set being
+// TestRoutableProviders_DerivedFromKit guards against the set being
 // hardcoded: it must track kit's registered schemes.
-func TestReachableProviders_DerivedFromKit(t *testing.T) {
-	got := reachableProviders()
+func TestRoutableProviders_DerivedFromKit(t *testing.T) {
+	got := routableProviders()
 	for _, want := range []string{"openai", "anthropic", "google"} {
 		if !got[want] {
-			t.Errorf("scheme %q registered in kit but missing from reachable set", want)
+			t.Errorf("scheme %q registered in kit but missing from routable set", want)
 		}
 	}
 	if got["definitely-not-a-scheme"] {
-		t.Error("unregistered scheme reported reachable")
+		t.Error("unregistered scheme reported routable")
 	}
 }
 

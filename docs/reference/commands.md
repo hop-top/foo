@@ -139,6 +139,7 @@ Discover model ids and manage the default model selection.
 
 | Flag | Default | Purpose |
 |------|---------|---------|
+| `--all` | `false` | Include models whose provider foo cannot reach (no adapter, or no API key configured) |
 | `--limit` | `20` | Maximum models to list (`0` for no limit) |
 | `--endpoint` | (none) | List models from this OpenAI-compatible base URL instead of the catalog |
 | `--refresh` | `false` | Bypass the catalog and endpoint caches and refetch |
@@ -151,6 +152,28 @@ Discover model ids and manage the default model selection.
 | `--open-weights` | (unset) | Only models with (`--open-weights`) or without (`--open-weights=false`) open weights |
 | `--structured-output` | (unset) | Only models with (`--structured-output`) or without (`--structured-output=false`) structured output |
 | `--query` | (none) | Catalog query expression, e.g. `"provider:openai reasoning:true"` |
+
+By default the listing shows only models foo can actually call: the
+provider must have a compiled-in adapter, and must either need no
+credential (a local runtime) or have its API key present in the
+configured secret store. Everything else is hidden, and a stderr
+footer reports the count and names `--all`. The credential
+requirement is read from the model catalog, which publishes the env
+var names each provider accepts, so a provider accepting several
+alternatives (`google` takes `GOOGLE_API_KEY`,
+`GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`) is satisfied by
+any one of them. Keys resolve through the secret store, not
+`os.Getenv`, so a keyring backend works.
+
+`--all` disables that filtering. It widens the candidate set rather
+than replacing the narrowing filters, so it combines with
+`--provider`, `--query` and the rest — `--provider groq --all` is
+how you browse a provider's catalogue before you have its key.
+
+Reachability filtering never applies to `--endpoint`: those rows are
+a server's own inventory, with no catalog provider behind them to
+hold a credential requirement. `--all` is accepted there and does
+nothing.
 
 Capability flags are three-state: omit for no filtering, pass the
 flag for models that have the capability, pass `=false` for models
@@ -165,10 +188,12 @@ the key. Where a query key names the same thing as an explicit
 flag, the flag wins; modality lists merge instead.
 
 Every filter flag is rejected against `--endpoint`: a live
-`/v1/models` response carries ids and nothing to filter on.
+`/v1/models` response carries ids and nothing to filter on. `--all`
+is not a filter flag and is accepted.
 
-Truncation hints and the `catalog: cached …` provenance footer go
-to stderr, so `--format json` pipes cleanly. Under `--format
+Truncation hints, the `catalog: cached …` provenance footer and the
+hidden-model footer all go to stderr, so `--format json` pipes
+cleanly. Under `--format
 json`/`yaml` the provenance is nested as a `_meta` object beside
 `data` instead.
 
@@ -188,6 +213,20 @@ Inspect configured LLM providers.
 |------------|----------|-------------|--------|
 | `list` | `foo provider list` | List registered providers | [Configure models](../how-to/configure-models.md) |
 | `show` | `foo provider show <scheme>` | Show provider auth status | [Configure models](../how-to/configure-models.md) |
+
+`show` reports `status` as one of:
+
+| Status | Meaning |
+|--------|---------|
+| `available` | The provider needs no credential (a local runtime). |
+| `configured` | A required credential is present in the secret store. |
+| `missing` | A required credential is absent. |
+
+The requirement comes from the same model catalog `foo model list`
+filters on, so the two surfaces always agree: a provider reported
+`missing` here is a provider whose models the default listing hides.
+`secret_key` names the secret-store key that satisfied the
+requirement, or the first alternative when none did.
 
 ## Kit conformance annotations
 

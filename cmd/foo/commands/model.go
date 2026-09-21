@@ -56,6 +56,15 @@ var modelListEndpoint string
 // caches with two different TTLs sit behind one listing.
 var modelListRefresh bool
 
+// modelListAll backs --all: show the whole catalog, including models
+// whose provider foo has no adapter for or no credential for.
+//
+// It widens the candidate set rather than replacing the filters, so it
+// composes with --provider, --query and the rest: `--provider groq
+// --all` is the only way to see groq's catalogue before you have a key,
+// and refusing the combination would leave no way to ask that question.
+var modelListAll bool
+
 // modelCatalogSource is the row producer `foo model list` reads from.
 // nil means "the aim catalog through foo's shared registry". It is a
 // package var so a test can substitute a fixture source without a
@@ -69,11 +78,18 @@ func modelListCmd() *cobra.Command {
 		Short: "List models from the model catalog",
 		Long: `List models known to the aim catalog (models.dev), newest first.
 
-The catalog spans thousands of models across hundreds of providers, so
-the default view is truncated. Models are ordered to put the ones this
-build of foo can actually route to first, rotating across providers so
-the first screenful is each provider's current flagship rather than one
-aggregator's back catalogue.
+By default only models you can actually call are listed: ones foo links
+an adapter for, whose provider either needs no credential (a local
+runtime) or whose API key is present in your secret store. The catalog
+spans thousands of models across hundreds of providers and almost all of
+them need a key you have not configured, so the unfiltered view is
+mostly models that would fail on first use. --all turns the filtering
+off and lists the whole catalog; a footer reports how many rows it would
+add. --all composes with the filters below rather than replacing them.
+
+The remaining view is still truncated. Models are ordered rotating
+across providers so the first screenful is each provider's current
+flagship rather than one aggregator's back catalogue.
 
 Pass an id from the ID column to ` + "`foo model default`" + ` to make it the
 default. Raise --limit (or --limit=0 for everything) to see more; pipe
@@ -102,7 +118,8 @@ is cached for only ` + llm.DefaultEndpointCacheTTL.String() + `. --refresh bypas
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runModelList(cmd.Context(), cmd, modelListLimit,
-				modelListFilter(cmd, modelListFlags), modelListEndpoint, modelListRefresh)
+				modelListFilter(cmd, modelListFlags), modelListEndpoint,
+				modelListRefresh, modelListAll)
 		},
 	}
 	cmd.Flags().IntVar(&modelListLimit, "limit", llm.DefaultListLimit,
@@ -137,6 +154,8 @@ is cached for only ` + llm.DefaultEndpointCacheTTL.String() + `. --refresh bypas
 		"list models from this OpenAI-compatible base URL instead of the catalog")
 	f.BoolVar(&modelListRefresh, "refresh", false,
 		"bypass the catalog and endpoint caches and refetch")
+	f.BoolVar(&modelListAll, "all", false,
+		"include models whose provider foo cannot reach (no adapter, or no API key configured)")
 
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
 	return cmd
@@ -199,6 +218,17 @@ var refreshCatalog = func(ctx context.Context) error {
 	return llm.RefreshCatalog(ctx, nil)
 }
 
+// modelAuthIndex resolves which providers this machine holds
+// credentials for.
+//
+// It delegates to providerAuthIndex rather than constructing its own
+// index, which is the whole point: `foo provider show` calls the same
+// var, so the two surfaces cannot report different verdicts for the
+// same provider. Stubbing that one var in a test moves both.
+func modelAuthIndex(ctx context.Context) (*llm.AuthIndex, error) {
+	return providerAuthIndex(ctx)
+}
+
 // catalogOnlyFlags are flags whose data only the aim catalog carries.
 //
 // A live /v1/models response is ids and nothing else, so any filter over
@@ -210,6 +240,12 @@ var refreshCatalog = func(ctx context.Context) error {
 // The list is keyed by flag name and checked with Changed, so it covers
 // a flag whatever its type — filter flags landing on this command later
 // need only be named here.
+//
+// --all is absent on purpose. It does not narrow against catalog data,
+// it switches off foo's own reachability filter, and that filter never
+// runs on endpoint rows in the first place — so `--endpoint … --all` is
+// a redundant request, not an impossible one, and rejecting it would
+// punish a user for over-specifying.
 var catalogOnlyFlags = []string{
 	"provider",
 	"family",
@@ -274,7 +310,7 @@ func modelListSource(filter llm.Filter, endpoint string, refresh bool) (llm.Cata
 // runModelList is split out of RunE so tests drive the whole path —
 // source read, ranking, truncation, render, hint — against a fixture
 // source and a captured writer.
-func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm.Filter, endpoint string, refresh bool) error {
+func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm.Filter, endpoint string, refresh, all bool) error {
 	src, endpoint := modelListSource(filter, endpoint, refresh)
 	if endpoint != "" {
 		if err := checkCatalogOnlyFlags(cmd); err != nil {
@@ -302,6 +338,24 @@ func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm
 	if err != nil {
 		return err
 	}
+
+	// Reachability filtering is a claim about catalog providers and
+	// their API keys, so it applies only to catalog rows. An endpoint
+	// listing is a server's own inventory: there is no catalog
+	// provider behind those ids to hold a credential requirement, and
+	// the server answering at all is a stronger proof of reach than
+	// any key check. Filtering there would hide rows for want of a key
+	// nobody asked for, so the whole block is skipped rather than
+	// erroring on the combination — --endpoint --all is simply --all
+	// with nothing left to widen.
+	var reach reachabilityNote
+	if !all && endpoint == "" {
+		entries, reach, err = filterReachable(ctx, entries)
+		if err != nil {
+			return err
+		}
+	}
+
 	shown, omitted := llm.Truncate(entries, limit)
 
 	rows := make([]modelRow, 0, len(shown))
@@ -350,7 +404,81 @@ func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm
 			"%d more model(s) not shown; raise --limit or pass --limit=0 for all\n",
 			omitted)
 	}
+
+	// Last, so it is the line still on screen after a long listing —
+	// and on stderr with the others, for the same piping reason. It is
+	// what keeps a filtered view honest: a reader who cannot find a
+	// model they know exists has to be able to tell "foo filtered it
+	// out, here is the flag" from "the catalog does not have it".
+	if note := reach.describe(); note != "" {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), note)
+	}
 	return nil
+}
+
+// reachabilityNote is what the default view has to disclose about its
+// own filtering.
+//
+// It is a value rather than a string built at the filter site because
+// the message depends on facts the filter has and the renderer does not
+// — how many rows went, and whether any credential is configured at
+// all — while *where* it prints depends on facts the renderer has. The
+// zero value describes an unfiltered listing and renders nothing, which
+// is what --endpoint and --all leave behind.
+type reachabilityNote struct {
+	// hidden is how many rows the credential filter dropped.
+	hidden int
+	// applied records that filtering ran, distinguishing "nothing was
+	// hidden" from "nothing was filtered".
+	applied bool
+	// configured is the providers whose API key resolved, which is
+	// what turns "nothing is reachable" from a dead end into a
+	// diagnosis.
+	configured []string
+}
+
+// describe renders the footer, or "" when there is nothing to disclose.
+func (n reachabilityNote) describe() string {
+	switch {
+	case !n.applied:
+		return ""
+	case n.hidden == 0:
+		return ""
+	case len(n.configured) == 0:
+		// The empty-table case. An empty table with a bare count reads
+		// as "the catalog is broken"; the actual cause is that no
+		// provider key is configured, and saying so is the difference
+		// between a dead end and a next step.
+		return fmt.Sprintf(
+			"%d model(s) hidden: no provider API key is configured, so foo cannot call any of them. "+
+				"Set one (e.g. export OPENAI_API_KEY=…, or `foo provider show <scheme>` to see what a provider expects), "+
+				"or pass --all to list the catalog anyway.",
+			n.hidden)
+	default:
+		return fmt.Sprintf(
+			"%d model(s) hidden: no adapter or no API key configured for their provider. "+
+				"Configured: %s. Pass --all to list them.",
+			n.hidden, strings.Join(n.configured, ", "))
+	}
+}
+
+// filterReachable drops the rows foo could not call and describes what
+// went. Resolving the credential state is fallible (it reads the
+// provider census and the secret store), and the error is returned
+// rather than degraded into "hide nothing": silently listing 7900
+// unreachable models because a secret backend was unreadable is the
+// behaviour this command exists to stop.
+func filterReachable(ctx context.Context, entries []llm.ModelEntry) ([]llm.ModelEntry, reachabilityNote, error) {
+	auth, err := modelAuthIndex(ctx)
+	if err != nil {
+		return nil, reachabilityNote{}, err
+	}
+	kept, hidden := llm.FilterReachable(entries, auth)
+	return kept, reachabilityNote{
+		hidden:     hidden,
+		applied:    true,
+		configured: auth.ConfiguredProviders(),
+	}, nil
 }
 
 // catalogEnvelope wraps a listing with its cache provenance for the

@@ -31,20 +31,56 @@ func (s stubCatalog) ListModels(context.Context) ([]llm.ModelEntry, error) {
 
 // withCatalog swaps the package-level source for one test and restores
 // it, so ordering between tests cannot leak a fixture.
+//
+// It pins the credential index too. The default view hides models whose
+// provider has no API key, so without this every assertion below would
+// depend on which keys happen to be exported on the machine running the
+// suite — green on a laptop with an ANTHROPIC_API_KEY, red in CI. The
+// pinned index satisfies every provider, which is the pre-filter
+// behaviour these tests were written against; the tests that exercise
+// the filter itself call withAuth to say otherwise.
 func withCatalog(t *testing.T, src llm.CatalogSource) {
 	t.Helper()
 	prev := modelCatalogSource
 	modelCatalogSource = src
 	t.Cleanup(func() { modelCatalogSource = prev })
+	withAuth(t, nil)
 }
 
-// sampleEntries returns n reachable rows across two providers.
+// withAuth pins the credential index for one test. envByProvider maps a
+// provider id to the env var names it accepts; a provider absent from
+// the map declares no requirement and is therefore satisfied. nil means
+// "no provider requires a credential", i.e. nothing is ever hidden.
+//
+// Keys resolve from an explicit set rather than the process environment,
+// so a test says which credentials exist instead of inheriting the
+// operator's.
+func withAuth(t *testing.T, envByProvider map[string][]string, configured ...string) {
+	t.Helper()
+	have := make(map[string]bool, len(configured))
+	for _, key := range configured {
+		have[llm.SecretName(key)] = true
+	}
+	lookup := func(_ context.Context, key string) (string, bool, error) {
+		if have[key] {
+			return "stub-value", true, nil
+		}
+		return "", false, nil
+	}
+	prev := providerAuthIndex
+	providerAuthIndex = func(ctx context.Context) (*llm.AuthIndex, error) {
+		return llm.NewAuthIndexFrom(ctx, envByProvider, lookup), nil
+	}
+	t.Cleanup(func() { providerAuthIndex = prev })
+}
+
+// sampleEntries returns n routable rows across two providers.
 func sampleEntries() []llm.ModelEntry {
 	return []llm.ModelEntry{
-		{Source: llm.SourceCatalog, Provider: "anthropic", ID: "claude-x", Context: 200000, ToolCall: true, Reasoning: true, Released: "2026-01-01", Reachable: true},
-		{Source: llm.SourceCatalog, Provider: "openai", ID: "gpt-x", Context: 128000, ToolCall: true, Released: "2026-02-02", Reachable: true},
-		{Source: llm.SourceCatalog, Provider: "anthropic", ID: "claude-y", Context: 100000, Released: "2025-01-01", Reachable: true},
-		{Source: llm.SourceCatalog, Provider: "openai", ID: "gpt-y", Context: 8192, Released: "2024-02-02", Reachable: true},
+		{Source: llm.SourceCatalog, Provider: "anthropic", ID: "claude-x", Context: 200000, ToolCall: true, Reasoning: true, Released: "2026-01-01", Routable: true},
+		{Source: llm.SourceCatalog, Provider: "openai", ID: "gpt-x", Context: 128000, ToolCall: true, Released: "2026-02-02", Routable: true},
+		{Source: llm.SourceCatalog, Provider: "anthropic", ID: "claude-y", Context: 100000, Released: "2025-01-01", Routable: true},
+		{Source: llm.SourceCatalog, Provider: "openai", ID: "gpt-y", Context: 8192, Released: "2024-02-02", Routable: true},
 	}
 }
 
@@ -78,7 +114,7 @@ func TestModelList_DefaultViewIsTruncatedWithHint(t *testing.T) {
 	for i := 0; i < llm.DefaultListLimit+7; i++ {
 		many = append(many, llm.ModelEntry{
 			Source: llm.SourceCatalog, Provider: "openai",
-			ID: string(rune('a'+i)) + "-model", Reachable: true,
+			ID: string(rune('a'+i)) + "-model", Routable: true,
 		})
 	}
 	withCatalog(t, stubCatalog{entries: many})
@@ -326,6 +362,10 @@ func captureFilter(t *testing.T, entries []llm.ModelEntry) *llm.Filter {
 		modelFilteredSource = prevFactory
 		modelCatalogSource = prevSrc
 	})
+	// Same reason withCatalog does it: these tests assert on flag
+	// wiring and display, and must not also depend on which API keys
+	// the machine running them happens to export.
+	withAuth(t, nil)
 	return &got
 }
 
@@ -1199,5 +1239,379 @@ func TestModelList_DoesNotShadowReservedGlobals(t *testing.T) {
 		if f := cmd.Flags().Lookup(name); f != nil {
 			t.Errorf("model list declares a local --%s, shadowing kit's reserved global of the same name", name)
 		}
+	}
+}
+
+// reachabilityEntries spans the three cases the default view must
+// distinguish: routable with a key, routable without one, and keyed but
+// with no compiled-in adapter.
+func reachabilityEntries() []llm.ModelEntry {
+	return []llm.ModelEntry{
+		{Source: llm.SourceCatalog, Provider: "openai", ID: "gpt-x", Routable: true},
+		{Source: llm.SourceCatalog, Provider: "google", ID: "gemini-x", Routable: true},
+		{Source: llm.SourceCatalog, Provider: "groq", ID: "llama-x"},
+	}
+}
+
+// reachabilityEnv is the credential requirement for those three, in
+// aim's own shape.
+// mistral is here only for the endpoint tests, which need a keyed
+// provider name a server can plausibly report as owned_by. A provider
+// absent from this map is "unknown", hence satisfied, which would make
+// those tests pass whether or not the exemption exists.
+var reachabilityEnv = map[string][]string{
+	"openai":  {"OPENAI_API_KEY"},
+	"google":  {"GOOGLE_API_KEY"},
+	"groq":    {"GROQ_API_KEY"},
+	"mistral": {"MISTRAL_API_KEY"},
+}
+
+// TestModelList_DefaultHidesUnreachable is the headline behavior: with
+// only an openai key configured, a google model (adapter, no key) and a
+// groq model (key requirement, no adapter) must both be gone, and the
+// footer must say so and name --all.
+func TestModelList_DefaultHidesUnreachable(t *testing.T) {
+	withCatalog(t, stubCatalog{entries: reachabilityEntries()})
+	withAuth(t, reachabilityEnv, "OPENAI_API_KEY")
+
+	stdout, stderr, err := runList(t)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(stdout, "gpt-x") {
+		t.Errorf("reachable model missing from default view: %q", stdout)
+	}
+	for _, hidden := range []string{"gemini-x", "llama-x"} {
+		if strings.Contains(stdout, hidden) {
+			t.Errorf("unreachable model %q present in default view: %q", hidden, stdout)
+		}
+	}
+	if !strings.Contains(stderr, "2 model(s) hidden") {
+		t.Errorf("footer missing the hidden count: %q", stderr)
+	}
+	if !strings.Contains(stderr, "--all") {
+		t.Errorf("footer must name the flag that widens the view: %q", stderr)
+	}
+	if strings.Contains(stdout, "hidden") {
+		t.Error("reachability footer leaked onto stdout; it must go to stderr")
+	}
+}
+
+// TestModelList_AllShowsEverything is the override: --all must restore
+// every row and claim nothing was hidden.
+func TestModelList_AllShowsEverything(t *testing.T) {
+	withCatalog(t, stubCatalog{entries: reachabilityEntries()})
+	withAuth(t, reachabilityEnv, "OPENAI_API_KEY")
+
+	stdout, stderr, err := runList(t, "--all")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	for _, id := range []string{"gpt-x", "gemini-x", "llama-x"} {
+		if !strings.Contains(stdout, id) {
+			t.Errorf("--all must list %q: %q", id, stdout)
+		}
+	}
+	if strings.Contains(stderr, "hidden") {
+		t.Errorf("--all hid nothing, so the footer must be silent: %q", stderr)
+	}
+}
+
+// TestModelList_AllComposesWithFilters pins the interaction the brief
+// calls out: --all widens the candidate set, it does not turn the
+// narrowing filters off, and the two are not mutually exclusive.
+func TestModelList_AllComposesWithFilters(t *testing.T) {
+	got := captureFilter(t, reachabilityEntries())
+	withAuth(t, reachabilityEnv, "OPENAI_API_KEY")
+
+	stdout, _, err := runList(t, "--all", "--provider=groq")
+	if err != nil {
+		t.Fatalf("--all alongside --provider must be accepted: %v", err)
+	}
+	if got.Provider != "groq" {
+		t.Errorf("--all swallowed the filter: Provider = %q, want %q", got.Provider, "groq")
+	}
+	// The stub source ignores the filter, so the assertion that matters
+	// here is that --all still lifted the reachability gate on rows the
+	// filter let through.
+	if !strings.Contains(stdout, "llama-x") {
+		t.Errorf("--all must lift the reachability gate under a filter: %q", stdout)
+	}
+}
+
+// TestModelList_FilterWithoutAllStillHides is the other half: a filter
+// on its own must not smuggle unreachable rows back in.
+func TestModelList_FilterWithoutAllStillHides(t *testing.T) {
+	captureFilter(t, reachabilityEntries())
+	withAuth(t, reachabilityEnv, "OPENAI_API_KEY")
+
+	stdout, stderr, err := runList(t, "--provider=groq")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(stdout, "llama-x") {
+		t.Errorf("filter without --all must still hide unreachable rows: %q", stdout)
+	}
+	if !strings.Contains(stderr, "--all") {
+		t.Errorf("footer must still offer the override: %q", stderr)
+	}
+}
+
+// TestModelList_NoKeysConfiguredExplainsItself covers the empty-table
+// case. A bare count over an empty table reads as a broken catalog; the
+// footer has to name the cause and a next step.
+func TestModelList_NoKeysConfiguredExplainsItself(t *testing.T) {
+	withCatalog(t, stubCatalog{entries: reachabilityEntries()})
+	withAuth(t, reachabilityEnv)
+
+	stdout, stderr, err := runList(t)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(stdout, "gpt-x") {
+		t.Errorf("no key configured, so no row is reachable: %q", stdout)
+	}
+	if !strings.Contains(stderr, "no provider API key is configured") {
+		t.Errorf("footer must name the cause: %q", stderr)
+	}
+	if !strings.Contains(stderr, "--all") {
+		t.Errorf("footer must name the override: %q", stderr)
+	}
+	if !strings.Contains(stderr, "OPENAI_API_KEY") && !strings.Contains(stderr, "foo provider show") {
+		t.Errorf("footer must point at a fix: %q", stderr)
+	}
+}
+
+// collidingEndpointBody is a /v1/models response whose owned_by names a
+// real, keyed catalog provider.
+//
+// This is what makes the exemption testable at all. endpointProvider
+// falls back to host:port for the generic owned_by values, and a
+// host:port matches no catalog provider, so a credential gate applied to
+// such rows would pass them anyway and the test would prove nothing.
+// Servers that report a concrete owned_by — vLLM and LiteLLM proxies
+// fronting a named upstream do — produce rows whose provider *is* a
+// catalog id, and those are the rows a misapplied gate would eat.
+const collidingEndpointBody = `{"object":"list","data":[` +
+	`{"id":"mistral-small-local","object":"model","created":1787191418,"owned_by":"mistral"}` +
+	`]}`
+
+// TestModelList_EndpointSkipsReachabilityFiltering pins the exemption:
+// endpoint rows are a server's own inventory with no catalog provider
+// behind them, so the credential gate must neither hide them nor error
+// — not even when the server labels a row with a provider name the
+// catalog knows and demands a key for.
+func TestModelList_EndpointSkipsReachabilityFiltering(t *testing.T) {
+	withLiveSourceSelection(t)
+	// mistral requires a key and none is configured. If the gate ran
+	// over endpoint rows, this listing would come back empty.
+	withAuth(t, reachabilityEnv)
+	base := serveEndpoint(t, collidingEndpointBody)
+
+	stdout, stderr, err := runList(t, "--endpoint="+base)
+	if err != nil {
+		t.Fatalf("--endpoint must not be subject to the credential gate: %v", err)
+	}
+	if !strings.Contains(stdout, "mistral-small-local") {
+		t.Errorf("a served model must not be hidden for want of its upstream's API key: %q", stdout)
+	}
+	if strings.Contains(stderr, "hidden") {
+		t.Errorf("no reachability footer belongs on an endpoint listing: %q", stderr)
+	}
+}
+
+// TestModelList_EndpointRowsSurviveGenericOwner is the companion for the
+// ordinary case, where owned_by is generic and the provider degrades to
+// host:port. It cannot distinguish the gate being skipped from the gate
+// passing such rows, which is exactly why the test above exists.
+func TestModelList_EndpointRowsSurviveGenericOwner(t *testing.T) {
+	withLiveSourceSelection(t)
+	withAuth(t, reachabilityEnv)
+	base := serveEndpoint(t, endpointBody)
+
+	stdout, _, err := runList(t, "--endpoint="+base)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(stdout, "qwen2.5:7b-instruct") {
+		t.Errorf("endpoint rows must survive: %q", stdout)
+	}
+}
+
+// TestModelList_EndpointAcceptsAll checks --all is tolerated alongside
+// --endpoint rather than rejected as a catalog-only flag: it is a
+// redundant request, not an impossible one.
+func TestModelList_EndpointAcceptsAll(t *testing.T) {
+	withLiveSourceSelection(t)
+	withAuth(t, reachabilityEnv)
+	base := serveEndpoint(t, collidingEndpointBody)
+
+	stdout, _, err := runList(t, "--endpoint="+base, "--all")
+	if err != nil {
+		t.Fatalf("--endpoint with --all must be accepted: %v", err)
+	}
+	if !strings.Contains(stdout, "mistral-small-local") {
+		t.Errorf("endpoint rows missing: %q", stdout)
+	}
+}
+
+// TestModelList_AllFlagRegistered fails if the flag is dropped from the
+// surface: the behavior tests above drive runList, which would still
+// pass against a flag cobra never declared.
+func TestModelList_AllFlagRegistered(t *testing.T) {
+	parent := modelCmd()
+	for _, sub := range parent.Commands() {
+		if sub.Name() != "list" {
+			continue
+		}
+		f := sub.Flags().Lookup("all")
+		if f == nil {
+			t.Fatal("--all not registered on `model list`")
+		}
+		if f.Value.Type() != "bool" {
+			t.Errorf("--all type = %q, want bool", f.Value.Type())
+		}
+		return
+	}
+	t.Fatal("list subcommand not found")
+}
+
+// TestProviderShow_AgreesWithModelList is the point of sharing the
+// resolver: `foo provider show groq` must report the same verdict the
+// listing filters on. Before this, show answered "available" for groq
+// while the catalog knew it needs GROQ_API_KEY.
+func TestProviderShow_AgreesWithModelList(t *testing.T) {
+	withAuth(t, reachabilityEnv, "OPENAI_API_KEY")
+
+	for _, tc := range []struct{ scheme, want, key string }{
+		{"groq", "missing", "groq_api_key"},
+		{"openai", "configured", "openai_api_key"},
+		{"google", "missing", "google_api_key"},
+		{"ollama", "available", ""},
+	} {
+		got := runProviderShow(t, tc.scheme)
+		if got.Status != tc.want {
+			t.Errorf("provider show %s: status = %q, want %q", tc.scheme, got.Status, tc.want)
+		}
+		if got.SecretKey != tc.key {
+			t.Errorf("provider show %s: secret_key = %q, want %q", tc.scheme, got.SecretKey, tc.key)
+		}
+		// The listing's own predicate, read from the same index.
+		auth, err := providerAuthIndex(context.Background())
+		if err != nil {
+			t.Fatalf("auth index: %v", err)
+		}
+		row := llm.ModelEntry{Provider: tc.scheme, Routable: true}
+		if wantReach := tc.want != "missing"; row.Reachable(auth) != wantReach {
+			t.Errorf("provider show %s says %q but the listing's Reachable says %v",
+				tc.scheme, tc.want, row.Reachable(auth))
+		}
+	}
+}
+
+// TestProviderShow_GeminiAliasResolvesToGoogle covers the one scheme
+// whose kit name differs from its catalog id. A bare lookup would find
+// no record and call a provider that plainly needs a key "available".
+func TestProviderShow_GeminiAliasResolvesToGoogle(t *testing.T) {
+	withAuth(t, reachabilityEnv, "GOOGLE_API_KEY")
+
+	got := runProviderShow(t, "gemini")
+	if got.Status != "configured" {
+		t.Errorf("gemini status = %q, want configured via the google record", got.Status)
+	}
+	if got.Scheme != "gemini" {
+		t.Errorf("scheme echoed as %q; want the name the user typed", got.Scheme)
+	}
+	if got.AuthType != "api_key" {
+		t.Errorf("auth_type = %q, want api_key", got.AuthType)
+	}
+}
+
+// TestProviderShow_JSONShape pins the wire contract, which sharing the
+// resolver must not have changed.
+func TestProviderShow_JSONShape(t *testing.T) {
+	withAuth(t, reachabilityEnv, "OPENAI_API_KEY")
+
+	r := New("test")
+	var out bytes.Buffer
+	r.Cmd.SetOut(&out)
+	r.Cmd.SetErr(&bytes.Buffer{})
+	r.Cmd.SetArgs([]string{"provider", "show", "openai", "--format", "json"})
+	if err := r.Cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode %q: %v", out.String(), err)
+	}
+	for key, want := range map[string]any{
+		"scheme":     "openai",
+		"auth_type":  "api_key",
+		"secret_key": "openai_api_key",
+		"status":     "configured",
+	} {
+		if got[key] != want {
+			t.Errorf("json %s = %v, want %v", key, got[key], want)
+		}
+	}
+}
+
+// runProviderShow drives `foo provider show <scheme> --format json` and
+// decodes the row, so assertions read the same fields the user sees
+// rather than an internal value.
+func runProviderShow(t *testing.T, scheme string) providerStatus {
+	t.Helper()
+	r := New("test")
+	var out bytes.Buffer
+	r.Cmd.SetOut(&out)
+	r.Cmd.SetErr(&bytes.Buffer{})
+	r.Cmd.SetArgs([]string{"provider", "show", scheme, "--format", "json"})
+	if err := r.Cmd.Execute(); err != nil {
+		t.Fatalf("provider show %s: %v", scheme, err)
+	}
+	var got providerStatus
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode %q: %v", out.String(), err)
+	}
+	return got
+}
+
+// TestProviderShow_ResolvesSchemeAliases proves `provider show` goes
+// through LookupScheme rather than a bare provider lookup.
+//
+// A scheme whose catalog id is spelled differently would otherwise find
+// no record, read as "no declared requirement", and print "available" —
+// the same wrong answer the old four-case switch gave, just for fewer
+// providers. The alias table itself, and its completeness against the
+// live catalog, are pinned in internal/llm.
+func TestProviderShow_ResolvesSchemeAliases(t *testing.T) {
+	withAuth(t, map[string][]string{
+		"google":       {"GOOGLE_API_KEY"},
+		"fireworks-ai": {"FIREWORKS_API_KEY"},
+		"togetherai":   {"TOGETHER_API_KEY"},
+	}, "GOOGLE_API_KEY")
+
+	for scheme, want := range map[string]string{
+		"gemini":    "configured",
+		"fireworks": "missing",
+		"together":  "missing",
+	} {
+		got := runProviderShow(t, scheme)
+		if got.Status != want {
+			t.Errorf("provider show %s: status = %q, want %q", scheme, got.Status, want)
+		}
+		if got.Status == "available" {
+			t.Errorf("scheme %q aliases a keyed provider; reporting available is the old defect", scheme)
+		}
+		if got.Scheme != scheme {
+			t.Errorf("scheme echoed as %q, want the name the user typed (%q)", got.Scheme, scheme)
+		}
+	}
+
+	// A scheme with no alias and no catalog record is genuinely local;
+	// "available" is right and must not regress into demanding a key
+	// nobody publishes.
+	if got := runProviderShow(t, "routellm"); got.Status != "available" {
+		t.Errorf("routellm has no upstream provider record; status = %q, want available", got.Status)
 	}
 }

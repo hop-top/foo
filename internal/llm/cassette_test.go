@@ -155,8 +155,8 @@ func TestEndpointCatalog_RealResponseFromCassette(t *testing.T) {
 		if e.Source != SourceEndpoint {
 			t.Errorf("%s: Source = %q, want %q", e.ID, e.Source, SourceEndpoint)
 		}
-		if !e.Reachable {
-			t.Errorf("%s: Reachable = false on a live-endpoint row", e.ID)
+		if !e.Routable {
+			t.Errorf("%s: Routable = false on a live-endpoint row", e.ID)
 		}
 	}
 

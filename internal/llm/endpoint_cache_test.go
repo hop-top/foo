@@ -55,8 +55,8 @@ func newTestCache(t *testing.T, src CatalogSource, baseURL string, ttl time.Dura
 
 func sampleEndpointRows() []ModelEntry {
 	return []ModelEntry{
-		{Source: SourceEndpoint, Provider: "127.0.0.1:11434", ID: "llama3:8b", Reachable: true},
-		{Source: SourceEndpoint, Provider: "127.0.0.1:11434", ID: "qwen3:4b", Reachable: true},
+		{Source: SourceEndpoint, Provider: "127.0.0.1:11434", ID: "llama3:8b", Routable: true},
+		{Source: SourceEndpoint, Provider: "127.0.0.1:11434", ID: "qwen3:4b", Routable: true},
 	}
 }
 
@@ -160,7 +160,7 @@ func TestEndpointCache_RefreshBypassesTheRead(t *testing.T) {
 
 	// A different inventory behind the same URL, as after `ollama pull`.
 	pulled := append(sampleEndpointRows(),
-		ModelEntry{Source: SourceEndpoint, Provider: "127.0.0.1:11434", ID: "mistral:7b", Reachable: true})
+		ModelEntry{Source: SourceEndpoint, Provider: "127.0.0.1:11434", ID: "mistral:7b", Routable: true})
 	fresh := &countingSource{entries: pulled}
 
 	got, err := newTestCache(t, fresh, url, time.Minute, true).ListModels(context.Background())
@@ -215,7 +215,7 @@ func TestEndpointCache_KeyedByBaseURL(t *testing.T) {
 	withCacheDir(t)
 	a := &countingSource{entries: sampleEndpointRows()}
 	b := &countingSource{entries: []ModelEntry{
-		{Source: SourceEndpoint, Provider: "127.0.0.1:11500", ID: "gpt-oss:20b", Reachable: true},
+		{Source: SourceEndpoint, Provider: "127.0.0.1:11500", ID: "gpt-oss:20b", Routable: true},
 	}}
 
 	if _, err := newTestCache(t, a, "http://127.0.0.1:11434/v1", time.Minute, false).

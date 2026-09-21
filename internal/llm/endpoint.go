@@ -156,15 +156,17 @@ func (c endpointCatalog) ListModels(ctx context.Context) ([]ModelEntry, error) {
 //
 // Fields the envelope cannot supply — context window, cost, tool-call
 // and reasoning support — are deliberately left zero rather than
-// guessed. Reachable is true by construction: the id came from a server
-// that just answered, which is a stronger reachability proof than the
-// catalog's "foo links an adapter for this provider" test.
+// guessed. Routable is true by construction: the id came from a server
+// that just answered, which is a stronger proof than the catalog's "foo
+// links an adapter for this provider" test — and it is why the
+// credential filter never runs over endpoint rows. There is no catalog
+// provider behind them to hold a key requirement.
 func entryFromEndpoint(m endpointModel, baseURL string) ModelEntry {
 	return ModelEntry{
-		Source:    SourceEndpoint,
-		Provider:  endpointProvider(m, baseURL),
-		ID:        m.ID,
-		Reachable: true,
+		Source:   SourceEndpoint,
+		Provider: endpointProvider(m, baseURL),
+		ID:       m.ID,
+		Routable: true,
 	}
 }
 

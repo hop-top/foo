@@ -15,6 +15,7 @@ provider auth.
 ## Use this when
 
 - You do not know any model ids and need to find one.
+- You want to see the whole catalog, not just what your keys reach.
 - You want to pin one specific model id for an invocation,
   bypassing the pool picker.
 - You want to change the foo `model` config key that the picker
@@ -41,9 +42,12 @@ After this guide you will be able to:
 ## Quick path
 
 ```sh
-# Find an id, then make it the default
-foo model list --provider=anthropic
-foo model default claude-sonnet-5
+# Find an id you can actually call, then make it the default
+foo model list
+foo model default gpt-5.6
+
+# Survey the whole catalog, including models you have no key for
+foo model list --all
 
 # Show + set default
 foo model current
@@ -61,38 +65,75 @@ foo provider show anthropic
 ### 1. Find a model id
 
 `foo model default` wants an id. `foo model list` is where ids come
-from — it reads the aim catalog (models.dev), thousands of models
-across hundreds of providers:
+from. It reads the aim catalog (models.dev) — thousands of models
+across hundreds of providers — and shows you only the ones you can
+actually call:
 
 ```sh
-foo model list
+foo model list --limit 7
 ```
 
 ```
-PROVIDER    ID                             CONTEXT  TOOLS  REASONING  RELEASED
-anthropic   claude-fable-5-1               1000000  true   true       2026-09-01
-deepseek    deepseek-flash                 1000000  true   true       2026-09-10
-google      gemini-3.8-flash               1048576  true   true       2026-09-02
-groq        qwen/qwen3.8-27b               131042   true   true       2026-08-14
-lmstudio    openai/gpt-oss-20b             131072   true   true       2025-08-05
-mistral     zai-glm-5-3                    1000000  true   true       2026-08-14
-openai      gpt-6-astra                    1050000  true   true       2026-09-04
+PROVIDER  ID                CONTEXT  TOOLS  REASONING  RELEASED
+openai    gpt-6-astra       1050000  true   true       2026-09-04
+openai    gpt-5.6           1050000  true   true       2026-07-09
+openai    gpt-5.6-luna      1050000  true   true       2026-07-09
+openai    gpt-5.6-sol       1050000  true   true       2026-07-09
+openai    gpt-5.6-terra     1050000  true   true       2026-07-09
+openai    gpt-realtime-2.1  128000   true   true       2026-07-06
+openai    gpt-5.5           1050000  true   true       2026-04-23
 ```
 
-The default view is 20 rows, rotating across providers so the first
-screenful is each provider's current flagship rather than one
-aggregator's back catalogue. A stderr line reports how many were
-cut:
+Two stderr footers explain the shape of that list:
 
 ```
-7843 more model(s) not shown; raise --limit or pass --limit=0 for all
+41 more model(s) not shown; raise --limit or pass --limit=0 for all
+7816 model(s) hidden: no adapter or no API key configured for their provider. Configured: openai. Pass --all to list them.
 ```
 
-Pass an id from the `ID` column straight to `foo model default`.
+The first is truncation — the default view is 20 rows. The second is
+reachability: this machine has only `OPENAI_API_KEY` exported, so
+every model from every other provider is hidden. A model is shown
+when foo has a compiled-in adapter for its provider *and* the
+provider either needs no credential (a local runtime like ollama) or
+has its API key in the secret store. The key requirement comes from
+the catalog itself, so it is right for providers foo has no
+special-case code for.
 
-> Only the provider whose key you have exported will actually
-> answer. The catalog lists what exists, not what you can reach —
-> check with `foo provider show <scheme>` (step 8).
+Pass an id from the `ID` column straight to `foo model default`. It
+will work, which is the point of the filtering — you are picking
+from models that answer, not from models that exist.
+
+If nothing is reachable, the table is empty and the footer says why:
+
+```
+7864 model(s) hidden: no provider API key is configured, so foo cannot call any of them. Set one (e.g. export OPENAI_API_KEY=…, or `foo provider show <scheme>` to see what a provider expects), or pass --all to list the catalog anyway.
+```
+
+### 1b. See the whole catalog
+
+`--all` turns the reachability filter off. Use it to survey what
+exists before deciding which key to get:
+
+```sh
+foo model list --all --limit 7
+```
+
+```
+PROVIDER   ID                  CONTEXT  TOOLS  REASONING  RELEASED
+anthropic  claude-fable-5-1    1000000  true   true       2026-09-01
+deepseek   deepseek-flash      1000000  true   true       2026-09-10
+google     gemini-3.8-flash    1048576  true   true       2026-09-02
+groq       qwen/qwen3.8-27b    131042   true   true       2026-08-14
+lmstudio   openai/gpt-oss-20b  131072   true   true       2025-08-05
+mistral    zai-glm-5-3         1000000  true   true       2026-08-14
+openai     gpt-6-astra         1050000  true   true       2026-09-04
+```
+
+The hidden-model footer is gone, because nothing is hidden. These
+ids are real, but most of them will fail on first use until you
+export the matching key — `foo provider show <scheme>` (step 8) says
+which one.
 
 ### 2. Narrow the list
 
@@ -101,6 +142,20 @@ provider first — it is the filter that maps onto the key you hold:
 
 ```sh
 foo model list --provider=anthropic --limit=5
+```
+
+With no `ANTHROPIC_API_KEY` exported that comes back empty, because
+narrowing does not override reachability:
+
+```
+14 model(s) hidden: no adapter or no API key configured for their provider. Configured: openai. Pass --all to list them.
+```
+
+`--all` combines with the filters rather than replacing them, which
+is how you browse a provider's catalogue before you have its key:
+
+```sh
+foo model list --provider=anthropic --all --limit=5
 ```
 
 ```
@@ -140,7 +195,7 @@ set.
 flags:
 
 ```sh
-foo model list --query 'provider:anthropic reasoning:true'
+foo model list --query 'provider:anthropic reasoning:true' --all
 ```
 
 Its keys are underscored and use `in`/`out` for modalities
@@ -151,8 +206,8 @@ as an explicit flag, the flag wins — modality lists merge instead.
 
 ### 3. Pipe it somewhere
 
-Hints and the cache footer go to stderr, so stdout stays a clean
-stream:
+Truncation hints, the cache footer and the hidden-model footer all go
+to stderr, so stdout stays a clean stream:
 
 ```sh
 foo model list --limit=0 --format json > models.json
@@ -206,9 +261,50 @@ Expected: schemes registered in the current build (e.g.
 foo provider show anthropic
 ```
 
-Expected: a row with `SCHEME`, `AUTH`, and `STATUS`. `STATUS` is
-one of `configured`, `missing`, `available` (no auth required), or
-`unknown`.
+```
+SCHEME     AUTH     STATUS
+anthropic  api_key  missing
+```
+
+`STATUS` is one of:
+
+| Status | Meaning |
+|--------|---------|
+| `configured` | A required credential is present. |
+| `missing` | A required credential is absent. |
+| `available` | The provider needs no credential. |
+
+```sh
+foo provider show openai
+foo provider show ollama
+```
+
+```
+SCHEME  AUTH     STATUS
+openai  api_key  configured
+
+SCHEME  AUTH   STATUS
+ollama  local  available
+```
+
+This answers the same question `foo model list` filters on, from the
+same source, so the two agree: a provider reported `missing` here is
+a provider whose models the default listing hides. Add `--format
+json` for the `secret_key` field, which names the secret-store key
+to set:
+
+```sh
+foo provider show groq --format json
+```
+
+```json
+{
+  "scheme": "groq",
+  "auth_type": "api_key",
+  "secret_key": "groq_api_key",
+  "status": "missing"
+}
+```
 
 ## Common issues
 
@@ -216,6 +312,8 @@ one of `configured`, `missing`, `available` (no auth required), or
 |---------|--------------|-----|
 | `Error creating LLM client` | No matching provider key in env | Export `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` |
 | `provider show <X>` returns `status: missing` | Key var is empty | Re-export the key, then re-run `provider show` |
+| `model list` prints only a footer, no rows | No provider key configured, so nothing is reachable | Export a key named by `provider show <scheme>`, or pass `--all` to list the catalog anyway |
+| A model you know exists is absent from `model list` | Its provider has no adapter, or no key configured | Re-run with `--all`; the footer names the count it was hiding |
 | `model default ...` no-op | Filesystem permission on `$XDG_CONFIG_HOME` | Check directory perms |
 
 ## How it works

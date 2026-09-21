@@ -74,8 +74,8 @@ func TestEndpointCatalog_RowsAreMarkedAsEndpointSourced(t *testing.T) {
 		}
 		// An id that came from a server that just answered is
 		// reachable by construction.
-		if !e.Reachable {
-			t.Errorf("%s: Reachable = false, want true for a live endpoint row", e.ID)
+		if !e.Routable {
+			t.Errorf("%s: Routable = false, want true for a live endpoint row", e.ID)
 		}
 	}
 }
