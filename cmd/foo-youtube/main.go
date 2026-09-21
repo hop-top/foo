@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -40,9 +41,19 @@ var version = "dev"
 // tolerates the nil cache and just execs. Initialized once in run().
 var ytCache kv.TTLStore
 
-// ytCacheTTL is the freshness window for cached yt-dlp output. Overridable
-// via FOO_YOUTUBE_CACHE_TTL (a Go duration); default 24h.
-var ytCacheTTL = 24 * time.Hour
+// ytCacheTTL is the freshness window for cached yt-dlp output. Resolved
+// in openYTCache from FOO_YOUTUBE_CACHE_TTL, then the host-level
+// FOO_CACHE_TTL this extension inherits, then youtubeCacheTTLDefault.
+var ytCacheTTL = youtubeCacheTTLDefault
+
+// youtubeCacheDB is this extension's sqlite filename under a cache
+// directory, so extensions inheriting foo's FOO_CACHE keep distinct
+// stores.
+const youtubeCacheDB = "ytdlp-cache.db"
+
+// youtubeCacheTTLDefault is the freshness window when neither
+// FOO_YOUTUBE_CACHE_TTL nor FOO_CACHE_TTL is set.
+const youtubeCacheTTLDefault = 24 * time.Hour
 
 // eventBus carries capture events to external subscribers (aps, ctxt,
 // tlc) via the network adapter. A bare bus.New() publishes in-process to
@@ -434,23 +445,29 @@ func checkYTDLP() error {
 }
 
 // openYTCache initializes the package-level yt-dlp output cache. The db
-// path defaults to the XDG cache dir (FOO_YOUTUBE_CACHE overrides it),
-// and FOO_YOUTUBE_CACHE_TTL overrides the freshness window. Best-effort:
-// any failure logs at warn and leaves ytCache nil so runYTDLP execs
-// directly — caching is an optimization, never a hard dependency.
+// path and TTL resolve from env (see resolveCachePath / resolveCacheTTL):
+// this extension's FOO_YOUTUBE_CACHE(_TTL), else the host-level
+// FOO_CACHE(_TTL) it inherits, else the XDG cache dir at 24h.
+//
+// A resolved TTL of zero means caching OFF: the store is never opened,
+// which is the same path as --no-cache. Zero must not reach the
+// PutWithTTL/Put branch in runYTDLP as "no expiry" — an off switch that
+// caches forever is the opposite of off.
+//
+// Best-effort otherwise: any failure logs at warn and leaves ytCache nil
+// so runYTDLP execs directly — caching is an optimization, never a hard
+// dependency.
 func openYTCache() {
-	if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv("FOO_YOUTUBE_CACHE_TTL"))); err == nil {
-		ytCacheTTL = d
+	ttl := resolveCacheTTL("FOO_YOUTUBE_CACHE_TTL", youtubeCacheTTLDefault)
+	if ttl <= 0 {
+		return
 	}
+	ytCacheTTL = ttl
 
-	path := strings.TrimSpace(os.Getenv("FOO_YOUTUBE_CACHE"))
-	if path == "" {
-		p, err := xdg.CacheFile("foo-youtube", "ytdlp-cache.db")
-		if err != nil {
-			slog.Warn("youtube.cache.path.failed", slog.Any("err", err))
-			return
-		}
-		path = p
+	path, err := resolveCachePath("foo-youtube", youtubeCacheDB, "FOO_YOUTUBE_CACHE")
+	if err != nil {
+		slog.Warn("youtube.cache.path.failed", slog.Any("err", err))
+		return
 	}
 
 	store, err := kv.Open(kv.Config{Backend: "sqlite", Path: path})
@@ -458,12 +475,59 @@ func openYTCache() {
 		slog.Warn("youtube.cache.open.failed", slog.String("path", path), slog.Any("err", err))
 		return
 	}
-	ttl, ok := store.(kv.TTLStore)
+	ttlStore, ok := store.(kv.TTLStore)
 	if !ok {
 		_ = store.Close()
 		return
 	}
-	ytCache = ttl
+	ytCache = ttlStore
+}
+
+// resolveCachePath picks the cache db path with this precedence:
+// FOO_<EXT>_CACHE (here FOO_YOUTUBE_CACHE) → FOO_CACHE → the XDG cache dir
+// for tool.
+//
+// The namespace is deliberate: the unprefixed FOO_CACHE is foo's own
+// host-level cache setting, which every extension inherits as its
+// default; the FOO_<EXT>_ prefixed form belongs to one extension and
+// overrides it. Any future extension follows the same two names.
+// (The host binary has no cache of its own yet, so today FOO_CACHE only
+// ever takes effect through an extension reading it here.)
+//
+// The extension env names the db file outright; FOO_CACHE names a
+// directory, under which dbName is joined so sibling extensions keep
+// distinct stores. kv.Open creates a missing parent directory, so no
+// MkdirAll is needed here.
+//
+// Signature is kept identical to foo-scrape's so the two sidecars resolve
+// by the same rules — these are separate main packages, so the
+// duplication is structural, but the shape must not drift.
+func resolveCachePath(tool, dbName, specificEnv string) (string, error) {
+	if p := strings.TrimSpace(os.Getenv(specificEnv)); p != "" {
+		return p, nil
+	}
+	if dir := strings.TrimSpace(os.Getenv("FOO_CACHE")); dir != "" {
+		return filepath.Join(dir, dbName), nil
+	}
+	return xdg.CacheFile(tool, dbName)
+}
+
+// resolveCacheTTL reads FOO_<EXT>_CACHE_TTL (here FOO_YOUTUBE_CACHE_TTL),
+// falling back to foo's host-level FOO_CACHE_TTL, then to def — the
+// same host-inherits-to-extension namespace as resolveCachePath.
+// Values are Go duration strings ("24h", "90m"); an unparseable
+// value falls through to the next source.
+//
+// A parsed zero ("0", "0s") is honored and means caching OFF — callers
+// must treat a non-positive result as "skip the cache", never as an
+// entry that never expires.
+func resolveCacheTTL(specificEnv string, def time.Duration) time.Duration {
+	for _, env := range []string{specificEnv, "FOO_CACHE_TTL"} {
+		if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv(env))); err == nil {
+			return d
+		}
+	}
+	return def
 }
 
 // runYTDLP execs `yt-dlp <args>` and returns its stdout. When the cache

@@ -38,6 +38,10 @@ type xrrTransport struct {
 	// fetch went out through some other client and nothing here was
 	// actually replayed.
 	seam atomic.Int64
+
+	// noCache records the last value scrape() threaded to the seam, so a
+	// test can assert the flag reaches the client builder.
+	noCache atomic.Bool
 }
 
 func (t *xrrTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -97,8 +101,9 @@ func withCassette(t *testing.T) *xrrTransport {
 		adapt: xhttp.NewAdapter(),
 	}
 	prev := httpClientFor
-	httpClientFor = func() (*http.Client, *observedStore) {
+	httpClientFor = func(noCache bool) (*http.Client, *observedStore) {
 		transport.seam.Add(1)
+		transport.noCache.Store(noCache)
 		return &http.Client{Transport: transport}, nil
 	}
 	t.Cleanup(func() { httpClientFor = prev })
@@ -119,7 +124,7 @@ func TestScrape_RealPageFromCassette(t *testing.T) {
 	rec := &recorder{}
 	ctx := progress.WithReporter(context.Background(), rec)
 
-	if err := scrape(scrapeCmd(ctx, &out), "https://example.com", "readability"); err != nil {
+	if err := scrape(scrapeCmd(ctx, &out), "https://example.com", "readability", false); err != nil {
 		t.Fatalf("scrape: %v", err)
 	}
 

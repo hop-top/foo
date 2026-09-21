@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/net/html"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/console/output"
+	"hop.top/kit/go/core/xdg"
 	kitbus "hop.top/kit/go/runtime/bus"
 	"hop.top/kit/go/storage/httpcache"
 	"hop.top/kit/go/storage/kv"
@@ -106,7 +108,10 @@ func emitExtInfo() {
 var scrapeModes = []string{"readability", "raw"}
 
 func newRoot() *kitcli.Root {
-	var mode string
+	var (
+		mode    string
+		noCache bool
+	)
 
 	root := kitcli.New(kitcli.Config{
 		Name:    "foo-scrape",
@@ -148,12 +153,14 @@ JSON.`
 			eventBus = kitbus.New()
 			wireBusNetwork(cmd.Context())
 		}
-		return scrape(cmd, args[0], mode)
+		return scrape(cmd, args[0], mode, noCache)
 	}
 
 	flags := root.Cmd.Flags()
 	flags.StringVar(&mode, "mode", "readability",
 		"Conversion mode: readability (main content) or raw (full HTML)")
+	flags.BoolVar(&noCache, "no-cache", false,
+		"Bypass the page cache for this run")
 
 	// Side-effect / idempotency contract: a fetch-and-print is a pure
 	// read, trivially idempotent against the same URL.
@@ -175,25 +182,48 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
-// httpClient builds the client used to fetch the page. When
-// FOO_SCRAPE_CACHE names a writable path, fetches go through a kit
-// httpcache backed by a sqlite kv store (TTL via FOO_SCRAPE_CACHE_TTL,
-// default 24h) so repeated scrapes of the same URL skip the network.
-// With the env unset, or if the store can't be opened, it returns the
-// default client — caching is a best-effort optimization, never a
-// hard dependency of a scrape. Mirrors the opt-in FOO_SCRAPE_BUS_PEERS
-// idiom: configured by env, silent no-op otherwise.
-// The returned observedStore is nil when caching is off; callers must
-// nil-check it before asking whether the fetch was a cache hit.
+// scrapeCacheDB is this extension's sqlite filename under a cache
+// directory, so extensions inheriting foo's FOO_CACHE keep distinct
+// stores.
+const scrapeCacheDB = "foo-scrape-cache.db"
+
+// scrapeCacheTTLDefault is the freshness window when neither
+// FOO_SCRAPE_CACHE_TTL nor FOO_CACHE_TTL is set.
+const scrapeCacheTTLDefault = 10 * time.Hour
+
 // httpClientFor is the injection seam for the fetch path, mirroring
 // foo-youtube's ytRunner. Tests swap it to replay an xrr cassette so the
 // suite exercises real recorded markup instead of a hand-rolled fixture
 // served from httptest.
 var httpClientFor = httpClient
 
-func httpClient() (*http.Client, *observedStore) {
-	path := strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE"))
-	if path == "" {
+// httpClient builds the client used to fetch the page. Caching is ON by
+// default: fetches go through a kit httpcache backed by a sqlite kv
+// store so repeated scrapes of the same URL skip the network. The db
+// path and TTL resolve from env (see resolveCachePath /
+// resolveCacheTTL): this extension's FOO_SCRAPE_CACHE(_TTL), else the
+// host-level FOO_CACHE(_TTL) it inherits, else the XDG cache dir at 10h.
+//
+// Caching is skipped entirely — same path as the default client — when
+// noCache (--no-cache) is set, or when the resolved TTL is zero. Zero
+// must not reach httpcache.WithTTL: a non-positive TTL there means "no
+// expiry", the opposite of off, and would cache every page forever.
+//
+// Caching is best-effort otherwise: a path-resolve or store-open failure
+// falls back to the default client and never fails a scrape.
+// The returned observedStore is nil when caching is off; callers must
+// nil-check it before asking whether the fetch was a cache hit.
+func httpClient(noCache bool) (*http.Client, *observedStore) {
+	if noCache {
+		return http.DefaultClient, nil
+	}
+	ttl := resolveCacheTTL("FOO_SCRAPE_CACHE_TTL", scrapeCacheTTLDefault)
+	if ttl <= 0 {
+		return http.DefaultClient, nil
+	}
+	path, err := resolveCachePath("foo-scrape", scrapeCacheDB, "FOO_SCRAPE_CACHE")
+	if err != nil {
+		slog.Warn("scrape.cache.path.failed", slog.Any("err", err))
 		return http.DefaultClient, nil
 	}
 	store, err := kv.Open(kv.Config{Backend: "sqlite", Path: path})
@@ -201,30 +231,77 @@ func httpClient() (*http.Client, *observedStore) {
 		slog.Warn("scrape.cache.open.failed", slog.String("path", path), slog.Any("err", err))
 		return http.DefaultClient, nil
 	}
-	ttl, ok := store.(kv.TTLStore)
+	ttlStore, ok := store.(kv.TTLStore)
 	if !ok {
 		_ = store.Close()
 		return http.DefaultClient, nil
 	}
-	opts := []httpcache.Option{httpcache.WithPrefix("foo-scrape:")}
-	if d, derr := time.ParseDuration(strings.TrimSpace(os.Getenv("FOO_SCRAPE_CACHE_TTL"))); derr == nil {
-		opts = append(opts, httpcache.WithTTL(d))
-	}
 	// The store is wrapped before the transport gets it so the
 	// transport's own cache lookup is observable — see observedStore.
-	obs := newObservedStore(ttl)
-	return &http.Client{Transport: httpcache.New(obs, http.DefaultTransport, opts...)}, obs
+	obs := newObservedStore(ttlStore)
+	transport := httpcache.New(obs, http.DefaultTransport,
+		httpcache.WithPrefix("foo-scrape:"),
+		httpcache.WithTTL(ttl),
+	)
+	return &http.Client{Transport: transport}, obs
+}
+
+// resolveCachePath picks the cache db path with this precedence:
+// FOO_<EXT>_CACHE (here FOO_SCRAPE_CACHE) → FOO_CACHE → the XDG cache dir
+// for tool.
+//
+// The namespace is deliberate: the unprefixed FOO_CACHE is foo's own
+// host-level cache setting, which every extension inherits as its
+// default; the FOO_<EXT>_ prefixed form belongs to one extension and
+// overrides it. Any future extension follows the same two names.
+// (The host binary has no cache of its own yet, so today FOO_CACHE only
+// ever takes effect through an extension reading it here.)
+//
+// The extension env names the db file outright; FOO_CACHE names a
+// directory, under which dbName is joined so sibling extensions keep
+// distinct stores. kv.Open creates a missing parent directory, so no
+// MkdirAll is needed here.
+//
+// Signature is kept identical to foo-youtube's so the two sidecars resolve
+// by the same rules — these are separate main packages, so the
+// duplication is structural, but the shape must not drift.
+func resolveCachePath(tool, dbName, specificEnv string) (string, error) {
+	if p := strings.TrimSpace(os.Getenv(specificEnv)); p != "" {
+		return p, nil
+	}
+	if dir := strings.TrimSpace(os.Getenv("FOO_CACHE")); dir != "" {
+		return filepath.Join(dir, dbName), nil
+	}
+	return xdg.CacheFile(tool, dbName)
+}
+
+// resolveCacheTTL reads FOO_<EXT>_CACHE_TTL (here FOO_SCRAPE_CACHE_TTL),
+// falling back to foo's host-level FOO_CACHE_TTL, then to def — the
+// same host-inherits-to-extension namespace as resolveCachePath.
+// Values are Go duration strings ("10h", "90m"); an unparseable
+// value falls through to the next source.
+//
+// A parsed zero ("0", "0s") is honored and means caching OFF — callers
+// must treat a non-positive result as "skip the cache", never pass it to
+// httpcache.WithTTL, which reads non-positive as "never expire".
+func resolveCacheTTL(specificEnv string, def time.Duration) time.Duration {
+	for _, env := range []string{specificEnv, "FOO_CACHE_TTL"} {
+		if d, err := time.ParseDuration(strings.TrimSpace(os.Getenv(env))); err == nil {
+			return d
+		}
+	}
+	return def
 }
 
 // scrape fetches url and writes the converted markdown to the command's
 // stdout. mode is "readability" or "raw".
-func scrape(cmd *cobra.Command, url, mode string) error {
+func scrape(cmd *cobra.Command, url, mode string, noCache bool) error {
 	ctx := cmd.Context()
 	started = time.Now()
 
 	emitFetchStart(ctx, url)
 
-	client, obs := httpClientFor()
+	client, obs := httpClientFor(noCache)
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("fetching URL: %w", err)

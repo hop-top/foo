@@ -76,7 +76,7 @@ func TestScrape_PhasesAndTelemetry(t *testing.T) {
 	ctx := progress.WithReporter(context.Background(), rec)
 	var out strings.Builder
 
-	if err := scrape(scrapeCmd(ctx, &out), srv.URL, "readability"); err != nil {
+	if err := scrape(scrapeCmd(ctx, &out), srv.URL, "readability", false); err != nil {
 		t.Fatalf("scrape: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func TestScrape_CacheHitVsMiss(t *testing.T) {
 		rec := &recorder{}
 		ctx := progress.WithReporter(context.Background(), rec)
 		var out strings.Builder
-		if err := scrape(scrapeCmd(ctx, &out), srv.URL, "readability"); err != nil {
+		if err := scrape(scrapeCmd(ctx, &out), srv.URL, "readability", false); err != nil {
 			t.Fatalf("scrape %d: %v", i, err)
 		}
 		e, ok := rec.find(phaseFetch)
