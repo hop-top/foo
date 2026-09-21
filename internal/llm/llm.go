@@ -13,6 +13,7 @@ import (
 	"hop.top/aim"
 	kitllm "hop.top/kit/go/ai/llm"
 	_ "hop.top/kit/go/ai/llm/anthropic"
+	llmerrors "hop.top/kit/go/ai/llm/errors"
 	_ "hop.top/kit/go/ai/llm/google"
 	_ "hop.top/kit/go/ai/llm/ollama"
 	_ "hop.top/kit/go/ai/llm/openai"
@@ -30,6 +31,14 @@ type Client struct {
 	// default applies, matching kit's Request.MaxTokens semantics.
 	// Some OpenAI-compatible servers reject requests that omit it.
 	maxTokens int
+
+	// guessedModel holds the bare model id whose provider foo *guessed*
+	// — the id matched no known prefix, so schemeForModel fell to its
+	// openai-compatible default arm. Empty on every other path
+	// (recognised prefix, explicit URI, pool pick), which is what makes
+	// the guess distinguishable from a deliberate openai request when a
+	// request later fails. Consumed only by enrichUnknownModel.
+	guessedModel string
 }
 
 // ClientOpts threads invocation-time choices through NewClient. Model is
@@ -175,11 +184,18 @@ func modelIsURI(model string) bool {
 // base_url out of the URI's query params, so the caller keeps full
 // control of both.
 func newClientFromModel(model string, maxTokens int) (*Client, error) {
-	uri, err := resolvedURIForModel(model)
+	uri, guessed, err := resolveURIForModel(model)
 	if err != nil {
 		return nil, err
 	}
-	return buildClientFromURI(uri, maxTokens)
+	client, err := buildClientFromURI(uri, maxTokens)
+	if err != nil {
+		return nil, err
+	}
+	if guessed {
+		client.guessedModel = model
+	}
+	return client, nil
 }
 
 // buildClient is the common URI-build + fallback-wiring step shared by
@@ -253,17 +269,21 @@ func applyConfiguredBaseURL(uri string) string {
 	return uri + querySep(uri) + "base_url=" + cfg.Provider.BaseURL
 }
 
-// resolvedURIForModel returns the provider URI a given --model value
+// resolveURIForModel returns the provider URI a given --model value
 // resolves to, without constructing a client. It mirrors
 // newClientFromModel's branching exactly so tests can assert on the URI
 // that reaches kit — the corruption this guards against produces a
 // malformed URI that Resolve accepts without error, so the URI itself is
 // the only observable short of the wire.
-func resolvedURIForModel(model string) (string, error) {
+//
+// guessed forwards schemeForModel's report that the scheme was assumed
+// rather than matched. A URI-shaped value is never a guess: the caller
+// spelled the scheme out.
+func resolveURIForModel(model string) (uri string, guessed bool, err error) {
 	if modelIsURI(model) {
-		return model, nil
+		return model, false, nil
 	}
-	scheme, envVar := schemeForModel(model)
+	scheme, envVar, guessed := schemeForModel(model)
 	if scheme == "routellm" {
 		// router- prefix: strip the marker so the URI ends up as
 		// routellm://<router>:<threshold>. The pool picker is
@@ -277,11 +297,19 @@ func resolvedURIForModel(model string) (string, error) {
 		// docs/how-to/route-across-models.md#pool-routing-vs-router-x
 		model = strings.TrimPrefix(model, "router-")
 	}
-	uri, err := buildURI(scheme, model, envVar)
+	built, err := buildURI(scheme, model, envVar)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return applyConfiguredBaseURL(uri), nil
+	return applyConfiguredBaseURL(built), guessed, nil
+}
+
+// resolvedURIForModel is the URI-only view of resolveURIForModel, kept
+// for call sites (tests, provenance) that assert on the URI and have no
+// use for the guess flag.
+func resolvedURIForModel(model string) (string, error) {
+	uri, _, err := resolveURIForModel(model)
+	return uri, err
 }
 
 // buildClientFromURI resolves a fully-formed provider URI and wires the
@@ -341,21 +369,26 @@ func lookupAPIKey(envVar string) string {
 // that holds the provider's key. Empty envVar = local provider (no
 // precheck). The router- prefix returns "routellm" so the caller knows
 // to strip the marker before building the URI.
-func schemeForModel(model string) (scheme, envVar string) {
+//
+// guessed reports that no prefix matched and the openai-compatible
+// default arm answered. The scheme is the same either way; the flag
+// only records *why*, so a later "model not available" can say foo
+// assumed the provider instead of implying the user picked it.
+func schemeForModel(model string) (scheme, envVar string, guessed bool) {
 	switch {
 	case strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3"):
-		return "openai", "OPENAI_API_KEY"
+		return "openai", "OPENAI_API_KEY", false
 	case strings.HasPrefix(model, "claude-"):
-		return "anthropic", "ANTHROPIC_API_KEY"
+		return "anthropic", "ANTHROPIC_API_KEY", false
 	case strings.HasPrefix(model, "gemini-"):
-		return "google", "GOOGLE_API_KEY"
+		return "google", "GOOGLE_API_KEY", false
 	case strings.HasPrefix(model, "llama") || strings.HasPrefix(model, "mistral") || strings.HasPrefix(model, "deepseek-r1"):
-		return "ollama", ""
+		return "ollama", "", false
 	case strings.HasPrefix(model, "router-"):
-		return "routellm", ""
+		return "routellm", "", false
 	default:
 		// Unknown prefix — assume openai-compatible (openrouter, groq, etc.).
-		return "openai", "OPENAI_API_KEY"
+		return "openai", "OPENAI_API_KEY", true
 	}
 }
 
@@ -397,6 +430,39 @@ func PickFromPool(ctx context.Context, reg *aim.Registry, profile kitllm.Request
 // working across the boundary.
 var ErrNoPoolMatch = errors.New("foo: no pool entry matches request")
 
+// enrichUnknownModel appends an actionable hint when a request fails
+// with kit's "model not available" *and* the provider foo asked was a
+// guess — i.e. the model id matched no known prefix and schemeForModel
+// fell to its openai-compatible default arm.
+//
+// Without the hint the failure names openai, which is the one thing the
+// user never said: a RouteLLM tier ("private", "coding") reads as
+// "OpenAI is broken" rather than "the request never reached your
+// router". The hint states the assumption foo made and the two ways to
+// correct it.
+//
+// Deliberately narrow. An explicit `-m gpt-nonexistent`, a full
+// `openai://...` URI and a pool pick all leave guessedModel empty, so
+// they keep today's message; a wrong guess about a real openai id is
+// the user's own guess, not foo's. Any other error class is returned
+// untouched, and the original error is wrapped with %w so the error
+// type and its exit-code mapping are preserved.
+func (c *Client) enrichUnknownModel(err error) error {
+	if err == nil || c.guessedModel == "" {
+		return err
+	}
+	var modelErr *llmerrors.ErrModel
+	if !errors.As(err, &modelErr) {
+		return err
+	}
+	return fmt.Errorf(
+		"%w; %q matched no known model prefix, so foo assumed an OpenAI-compatible provider and never asked anything else. "+
+			"If %[2]q is a RouteLLM tier, send it to your router: -m '%[2]s?base_url=$ROUTELLM_BASE_URL/v1'. "+
+			"If it lives on another endpoint, point foo at it with ?base_url=, LLM_BASE_URL, or providers.<scheme>.base_url (docs/how-to/use-a-local-endpoint.md). "+
+			"`foo model list` shows the ids foo can reach",
+		err, c.guessedModel)
+}
+
 func (c *Client) Prompt(ctx context.Context, prompt string) (string, error) {
 	resp, err := c.client.Complete(ctx, kitllm.Request{
 		Messages: []kitllm.Message{
@@ -405,7 +471,7 @@ func (c *Client) Prompt(ctx context.Context, prompt string) (string, error) {
 		MaxTokens: c.maxTokens,
 	})
 	if err != nil {
-		return "", err
+		return "", c.enrichUnknownModel(err)
 	}
 	return resp.Content, nil
 }
@@ -418,10 +484,11 @@ func (c *Client) CallWithTools(
 	messages []kitllm.Message,
 	tools []kitllm.ToolDef,
 ) (kitllm.ToolResponse, error) {
-	return c.client.CallWithTools(ctx, kitllm.Request{
+	resp, err := c.client.CallWithTools(ctx, kitllm.Request{
 		Messages:  messages,
 		MaxTokens: c.maxTokens,
 	}, tools)
+	return resp, c.enrichUnknownModel(err)
 }
 
 // PromptStream streams LLM response tokens to w. Falls back to
@@ -436,7 +503,8 @@ func (c *Client) PromptStream(ctx context.Context, w io.Writer, prompt string) e
 
 	iter, err := c.client.Stream(ctx, req)
 	if err != nil {
-		// Fallback: provider may not support streaming.
+		// Fallback: provider may not support streaming. Prompt already
+		// enriches, so no second pass here.
 		resp, promptErr := c.Prompt(ctx, prompt)
 		if promptErr != nil {
 			return promptErr
@@ -452,7 +520,7 @@ func (c *Client) PromptStream(ctx context.Context, w io.Writer, prompt string) e
 			if err == io.EOF {
 				return nil
 			}
-			return err
+			return c.enrichUnknownModel(err)
 		}
 		if _, writeErr := fmt.Fprint(w, tok.Content); writeErr != nil {
 			return writeErr

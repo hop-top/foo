@@ -11,25 +11,34 @@ import (
 // common case.
 func TestSchemeForModel_BareIDs(t *testing.T) {
 	cases := []struct {
-		model      string
-		wantScheme string
-		wantEnv    string
+		model       string
+		wantScheme  string
+		wantEnv     string
+		wantGuessed bool
 	}{
-		{"gpt-4o", "openai", "OPENAI_API_KEY"},
-		{"o1", "openai", "OPENAI_API_KEY"},
-		{"claude-3-5-sonnet-latest", "anthropic", "ANTHROPIC_API_KEY"},
-		{"gemini-2.0-flash", "google", "GOOGLE_API_KEY"},
-		{"llama3.2", "ollama", ""},
-		{"router-mf:0.5", "routellm", ""},
-		// Unknown prefix keeps assuming an OpenAI-compatible endpoint.
-		{"qwen3.6-colibri", "openai", "OPENAI_API_KEY"},
+		{"gpt-4o", "openai", "OPENAI_API_KEY", false},
+		{"o1", "openai", "OPENAI_API_KEY", false},
+		{"claude-3-5-sonnet-latest", "anthropic", "ANTHROPIC_API_KEY", false},
+		{"gemini-2.0-flash", "google", "GOOGLE_API_KEY", false},
+		{"llama3.2", "ollama", "", false},
+		{"router-mf:0.5", "routellm", "", false},
+		// Unknown prefix keeps assuming an OpenAI-compatible endpoint,
+		// but reports the assumption so a later failure can name it.
+		{"qwen3.6-colibri", "openai", "OPENAI_API_KEY", true},
+		// A RouteLLM tier name is the motivating case: indistinguishable
+		// from any other unknown id without asking a server.
+		{"private", "openai", "OPENAI_API_KEY", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.model, func(t *testing.T) {
-			scheme, envVar := schemeForModel(tc.model)
+			scheme, envVar, guessed := schemeForModel(tc.model)
 			if scheme != tc.wantScheme || envVar != tc.wantEnv {
 				t.Fatalf("schemeForModel(%q) = (%q, %q), want (%q, %q)",
 					tc.model, scheme, envVar, tc.wantScheme, tc.wantEnv)
+			}
+			if guessed != tc.wantGuessed {
+				t.Fatalf("schemeForModel(%q) guessed = %v, want %v",
+					tc.model, guessed, tc.wantGuessed)
 			}
 		})
 	}
