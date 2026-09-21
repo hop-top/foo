@@ -180,9 +180,9 @@ func TestModelList_RankedOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	// Round-robin, newest first within provider:
-	// anthropic/claude-x, openai/gpt-x, anthropic/claude-y, openai/gpt-y.
-	want := []string{"claude-x", "gpt-x", "claude-y", "gpt-y"}
+	// Grouped by provider, providers and ids alphabetical:
+	// anthropic/claude-x, anthropic/claude-y, openai/gpt-x, openai/gpt-y.
+	want := []string{"claude-x", "claude-y", "gpt-x", "gpt-y"}
 	at := -1
 	for _, id := range want {
 		i := strings.Index(stdout, id)

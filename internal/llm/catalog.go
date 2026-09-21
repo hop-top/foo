@@ -203,21 +203,19 @@ func routableProviders() map[string]bool {
 	return out
 }
 
-// Rank orders entries for the default view and reports how many of them
-// are worth showing before truncation.
+// Rank orders entries for the default view: grouped by provider, with
+// providers alphabetical and each provider's models alphabetical by id.
 //
-// Two problems shape it. First, only ~7% of catalog providers are ones
-// foo links an adapter for, so unroutable rows are sunk below routable
-// ones rather than dropped — a user who asks for more still sees them,
-// and a live endpoint's rows are routable by construction. Second,
-// within the routable set one aggregator (openrouter) supplies the
-// majority of rows and a flat recency sort buries every first-party
-// model beneath it. So routable rows are
-// interleaved round-robin across providers: each provider contributes
-// its newest model, then its second-newest, and so on. The first
-// screenful is therefore the current flagship of each provider foo
-// speaks, which is what someone running `foo model list` to feed `foo
-// model default` is looking for.
+// Grouping keeps one provider's models contiguous, so the list reads as
+// a catalogue rather than an interleaved feed, and a reader scanning for
+// "what does anthropic offer" finds it in one block.
+//
+// Routable providers sort ahead of unroutable ones, each tier
+// alphabetical within itself. Only ~7% of catalog providers are ones
+// foo links an adapter for, so unroutable rows are sunk rather than
+// dropped — a user who asks for more still sees them, and a truncated
+// page is not spent on models foo cannot call. A live endpoint's rows
+// are routable by construction.
 //
 // Ranking deliberately does not consult credentials. Sinking and hiding
 // are separate jobs on separate axes: [FilterReachable] decides which
@@ -225,8 +223,10 @@ func routableProviders() map[string]bool {
 // and with --all in play the unroutable rows it sinks are exactly the
 // ones the reader asked to see.
 //
-// The order is total and deterministic: ties inside a provider break on
-// id, and provider rotation order is alphabetical.
+// The order is total and deterministic: provider, then id, then context
+// descending. Two rows sharing a provider and an id are the same model,
+// so the context tiebreak is a determinism guard rather than a case
+// that arises in catalog data.
 func Rank(entries []ModelEntry) []ModelEntry {
 	groups := make(map[string][]ModelEntry)
 	var routable, unroutable []string
@@ -242,33 +242,18 @@ func Rank(entries []ModelEntry) []ModelEntry {
 	}
 	sort.Strings(routable)
 	sort.Strings(unroutable)
-	for _, p := range append(append([]string{}, routable...), unroutable...) {
-		g := groups[p]
-		sort.SliceStable(g, func(i, j int) bool {
-			if g[i].Released != g[j].Released {
-				return g[i].Released > g[j].Released
-			}
-			return g[i].ID < g[j].ID
-		})
-		groups[p] = g
-	}
 
 	out := make([]ModelEntry, 0, len(entries))
-	// Routable providers rotate first and exhaust before any
-	// unroutable row appears, so a truncated view never spends a
-	// slot on a model foo has no adapter for.
 	for _, tier := range [][]string{routable, unroutable} {
-		for round := 0; ; round++ {
-			added := false
-			for _, p := range tier {
-				if round < len(groups[p]) {
-					out = append(out, groups[p][round])
-					added = true
+		for _, p := range tier {
+			g := groups[p]
+			sort.SliceStable(g, func(i, j int) bool {
+				if g[i].ID != g[j].ID {
+					return g[i].ID < g[j].ID
 				}
-			}
-			if !added {
-				break
-			}
+				return g[i].Context > g[j].Context
+			})
+			out = append(out, g...)
 		}
 	}
 	return out

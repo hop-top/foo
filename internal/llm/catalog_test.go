@@ -57,11 +57,10 @@ func requireOrder(t *testing.T, got []ModelEntry, want ...string) {
 }
 
 // TestRank_RotatesAcrossRoutableProviders is the central ranking
-// guarantee: a provider with many models must not monopolise the head
-// of the list. "big" holds three models newer than anything anthropic
-// serves, so a flat recency sort would emit all three before
-// anthropic's first. Round-robin must interleave them instead.
-func TestRank_RotatesAcrossRoutableProviders(t *testing.T) {
+// guarantee: one provider's models stay contiguous. "big" holds three
+// models and anthropic two; grouping must emit each provider's block
+// whole rather than interleaving them.
+func TestRank_GroupsByProvider(t *testing.T) {
 	got := Rank([]ModelEntry{
 		ent("big", "b-1", "2026-09-09", true),
 		ent("big", "b-2", "2026-09-08", true),
@@ -70,21 +69,21 @@ func TestRank_RotatesAcrossRoutableProviders(t *testing.T) {
 		ent("anthropic", "a-2", "2026-01-01", true),
 	})
 	requireOrder(t, got,
-		"anthropic/a-1", "big/b-1",
-		"anthropic/a-2", "big/b-2",
-		"big/b-3",
+		"anthropic/a-1", "anthropic/a-2",
+		"big/b-1", "big/b-2", "big/b-3",
 	)
 }
 
-// TestRank_NewestFirstWithinProvider pins the intra-provider order:
-// each provider contributes its newest model to round 0.
-func TestRank_NewestFirstWithinProvider(t *testing.T) {
+// TestRank_AlphabeticalWithinProvider pins the intra-provider order:
+// model id ascending, independent of release date. Release order was
+// the previous contract; ids are what a reader scans for.
+func TestRank_AlphabeticalWithinProvider(t *testing.T) {
 	got := Rank([]ModelEntry{
 		ent("p", "old", "2024-01-01", true),
 		ent("p", "newest", "2026-05-05", true),
 		ent("p", "mid", "2025-03-03", true),
 	})
-	requireOrder(t, got, "p/newest", "p/mid", "p/old")
+	requireOrder(t, got, "p/mid", "p/newest", "p/old")
 }
 
 // TestRank_RoutableBeforeUnroutable proves the truncated default view
@@ -107,8 +106,8 @@ func TestRank_RoutableBeforeUnroutable(t *testing.T) {
 	}
 }
 
-// TestRank_DeterministicTies fixes the two tiebreakers: providers rotate
-// alphabetically, and equal release dates inside a provider break on id.
+// TestRank_DeterministicTies fixes the ordering keys: providers sort
+// alphabetically and ids sort alphabetically inside each provider.
 // Without both, the truncated view would vary run to run (Go map order).
 func TestRank_DeterministicTies(t *testing.T) {
 	in := []ModelEntry{
@@ -117,7 +116,7 @@ func TestRank_DeterministicTies(t *testing.T) {
 		ent("alpha", "a", "2026-01-01", true),
 		ent("mid", "m", "2026-01-01", true),
 	}
-	want := []string{"alpha/a", "mid/m", "zeta/z", "alpha/b"}
+	want := []string{"alpha/a", "alpha/b", "mid/m", "zeta/z"}
 	// Repeat: a map-order dependency shows up as an intermittent
 	// failure, so one pass is not evidence of determinism.
 	for i := 0; i < 50; i++ {
@@ -268,4 +267,23 @@ type failingSource struct{}
 
 func (failingSource) Fetch(context.Context) (map[string]*aim.Provider, error) {
 	return nil, errors.New("boom")
+}
+
+// TestRank_ContextBreaksIDTies pins the third sort key. Catalog data
+// gives a provider unique ids, so this is a determinism guard rather
+// than a case that arises upstream — but without it two rows sharing a
+// provider and an id would order by map iteration.
+func TestRank_ContextBreaksIDTies(t *testing.T) {
+	small := ent("p", "dup", "2026-01-01", true)
+	small.Context = 8192
+	large := ent("p", "dup", "2026-01-01", true)
+	large.Context = 1000000
+
+	for i := 0; i < 50; i++ {
+		got := Rank([]ModelEntry{small, large})
+		if got[0].Context != 1000000 {
+			t.Fatalf("iteration %d: head context = %d, want the larger 1000000",
+				i, got[0].Context)
+		}
+	}
 }

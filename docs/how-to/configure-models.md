@@ -74,15 +74,20 @@ foo model list --limit 7
 ```
 
 ```
-PROVIDER  ID                CONTEXT  TOOLS  REASONING  RELEASED
-openai    gpt-6-astra       1050000  true   true       2026-09-04
-openai    gpt-5.6           1050000  true   true       2026-07-09
-openai    gpt-5.6-luna      1050000  true   true       2026-07-09
-openai    gpt-5.6-sol       1050000  true   true       2026-07-09
-openai    gpt-5.6-terra     1050000  true   true       2026-07-09
-openai    gpt-realtime-2.1  128000   true   true       2026-07-06
-openai    gpt-5.5           1050000  true   true       2026-04-23
+PROVIDER  ID                    CONTEXT  TOOLS  REASONING  RELEASED
+openai    chatgpt-image-latest  0        false  false      2025-12-16
+openai    gpt-3.5-turbo         16385    false  false      2023-03-01
+openai    gpt-4                 8192     true   false      2023-11-06
+openai    gpt-4-turbo           128000   true   false      2023-11-06
+openai    gpt-4.1               1047576  true   false      2025-04-14
+openai    gpt-4.1-mini          1047576  true   false      2025-04-14
+openai    gpt-4.1-nano          1047576  true   false      2025-04-14
 ```
+
+Rows are grouped by provider, with providers and model ids both in
+alphabetical order. That makes a provider's catalogue easy to scan,
+but it means the first page is not the newest models — `--limit 0`
+and a `RELEASED` scan, or `--query`, gets you those.
 
 Two stderr footers explain the shape of that list:
 
@@ -120,15 +125,19 @@ foo model list --all --limit 7
 ```
 
 ```
-PROVIDER   ID                  CONTEXT  TOOLS  REASONING  RELEASED
-anthropic  claude-fable-5-1    1000000  true   true       2026-09-01
-deepseek   deepseek-flash      1000000  true   true       2026-09-10
-google     gemini-3.8-flash    1048576  true   true       2026-09-02
-groq       qwen/qwen3.8-27b    131042   true   true       2026-08-14
-lmstudio   openai/gpt-oss-20b  131072   true   true       2025-08-05
-mistral    zai-glm-5-3         1000000  true   true       2026-08-14
-openai     gpt-6-astra         1050000  true   true       2026-09-04
+PROVIDER   ID                         CONTEXT  TOOLS  REASONING  RELEASED
+anthropic  claude-fable-5             1000000  true   true       2026-06-07
+anthropic  claude-fable-5-1           1000000  true   true       2026-09-01
+anthropic  claude-haiku-4-5           200000   true   true       2025-10-15
+anthropic  claude-haiku-4-5-20251001  200000   true   true       2025-10-15
+anthropic  claude-opus-4-5            200000   true   true       2025-11-24
+anthropic  claude-opus-4-5-20251101   200000   true   true       2025-11-24
+anthropic  claude-opus-4-6            1000000  true   true       2026-02-04
 ```
+
+Grouping means a small `--limit` shows one provider's block rather
+than a sample of each; raise it or pass `--provider` to reach the
+others.
 
 The hidden-model footer is gone, because nothing is hidden. These
 ids are real, but most of them will fail on first use until you
@@ -176,12 +185,12 @@ foo model list --provider=openai --tool-call --limit=5
 ```
 
 ```
-PROVIDER  ID             CONTEXT  TOOLS  REASONING  RELEASED
-openai    gpt-6-astra    1050000  true   true       2026-09-04
-openai    gpt-5.6        1050000  true   true       2026-07-09
-openai    gpt-5.6-luna   1050000  true   true       2026-07-09
-openai    gpt-5.6-sol    1050000  true   true       2026-07-09
-openai    gpt-5.6-terra  1050000  true   true       2026-07-09
+PROVIDER  ID            CONTEXT  TOOLS  REASONING  RELEASED
+openai    gpt-4         8192     true   false      2023-11-06
+openai    gpt-4-turbo   128000   true   false      2023-11-06
+openai    gpt-4.1       1047576  true   false      2025-04-14
+openai    gpt-4.1-mini  1047576  true   false      2025-04-14
+openai    gpt-4.1-nano  1047576  true   false      2025-04-14
 ```
 
 That is 48 OpenAI models down to 39 with tool calling. The other
