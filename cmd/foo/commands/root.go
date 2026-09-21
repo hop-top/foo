@@ -684,26 +684,16 @@ credentials they expect are present in the configured secret store.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scheme := strings.TrimSuffix(args[0], "://")
-			keyName, authType := providerAuthRequirement(scheme)
-			status := providerStatus{
-				Scheme:   scheme,
-				AuthType: authType,
-			}
-			if keyName == "" {
-				status.Status = "available"
-				return renderData(cmd, status)
-			}
-			status.SecretKey = keyName
-			_, ok, err := cfg.LookupSecret(cmd.Context(), keyName)
+			auth, err := providerAuthRequirement(cmd.Context(), scheme)
 			if err != nil {
 				return err
 			}
-			if ok {
-				status.Status = "configured"
-			} else {
-				status.Status = "missing"
-			}
-			return renderData(cmd, status)
+			return renderData(cmd, providerStatus{
+				Scheme:    scheme,
+				AuthType:  auth.AuthType(),
+				SecretKey: auth.SecretKey,
+				Status:    auth.Status(),
+			})
 		},
 	}
 	kitcli.SetSideEffect(showCmd, kitcli.SideEffectRead)
@@ -1034,19 +1024,38 @@ func newUpgradeChecker() *upgrade.Checker {
 	)
 }
 
-func providerAuthRequirement(scheme string) (key string, authType string) {
-	switch scheme {
-	case "anthropic":
-		return "anthropic_api_key", "api_key"
-	case "openai":
-		return "openai_api_key", "api_key"
-	case "google", "gemini":
-		return "google_api_key", "api_key"
-	case "ollama":
-		return "", "local"
-	default:
-		return "", "unknown"
+// providerAuthRequirement reports what credential a provider scheme
+// needs and whether this machine has it.
+//
+// The requirement comes from aim's provider census, the same source
+// `foo model list` filters on — not from a hand-maintained switch over
+// scheme names. The switch this replaced enumerated four providers and
+// answered "available", i.e. needs no auth, for everything else, so
+// `foo provider show groq` reported a provider that will 401 on first
+// use as ready to go. Reading the census instead means a provider foo
+// has never heard of is described correctly the day models.dev adds it,
+// and that the two surfaces cannot drift: one of them being wrong about
+// groq is what made sharing this necessary.
+func providerAuthRequirement(ctx context.Context, scheme string) (llm.ProviderAuth, error) {
+	auth, err := providerAuthIndex(ctx)
+	if err != nil {
+		return llm.ProviderAuth{}, err
 	}
+	// LookupScheme, not Lookup: kit's scheme names and models.dev's
+	// provider ids disagree for a few providers, and a bare lookup
+	// would find no record and report a provider that plainly needs a
+	// key as needing none.
+	return auth.LookupScheme(scheme), nil
+}
+
+// providerAuthIndex is the shared credential resolver, and a package
+// var so a test can pin it without a models.dev fetch or a real secret
+// store. `foo model list` reaches the same construction through
+// modelAuthIndex; both read the requirement from aim and the key from
+// foo's configured secret store rather than the environment, so a
+// keyring-backed user is never told a stored key is missing.
+var providerAuthIndex = func(ctx context.Context) (*llm.AuthIndex, error) {
+	return llm.NewAuthIndex(ctx, nil, cfg.LookupSecret)
 }
 
 // enrichPatternNotFound wraps a "pattern not found" error with an
