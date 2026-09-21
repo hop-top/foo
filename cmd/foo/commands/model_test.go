@@ -10,7 +10,9 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/llm"
@@ -739,7 +741,7 @@ func TestModelList_ExplicitEndpointBeatsConfigured(t *testing.T) {
 func TestModelList_FallsBackToCatalogWithNoEndpoint(t *testing.T) {
 	withLiveSourceSelection(t)
 
-	src, endpoint := modelListSource(llm.Filter{}, "")
+	src, endpoint := modelListSource(llm.Filter{}, "", false)
 	if endpoint != "" {
 		t.Errorf("resolved endpoint %q with none configured", endpoint)
 	}
@@ -865,5 +867,314 @@ func TestCatalogOnlyFlags_CoversEveryFilterFlag(t *testing.T) {
 		if cmd.Flags().Lookup(n) == nil {
 			t.Errorf("catalogOnlyFlags names %q, which is not a registered flag", n)
 		}
+	}
+}
+
+// TestModelList_RefreshFlagRegistered: --refresh is the user-facing
+// handle on both caches, so its absence is a silent loss of the whole
+// feature — the command still works, it just always serves cached rows.
+func TestModelList_RefreshFlagRegistered(t *testing.T) {
+	cmd := modelListCmd()
+	f := cmd.Flags().Lookup("refresh")
+	if f == nil {
+		t.Fatal("--refresh is not registered on model list")
+	}
+	if f.Value.Type() != "bool" {
+		t.Errorf("--refresh type = %q, want bool", f.Value.Type())
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--refresh default = %q, want false: caching must be on by default", f.DefValue)
+	}
+}
+
+// TestModelList_RefreshIsNotCatalogOnly: --refresh means something on
+// both sources, so unlike the filter flags it must survive being
+// combined with --endpoint rather than being rejected by name.
+func TestModelList_RefreshIsNotCatalogOnly(t *testing.T) {
+	for _, n := range catalogOnlyFlags {
+		if n == "refresh" {
+			t.Fatal("--refresh is listed as catalog-only; it would be rejected with --endpoint")
+		}
+	}
+
+	cmd := modelListCmd()
+	if err := cmd.Flags().Set("refresh", "true"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := checkCatalogOnlyFlags(cmd); err != nil {
+		t.Errorf("--refresh rejected against an endpoint: %v", err)
+	}
+}
+
+// TestModelList_RefreshReachesTheEndpointSource proves the flag is
+// wired through selection rather than merely parsed.
+//
+// The assertion is behavioural, not structural: both branches return the
+// same concrete type, so comparing types would pass even with refresh
+// hard-coded to false. What distinguishes them is whether a warm cache
+// entry is consulted, so the test warms one and counts server hits.
+func TestModelList_RefreshReachesTheEndpointSource(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"data":[{"id":"llama3:8b"}]}`))
+	}))
+	defer srv.Close()
+
+	withLiveSourceSelection(t)
+	t.Setenv("FOO_CACHE", t.TempDir())
+	t.Setenv("FOO_CACHE_TTL", "5m")
+	url := srv.URL + "/v1"
+
+	warm, _ := modelListSource(llm.Filter{}, url, false)
+	if _, err := warm.ListModels(context.Background()); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("warming the cache made %d request(s), want 1", hits.Load())
+	}
+
+	// Without --refresh the warm entry must be served: no second hit.
+	plain, _ := modelListSource(llm.Filter{}, url, false)
+	if _, err := plain.ListModels(context.Background()); err != nil {
+		t.Fatalf("plain: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("a cached listing hit the server: %d request(s), want 1", got)
+	}
+
+	// With --refresh the cache must be bypassed.
+	refreshed, _ := modelListSource(llm.Filter{}, url, true)
+	if _, err := refreshed.ListModels(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("--refresh did not reach the server: %d request(s), want 2", got)
+	}
+}
+
+// TestModelList_CatalogProvenanceFooter: a table listing from the real
+// catalog must say how old the rows are. The footer goes to stderr for
+// the same reason the truncation hint does.
+func TestModelList_CatalogProvenanceFooter(t *testing.T) {
+	withCatalog(t, stubCatalog{entries: sampleEntries()})
+	_, stderr, err := runList(t)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// An injected source has no aim cache behind it, so narrating one
+	// would be a lie — the footer is gated on the rows really coming
+	// from aim.
+	if strings.Contains(stderr, "catalog:") {
+		t.Errorf("provenance narrated for an injected source: %q", stderr)
+	}
+}
+
+// TestModelList_ProvenanceSuppressedForEndpoint: aim's cache metadata
+// describes models.dev and says nothing about a live server, so it must
+// not be attached to an endpoint listing in either format.
+func TestModelList_ProvenanceSuppressedForEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"llama3:8b"}]}`))
+	}))
+	defer srv.Close()
+
+	withLiveSourceSelection(t)
+	t.Setenv("FOO_CACHE", t.TempDir())
+
+	stdout, stderr, err := runList(t, "--endpoint="+srv.URL+"/v1", "--format=json")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(stderr, "catalog:") {
+		t.Errorf("catalog provenance on an endpoint listing: %q", stderr)
+	}
+	// The endpoint payload must stay a bare array: wrapping it in the
+	// catalog envelope would tell a parser the rows came from
+	// models.dev.
+	var rows []modelRow
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
+		t.Fatalf("endpoint JSON is not a bare row array (%v): %q", err, stdout)
+	}
+	if len(rows) != 1 || rows[0].ID != "llama3:8b" {
+		t.Errorf("rows: %+v", rows)
+	}
+}
+
+// TestStructuredFormat covers the predicate that decides where
+// provenance goes. Getting it wrong is not cosmetic: a false positive
+// hands the table renderer an untagged envelope, from which it resolves
+// zero columns and prints nothing at all.
+func TestStructuredFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		format       string
+		outputPath   string
+		wantEnvelope bool
+	}{
+		{"default is table", "", "", false},
+		{"explicit table", "table", "", false},
+		{"csv", "csv", "", false},
+		{"text", "text", "", false},
+		{"json", "json", "", true},
+		{"yaml", "yaml", "", true},
+		{"output extension picks json", "", "out.json", true},
+		{"output extension picks yaml", "", "out.yaml", true},
+		{"output extension picks csv", "", "out.csv", false},
+		{"unknown extension keeps the default", "", "out.bin", false},
+		{"explicit format beats the extension", "table", "out.json", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mirrors the real tree: kit puts --format and --output on
+			// the root as persistent flags, and `model list` adds its
+			// own local --output modality filter that shadows one of
+			// them. structuredFormat must read past that shadow.
+			root := &cobra.Command{Use: "foo"}
+			root.PersistentFlags().String("format", "table", "")
+			root.PersistentFlags().String("output", "", "")
+			cmd := &cobra.Command{Use: "list"}
+			cmd.Flags().StringArray("output", nil, "output modality filter")
+			root.AddCommand(cmd)
+			if tc.format != "" {
+				if err := root.PersistentFlags().Set("format", tc.format); err != nil {
+					t.Fatalf("set format: %v", err)
+				}
+			}
+			if tc.outputPath != "" {
+				if err := root.PersistentFlags().Set("output", tc.outputPath); err != nil {
+					t.Fatalf("set output: %v", err)
+				}
+			}
+			// The shadowing local flag is always populated, so a
+			// regression that reads cmd.Flags() sees a modality list
+			// where it expected a path.
+			if err := cmd.Flags().Set("output", "text"); err != nil {
+				t.Fatalf("set modality: %v", err)
+			}
+			if got := structuredFormat(cmd); got != tc.wantEnvelope {
+				t.Errorf("structuredFormat = %v, want %v", got, tc.wantEnvelope)
+			}
+		})
+	}
+}
+
+// TestMetaFromProvenance pins the envelope body, including the rule that
+// a never-fetched catalog omits its timestamps rather than reporting
+// year 1.
+func TestMetaFromProvenance(t *testing.T) {
+	t.Run("never fetched", func(t *testing.T) {
+		m := metaFromProvenance(llm.CatalogProvenance{})
+		if m.Cached {
+			t.Error("cached = true for a never-fetched catalog")
+		}
+		if m.FetchedAt != "" || m.CacheAgeSeconds != 0 || m.TTLSeconds != 0 {
+			t.Errorf("timestamps populated on a never-fetched catalog: %+v", m)
+		}
+		if m.Source != catalogSourceName {
+			t.Errorf("source = %q, want %q", m.Source, catalogSourceName)
+		}
+		if m.Description == "" {
+			t.Error("description is empty")
+		}
+	})
+
+	t.Run("fetched", func(t *testing.T) {
+		at := time.Date(2026, 9, 21, 6, 15, 16, 0, time.UTC)
+		m := metaFromProvenance(llm.CatalogProvenance{
+			Fetched:   true,
+			FetchedAt: at,
+			Age:       90 * time.Minute,
+			TTL:       24 * time.Hour,
+		})
+		if !m.Cached {
+			t.Error("cached = false for a fetched catalog")
+		}
+		if m.FetchedAt != "2026-09-21T06:15:16Z" {
+			t.Errorf("fetched_at = %q, want RFC3339 UTC", m.FetchedAt)
+		}
+		if m.CacheAgeSeconds != 5400 {
+			t.Errorf("cache_age_seconds = %d, want 5400", m.CacheAgeSeconds)
+		}
+		if m.TTLSeconds != 86400 {
+			t.Errorf("ttl_seconds = %d, want 86400", m.TTLSeconds)
+		}
+		if m.Stale {
+			t.Error("stale = true inside the TTL")
+		}
+	})
+}
+
+// TestModelList_RefreshForcesACatalogRefetch covers --refresh's catalog
+// half at the command layer: the flag must reach the refetch, and must
+// not fire without it.
+//
+// The refetch is stubbed rather than run, so the test asserts the
+// command's wiring and never touches models.dev.
+func TestModelList_RefreshForcesACatalogRefetch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantCall bool
+	}{
+		{"without --refresh", nil, false},
+		{"with --refresh", []string{"--refresh"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withLiveSourceSelection(t)
+
+			var calls atomic.Int64
+			prevRefresh := refreshCatalog
+			refreshCatalog = func(context.Context) error {
+				calls.Add(1)
+				return nil
+			}
+			t.Cleanup(func() { refreshCatalog = prevRefresh })
+
+			// The listing itself must not fetch either. A filter makes
+			// selection take the filtered-source branch, which is the
+			// one seam that can be stubbed on the catalog path.
+			prevFiltered := modelFilteredSource
+			modelFilteredSource = func(llm.Filter) llm.CatalogSource {
+				return stubCatalog{entries: sampleEntries()}
+			}
+			t.Cleanup(func() { modelFilteredSource = prevFiltered })
+
+			if _, _, err := runList(t, append([]string{"--provider=openai"}, tc.args...)...); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+
+			got := calls.Load() > 0
+			if got != tc.wantCall {
+				t.Errorf("catalog refetch called = %v, want %v", got, tc.wantCall)
+			}
+		})
+	}
+}
+
+// TestModelList_RefreshReportsACatalogRefetchFailure: --refresh asked
+// for fresh data by name, so a refetch failure must stop the command
+// rather than quietly rendering the stale copy.
+func TestModelList_RefreshReportsACatalogRefetchFailure(t *testing.T) {
+	withLiveSourceSelection(t)
+
+	wantErr := errors.New("models.dev unreachable")
+	prevRefresh := refreshCatalog
+	refreshCatalog = func(context.Context) error { return wantErr }
+	t.Cleanup(func() { refreshCatalog = prevRefresh })
+
+	prevFiltered := modelFilteredSource
+	modelFilteredSource = func(llm.Filter) llm.CatalogSource {
+		return stubCatalog{entries: sampleEntries()}
+	}
+	t.Cleanup(func() { modelFilteredSource = prevFiltered })
+
+	stdout, _, err := runList(t, "--provider=openai", "--refresh")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want the refetch failure", err)
+	}
+	// Nothing may have been rendered: the failure is reported before a
+	// single stale row reaches the reader.
+	if strings.Contains(stdout, "gpt-x") {
+		t.Errorf("rows rendered despite a refetch failure: %q", stdout)
 	}
 }

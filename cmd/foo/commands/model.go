@@ -10,10 +10,15 @@ package commands
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"hop.top/foo/internal/llm"
 	kitcli "hop.top/kit/go/console/cli"
+	"hop.top/kit/go/console/output"
 )
 
 // modelListLimit backs --limit, the display knob: how much of the
@@ -43,6 +48,13 @@ var modelListFlags modelListFilterFlags
 // modelListEndpoint backs --endpoint: list from a live OpenAI-compatible
 // server's /v1/models instead of the aim catalog.
 var modelListEndpoint string
+
+// modelListRefresh backs --refresh: bypass both caches for this run.
+//
+// One flag covers both because the user's question is "am I looking at
+// current data", and they should not have to know that two independent
+// caches with two different TTLs sit behind one listing.
+var modelListRefresh bool
 
 // modelCatalogSource is the row producer `foo model list` reads from.
 // nil means "the aim catalog through foo's shared registry". It is a
@@ -80,11 +92,17 @@ endpoint is configured (` + "`providers.<scheme>.base_url`" + ` in llm.yaml, or
 LLM_BASE_URL), this lists that server's own models instead; --endpoint
 points at one for a single invocation. Endpoint rows carry only an id —
 the /v1/models response has no cost, context window or capability data —
-so the SOURCE column marks where each row came from.`,
+so the SOURCE column marks where each row came from.
+
+Both sources are cached, on very different clocks. The catalog is a
+published census that moves daily and aim caches it for 24h with ETag
+revalidation; a footer line reports how old that copy is. An endpoint's
+inventory is local state that changes the moment you pull a model, so it
+is cached for only ` + llm.DefaultEndpointCacheTTL.String() + `. --refresh bypasses both.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runModelList(cmd.Context(), cmd, modelListLimit,
-				modelListFilter(cmd, modelListFlags), modelListEndpoint)
+				modelListFilter(cmd, modelListFlags), modelListEndpoint, modelListRefresh)
 		},
 	}
 	cmd.Flags().IntVar(&modelListLimit, "limit", llm.DefaultListLimit,
@@ -111,6 +129,8 @@ so the SOURCE column marks where each row came from.`,
 		`catalog query expression, e.g. "provider:openai reasoning:true"`)
 	f.StringVar(&modelListEndpoint, "endpoint", "",
 		"list models from this OpenAI-compatible base URL instead of the catalog")
+	f.BoolVar(&modelListRefresh, "refresh", false,
+		"bypass the catalog and endpoint caches and refetch")
 
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
 	return cmd
@@ -165,6 +185,14 @@ var modelFilteredSource = func(f llm.Filter) llm.CatalogSource {
 	return llm.NewFilteredAimCatalog(nil, f)
 }
 
+// refreshCatalog forces a catalog refetch. It is a package var for the
+// same reason modelFilteredSource is one: a test must observe that the
+// command reached it without a models.dev fetch. Production wiring is
+// llm.RefreshCatalog against foo's shared registry.
+var refreshCatalog = func(ctx context.Context) error {
+	return llm.RefreshCatalog(ctx, nil)
+}
+
 // catalogOnlyFlags are flags whose data only the aim catalog carries.
 //
 // A live /v1/models response is ids and nothing else, so any filter over
@@ -217,7 +245,11 @@ func checkCatalogOnlyFlags(cmd *cobra.Command) error {
 // Filters apply to the catalog only. An endpoint's /v1/models carries
 // no filterable data, so the combination is rejected upstream by
 // checkCatalogOnlyFlags rather than silently ignored here.
-func modelListSource(filter llm.Filter, endpoint string) (llm.CatalogSource, string) {
+//
+// refresh reaches only the endpoint branch. The catalog's refresh is not
+// a different source, it is a forced refetch into the same aim cache,
+// which runModelList performs before reading — see there.
+func modelListSource(filter llm.Filter, endpoint string, refresh bool) (llm.CatalogSource, string) {
 	if modelCatalogSource != nil {
 		return modelCatalogSource, endpoint
 	}
@@ -225,7 +257,7 @@ func modelListSource(filter llm.Filter, endpoint string) (llm.CatalogSource, str
 		endpoint = llm.ResolveConfiguredEndpoint()
 	}
 	if endpoint != "" {
-		return llm.NewEndpointCatalog(endpoint, nil), endpoint
+		return llm.NewCachedEndpointCatalog(endpoint, nil, refresh), endpoint
 	}
 	if filter.IsZero() {
 		return nil, ""
@@ -236,10 +268,26 @@ func modelListSource(filter llm.Filter, endpoint string) (llm.CatalogSource, str
 // runModelList is split out of RunE so tests drive the whole path —
 // source read, ranking, truncation, render, hint — against a fixture
 // source and a captured writer.
-func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm.Filter, endpoint string) error {
-	src, endpoint := modelListSource(filter, endpoint)
+func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm.Filter, endpoint string, refresh bool) error {
+	src, endpoint := modelListSource(filter, endpoint, refresh)
 	if endpoint != "" {
 		if err := checkCatalogOnlyFlags(cmd); err != nil {
+			return err
+		}
+	}
+
+	// Both the forced refetch and the provenance footer below are
+	// claims about aim's cache, and are only true when the rows
+	// actually came from it.
+	fromAimCatalog := endpoint == "" && modelCatalogSource == nil
+
+	// The catalog's half of --refresh runs before the listing rather
+	// than inside the source: aim's Refresh writes through the same
+	// cache the source then reads, so forcing it here means the rows
+	// below are the fresh ones, and a refetch failure is reported
+	// before a single stale row has been printed.
+	if refresh && fromAimCatalog {
+		if err := refreshCatalog(ctx); err != nil {
 			return err
 		}
 	}
@@ -257,8 +305,36 @@ func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm
 	// Source earns a table column only once a listing can mix origins.
 	// With an endpoint in play the distinction is load-bearing: an
 	// endpoint row's empty CONTEXT means "not reported", not "zero".
-	if err := renderData(cmd, withSourceColumn(rows, endpoint != "")); err != nil {
+	payload := withSourceColumn(rows, endpoint != "")
+
+	// Provenance is gated on the rows really coming from aim. It
+	// describes the models.dev snapshot, so it says nothing useful
+	// about a live endpoint — whose own cache is a five-minute detail
+	// no reader needs narrated — and attaching it to an injected test
+	// source would narrate a cache those rows never touched.
+	//
+	// Where it goes depends on the format, mirroring kit's own
+	// WithProvenance rule: the structured formats nest it beside the
+	// rows, the columnar ones get a stderr footer, because wrapping a
+	// tagged row slice in an untagged envelope makes the table renderer
+	// resolve zero columns and print nothing at all.
+	footer := ""
+	if fromAimCatalog {
+		prov := llm.ReadCatalogProvenance(nil)
+		if structuredFormat(cmd) {
+			payload = catalogEnvelope{Data: payload, Meta: metaFromProvenance(prov)}
+		} else {
+			footer = prov.Describe()
+		}
+	}
+
+	if err := renderData(cmd, payload); err != nil {
 		return err
+	}
+	// Stderr, for the same reason as the truncation hint below: it must
+	// never land in a `--format json` stream someone is parsing.
+	if footer != "" {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), footer)
 	}
 
 	// The hint goes to stderr so it never contaminates `--format json`
@@ -267,6 +343,130 @@ func runModelList(ctx context.Context, cmd *cobra.Command, limit int, filter llm
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"%d more model(s) not shown; raise --limit or pass --limit=0 for all\n",
 			omitted)
+	}
+	return nil
+}
+
+// catalogEnvelope wraps a listing with its cache provenance for the
+// structured formats.
+//
+// The shape mirrors kit's own provenance envelope — {"data": …,
+// "_meta": …} — so a consumer that already parses one foo command's
+// envelope parses this one. It is a local type rather than
+// output.WithProvenance because Dispatch takes no RenderOptions: only
+// the lower-level Render does, and dropping to Render would mean
+// reimplementing --output, --cols, --template and format resolution at
+// this call site.
+type catalogEnvelope struct {
+	Data any         `json:"data"  yaml:"data"`
+	Meta catalogMeta `json:"_meta" yaml:"_meta"`
+}
+
+// catalogMeta is the provenance body.
+//
+// Both the machine-readable facts and the rendered phrase are carried.
+// A script wants fetched_at and cache_age_seconds to compare against
+// its own threshold; a human reading `--format yaml` wants the same
+// sentence the table footer shows, and making them re-derive it from
+// two timestamps is how the two drift apart.
+type catalogMeta struct {
+	Source          string `json:"source"                      yaml:"source"`
+	Cached          bool   `json:"cached"                      yaml:"cached"`
+	FetchedAt       string `json:"fetched_at,omitempty"        yaml:"fetched_at,omitempty"`
+	CacheAgeSeconds int64  `json:"cache_age_seconds,omitempty" yaml:"cache_age_seconds,omitempty"`
+	TTLSeconds      int64  `json:"ttl_seconds,omitempty"       yaml:"ttl_seconds,omitempty"`
+	Stale           bool   `json:"stale"                       yaml:"stale"`
+	Description     string `json:"description"                 yaml:"description"`
+}
+
+// catalogSourceName names the upstream the catalog mirrors, so a
+// consumer of the envelope knows what "cached" is cached *from*.
+const catalogSourceName = "models.dev"
+
+// metaFromProvenance projects foo's provenance view onto the envelope
+// body. A never-fetched catalog reports cached=false with the
+// timestamps omitted rather than zero-valued — a fetched_at of
+// year 1 is worse than no field at all.
+func metaFromProvenance(p llm.CatalogProvenance) catalogMeta {
+	m := catalogMeta{
+		Source:      catalogSourceName,
+		Cached:      p.Fetched,
+		Stale:       p.Stale,
+		Description: p.Describe(),
+	}
+	if p.Fetched {
+		m.FetchedAt = p.FetchedAt.UTC().Format(time.RFC3339)
+		m.CacheAgeSeconds = int64(p.Age.Seconds())
+		m.TTLSeconds = int64(p.TTL.Seconds())
+	}
+	return m
+}
+
+// structuredFormat reports whether the resolved output format can nest
+// an envelope.
+//
+// kit decides this internally (output.isTagDriven) but exports neither
+// the predicate nor its format resolution, so the two inputs Dispatch
+// consults are read here the same way it reads them: the --format flag,
+// then the extension of --output when one maps to a formatter. Getting
+// this wrong is visible rather than silent — a false positive hands the
+// table renderer an untagged wrapper and it prints nothing — which is
+// what the format tests pin.
+func structuredFormat(cmd *cobra.Command) bool {
+	format := output.Table
+	explicit := false
+	if f := inheritedFlag(cmd, "format"); f != nil {
+		explicit = f.Changed
+		if v := f.Value.String(); v != "" {
+			format = v
+		}
+	}
+	// An --output extension picks the formatter only when --format was
+	// not spelled out; an explicit --format wins, exactly as Dispatch
+	// resolves it (and Dispatch errors on a genuine mismatch, so this
+	// never has to).
+	//
+	// The lookup deliberately walks up to the root's persistent flags
+	// rather than using cmd.Flags(). `model list` registers its own
+	// local --output — the repeatable output-modality filter — which
+	// shadows kit's persistent --output file path on this one command.
+	// Reading cmd.Flags() here would hand filepath.Ext a modality list
+	// like "[text image]" instead of a path.
+	if !explicit {
+		if o := inheritedFlag(cmd, "output"); o != nil {
+			if ext := strings.ToLower(filepath.Ext(o.Value.String())); ext != "" {
+				if mapped, ok := output.Default.ExtensionMap()[ext]; ok {
+					format = mapped
+				}
+			}
+		}
+	}
+	switch format {
+	case output.JSON, output.YAML:
+		return true
+	default:
+		return false
+	}
+}
+
+// inheritedFlag finds a persistent flag by walking up from cmd, and is
+// how the two output flags kit installs on the root are read.
+//
+// cmd.Flags() would be the obvious lookup and is wrong here for two
+// reasons. `model list` registers its own local --output — the
+// repeatable output-modality filter — which shadows kit's --output
+// destination path on this one command, so cmd.Flags() would hand
+// filepath.Ext a modality list like "[text image]". And the inherited
+// set is only merged into cmd.Flags() once cobra has parsed, which
+// makes a direct unit test of the predicate see nothing at all.
+//
+// Only persistent sets are consulted, so a command-local flag of the
+// same name can never be mistaken for the root's.
+func inheritedFlag(cmd *cobra.Command, name string) *pflag.Flag {
+	for c := cmd; c != nil; c = c.Parent() {
+		if f := c.PersistentFlags().Lookup(name); f != nil {
+			return f
+		}
 	}
 	return nil
 }
