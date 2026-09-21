@@ -618,6 +618,8 @@ func modelCmd() *cobra.Command {
 supplied on the command line.`,
 	}
 
+	cmd.AddCommand(modelListCmd())
+
 	currentCmd := &cobra.Command{
 		Use:   "current",
 		Short: "Show the current default model",
