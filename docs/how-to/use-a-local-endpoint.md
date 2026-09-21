@@ -41,15 +41,76 @@ server mounts); foo appends only `/chat/completions`.
 
 ### Which model ids work
 
-Ask the server:
+Ask foo:
 
 ```sh
-curl -s http://127.0.0.1:8000/v1/models
+foo model list --endpoint http://127.0.0.1:11434/v1
 ```
 
-Pass the `id` field verbatim to `-m`. Any id that does not match a
-known hosted prefix (`gpt-`, `claude-`, `gemini-`, …) is treated as
+```
+PROVIDER         ID                   CONTEXT  TOOLS  REASONING  RELEASED  SOURCE
+127.0.0.1:11434  llama3.2:3b          0        false  false                endpoint
+127.0.0.1:11434  qwen2.5:7b-instruct  0        false  false                endpoint
+```
+
+Pass an `ID` verbatim to `-m`. Any id that does not match a known
+hosted prefix (`gpt-`, `claude-`, `gemini-`, …) is treated as
 OpenAI-compatible, which is what you want here.
+
+`--endpoint` reads the server's `/v1/models`, which returns ids and
+nothing else — so `CONTEXT` of `0` and `TOOLS`/`REASONING` of
+`false` mean "not reported", not "zero" and "unsupported". The
+`SOURCE` column marks where each row came from.
+
+Once `base_url` is configured (or `LLM_BASE_URL` is exported), a
+bare `foo model list` already lists that server instead of the
+catalog; `--endpoint` is for pointing at one for a single
+invocation. Precedence matches the completion path: `--endpoint`,
+then the configured endpoint, then the catalog.
+
+Because there is no metadata to filter on, every catalog filter is
+rejected rather than silently ignored:
+
+```console
+$ foo model list --endpoint http://127.0.0.1:11434/v1 --reasoning
+GENERIC: foo: --reasoning needs model metadata the catalog has and a live endpoint does not; drop --reasoning to filter the catalog, or drop --endpoint to list from the endpoint
+```
+
+### Listings are cached
+
+Both sources are cached, on very different clocks:
+
+| Source | TTL | Where |
+|--------|-----|-------|
+| Endpoint inventory (`/v1/models`) | 5 minutes | `$XDG_CACHE_HOME/foo/model-endpoint-cache.db` |
+| aim catalog (models.dev) | 24 hours, with ETag revalidation | `$XDG_CACHE_HOME/hop/aim/` |
+
+Five minutes for the endpoint because a local runtime's inventory
+changes the moment you `ollama pull` or restart a server against a
+different model directory. If a model you just pulled is missing
+from the list, that is the cache — not foo failing to see it.
+
+`--refresh` bypasses both and refetches:
+
+```sh
+foo model list --endpoint http://127.0.0.1:11434/v1 --refresh
+```
+
+A catalog listing prints its age as a stderr footer, so you can
+tell a fresh list from a day-old one:
+
+```
+catalog: cached 1h ago
+```
+
+`FOO_CACHE_TTL` overrides the 5-minute endpoint window (a Go
+duration string — `30s`, `1h`; `0` turns endpoint caching off
+entirely), and `FOO_CACHE` relocates the cache directory. Neither
+touches the catalog's 24h window, which aim owns.
+
+One quirk worth knowing: a TTL is bound to an entry when it is
+written, not when it is read. Lowering `FOO_CACHE_TTL` does not
+shorten entries already on disk — `--refresh` is the way past one.
 
 ## Other ways to set the endpoint
 
@@ -107,9 +168,9 @@ reads — `$XDG_CONFIG_HOME/hop/llm.yaml`, defaulting to
 
 **`model "..." not available`.** kit maps the server's 404 onto this
 message, so it usually means the path or the model id is wrong, not
-that the model is missing. Check `/v1/models` for the exact id, and
-check whether `base_url` already ends in `/v1` — a doubled `/v1/v1`
-also 404s.
+that the model is missing. Re-run `foo model list --endpoint <url>
+--refresh` for the exact id, and check whether `base_url` already
+ends in `/v1` — a doubled `/v1/v1` also 404s.
 
 **The server is only reachable from its own host.** Local inference
 servers commonly bind to loopback. Forward the port rather than
@@ -121,7 +182,7 @@ ssh -N -L 8000:localhost:8000 user@host
 
 ## Related docs
 
-- [Configure models](configure-models.md) — pin a hosted model id
+- [Configure models](configure-models.md) — find and pin a hosted model id
 - [Route across models](route-across-models.md) — pool routing and `--budget`
 - [Config reference](../reference/config.md) — every key and env var
 - [Troubleshooting](../troubleshooting.md)

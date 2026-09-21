@@ -127,12 +127,58 @@ List available prompt strategies.
 
 ## `model`
 
-Manage the default model selection.
+Discover model ids and manage the default model selection.
 
 | Subcommand | Synopsis | Description | How-to |
 |------------|----------|-------------|--------|
+| `list` | `foo model list [--flags]` | List models from the model catalog | [Configure models](../how-to/configure-models.md#1-find-a-model-id) |
 | `current` | `foo model current` | Show the current default model | [Configure models](../how-to/configure-models.md) |
 | `default` | `foo model default <model>` | Set the default model | [Configure models](../how-to/configure-models.md) |
+
+`list` flags:
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--limit` | `20` | Maximum models to list (`0` for no limit) |
+| `--endpoint` | (none) | List models from this OpenAI-compatible base URL instead of the catalog |
+| `--refresh` | `false` | Bypass the catalog and endpoint caches and refetch |
+| `--provider` | (none) | Only models from this provider id (exact match) |
+| `--family` | (none) | Only models in this family (exact match) |
+| `--input` | (none) | Only models accepting this input modality (repeatable) |
+| `--output` | (none) | Only models producing this output modality (repeatable) |
+| `--tool-call` | (unset) | Only models with (`--tool-call`) or without (`--tool-call=false`) tool calling |
+| `--reasoning` | (unset) | Only models with (`--reasoning`) or without (`--reasoning=false`) reasoning |
+| `--open-weights` | (unset) | Only models with (`--open-weights`) or without (`--open-weights=false`) open weights |
+| `--structured-output` | (unset) | Only models with (`--structured-output`) or without (`--structured-output=false`) structured output |
+| `--query` | (none) | Catalog query expression, e.g. `"provider:openai reasoning:true"` |
+
+Capability flags are three-state: omit for no filtering, pass the
+flag for models that have the capability, pass `=false` for models
+that do not. Filters combine with AND and apply before `--limit`
+truncates.
+
+`--query` keys are `provider`, `family`, `in`, `out`, `tool_call`,
+`reasoning`, `open_weights`, `structured_output`, `temperature` —
+note `in`/`out` rather than the flags' `input`/`output`, and
+underscores rather than hyphens. An unknown key is an error naming
+the key. Where a query key names the same thing as an explicit
+flag, the flag wins; modality lists merge instead.
+
+Every filter flag is rejected against `--endpoint`: a live
+`/v1/models` response carries ids and nothing to filter on.
+
+Truncation hints and the `catalog: cached …` provenance footer go
+to stderr, so `--format json` pipes cleanly. Under `--format
+json`/`yaml` the provenance is nested as a `_meta` object beside
+`data` instead.
+
+`--output` on this command is the output-modality filter and
+shadows kit's global `--output` destination path. To write a
+listing to a file, redirect stdout instead:
+
+```sh
+foo model list --limit=0 --format json > models.json
+```
 
 ## `provider`
 

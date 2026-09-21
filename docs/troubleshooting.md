@@ -231,9 +231,9 @@ foo --max-tokens 512 -m my-local-model "hello"
 ```
 
 **`model "..." not available`** against a local server is kit
-mapping a 404. Check the id against `curl -s
-http://127.0.0.1:8000/v1/models`, and check that `base_url` is not
-doubling the prefix (`/v1/v1/chat/completions`).
+mapping a 404. Check the id against `foo model list --endpoint
+http://127.0.0.1:8000/v1 --refresh`, and check that `base_url` is
+not doubling the prefix (`/v1/v1/chat/completions`).
 
 Full walkthrough:
 [how-to/use-a-local-endpoint.md](how-to/use-a-local-endpoint.md).

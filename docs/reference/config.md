@@ -164,6 +164,8 @@ take effect on every `foo` invocation.
 | `FOO_SECRETS_BACKEND` | `secrets.backend` | Secret backend |
 | `FOO_SECRETS_PREFIX` | `secrets.prefix` | Secret key prefix |
 | `FOO_SECRETS_SERVICE` | `secrets.service` | Secret service id |
+| `FOO_CACHE` | (XDG cache dir) | Directory holding foo's own caches, e.g. `foo model list --endpoint`'s inventory store. |
+| `FOO_CACHE_TTL` | (per-cache default) | Freshness window for foo's own caches, as a Go duration (`30s`, `1h`). `0` disables caching. Does not affect the aim catalog's 24h window, which aim owns. |
 
 ### XDG variables (kit-shared)
 
@@ -175,6 +177,7 @@ applies when the variable is unset.
 | `XDG_CONFIG_HOME` | `~/.config` | `foo/config.yaml`, `foo/patterns/` |
 | `XDG_STATE_HOME` | `~/.local/state` | `foo/embeddings.db`, `foo/schemas.db`, upgrade state |
 | `XDG_DATA_HOME` | `~/.local/share` | WSM workspace store (fragments) |
+| `XDG_CACHE_HOME` | `~/.cache` | `foo/model-endpoint-cache.db`, `hop/aim/` (models.dev catalog) |
 
 ## Kit `-c/--config` interaction
 
