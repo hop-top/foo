@@ -344,7 +344,7 @@ func TestModelList_FilterFlagsRegistered(t *testing.T) {
 		t.Fatal("`list` not registered")
 	}
 	for _, name := range []string{
-		"provider", "family", "input", "output", "query",
+		"provider", "family", "in", "out", "query",
 		"tool-call", "reasoning", "open-weights", "structured-output",
 	} {
 		f := list.Flags().Lookup(name)
@@ -433,12 +433,12 @@ func TestModelList_CapabilityTristates(t *testing.T) {
 }
 
 // TestModelList_ScalarAndRepeatableFlags covers the non-tristate flags,
-// including that --input/--output accumulate across repeats.
+// including that --in/--out accumulate across repeats.
 func TestModelList_ScalarAndRepeatableFlags(t *testing.T) {
 	got := captureFilter(t, sampleEntries())
 	_, _, err := runList(t,
 		"--provider=openai", "--family=gpt-4",
-		"--input=text", "--input=image", "--output=text")
+		"--in=text", "--in=image", "--out=text")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -842,7 +842,7 @@ func TestCatalogOnlyFlags_CoversEveryFilterFlag(t *testing.T) {
 	cmd := modelListCmd()
 
 	filterFlags := []string{
-		"provider", "family", "input", "output", "query",
+		"provider", "family", "in", "out", "query",
 		"tool-call", "reasoning", "open-weights", "structured-output",
 	}
 
@@ -1176,5 +1176,28 @@ func TestModelList_RefreshReportsACatalogRefetchFailure(t *testing.T) {
 	// single stale row reaches the reader.
 	if strings.Contains(stdout, "gpt-x") {
 		t.Errorf("rows rendered despite a refetch failure: %q", stdout)
+	}
+}
+
+// TestModelList_DoesNotShadowReservedGlobals is the regression guard for
+// the --output collision: `model list` declared a local --output
+// (modality filter) that masked kit's reserved persistent --output
+// (write-to-path). `model list --output /tmp/x.json` wrote no file,
+// printed no rows and exited 0 — the path was swallowed as a modality
+// filter matching nothing.
+//
+// kit reserves a family-wide set of output-shaping globals
+// (cli.go: "format", "cols", "columns", "template", "output", ...). A
+// leaf must not redeclare one; cobra resolves the local flag first and
+// the global becomes unreachable with no warning at all.
+func TestModelList_DoesNotShadowReservedGlobals(t *testing.T) {
+	// Names kit registers as persistent globals and owns family-wide.
+	reserved := []string{"output", "format", "cols", "columns", "template"}
+
+	cmd := modelListCmd()
+	for _, name := range reserved {
+		if f := cmd.Flags().Lookup(name); f != nil {
+			t.Errorf("model list declares a local --%s, shadowing kit's reserved global of the same name", name)
+		}
 	}
 }

@@ -144,8 +144,8 @@ Discover model ids and manage the default model selection.
 | `--refresh` | `false` | Bypass the catalog and endpoint caches and refetch |
 | `--provider` | (none) | Only models from this provider id (exact match) |
 | `--family` | (none) | Only models in this family (exact match) |
-| `--input` | (none) | Only models accepting this input modality (repeatable) |
-| `--output` | (none) | Only models producing this output modality (repeatable) |
+| `--in` | (none) | Only models accepting this input modality (repeatable) |
+| `--out` | (none) | Only models producing this output modality (repeatable) |
 | `--tool-call` | (unset) | Only models with (`--tool-call`) or without (`--tool-call=false`) tool calling |
 | `--reasoning` | (unset) | Only models with (`--reasoning`) or without (`--reasoning=false`) reasoning |
 | `--open-weights` | (unset) | Only models with (`--open-weights`) or without (`--open-weights=false`) open weights |
@@ -172,12 +172,12 @@ to stderr, so `--format json` pipes cleanly. Under `--format
 json`/`yaml` the provenance is nested as a `_meta` object beside
 `data` instead.
 
-`--output` on this command is the output-modality filter and
-shadows kit's global `--output` destination path. To write a
-listing to a file, redirect stdout instead:
+The modality filters are `--in` / `--out`, matching the `in:` and
+`out:` keys `--query` accepts. `--output` keeps its family-wide
+meaning here, so a listing writes to a file the usual way:
 
 ```sh
-foo model list --limit=0 --format json > models.json
+foo model list --limit=0 --format json --output models.json
 ```
 
 ## `provider`

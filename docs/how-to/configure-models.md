@@ -130,7 +130,7 @@ openai    gpt-5.6-terra  1050000  true   true       2026-07-09
 ```
 
 That is 48 OpenAI models down to 39 with tool calling. The other
-filters are `--family`, `--input` / `--output` (repeatable
+filters are `--family`, `--in` / `--out` (repeatable
 modalities, every listed one required), `--open-weights`,
 `--reasoning` and `--structured-output` — see the
 [command reference](../reference/commands.md#model) for the full
@@ -161,9 +161,8 @@ foo model list --limit=0 --format json > models.json
 Under `--format json` or `yaml` the cache provenance rides along as
 a `_meta` object beside `data` rather than as a footer.
 
-> On this command `--output` is the output-modality filter and
-> shadows kit's global `--output` destination path. Redirect stdout
-> as above instead of passing `--output models.json`.
+`--output` keeps its family-wide meaning, so `--output models.json`
+works too; the modality filters are `--in` / `--out`.
 
 ### 4. Show the current default
 

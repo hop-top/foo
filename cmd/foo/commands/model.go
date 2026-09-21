@@ -113,9 +113,15 @@ is cached for only ` + llm.DefaultEndpointCacheTTL.String() + `. --refresh bypas
 		"only models from this provider id (exact match)")
 	f.StringVar(&modelListFlags.family, "family", "",
 		"only models in this family (exact match)")
-	f.StringArrayVar(&modelListFlags.input, "input", nil,
+	// --in/--out rather than --input/--output: "output" is a
+	// kit-reserved persistent global (write-to-path, -o), and a local
+	// flag of that name masks it with no warning — the path is parsed
+	// as a modality and the write silently never happens. These names
+	// also match the query DSL's own keys, so `--in image` and
+	// `--query 'in:image'` finally say the same word.
+	f.StringArrayVar(&modelListFlags.input, "in", nil,
 		"only models accepting this input modality (repeatable)")
-	f.StringArrayVar(&modelListFlags.output, "output", nil,
+	f.StringArrayVar(&modelListFlags.output, "out", nil,
 		"only models producing this output modality (repeatable)")
 	f.BoolVar(&modelListFlags.toolCall, "tool-call", false,
 		"only models with (--tool-call) or without (--tool-call=false) tool calling")
@@ -207,8 +213,8 @@ var refreshCatalog = func(ctx context.Context) error {
 var catalogOnlyFlags = []string{
 	"provider",
 	"family",
-	"input",
-	"output",
+	"in",
+	"out",
 	"query",
 	"tool-call",
 	"reasoning",
