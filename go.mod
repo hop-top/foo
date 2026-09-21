@@ -10,12 +10,13 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/net v0.55.0
 	golang.org/x/term v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	hop.top/aim v0.1.0-alpha.5
-	hop.top/kit v0.5.0-alpha.7
+	hop.top/kit v0.5.0-alpha.9
 	hop.top/wsm v0.0.0-20260913023204-6117d78251e7
 	hop.top/xrr v0.1.0-alpha.5
 )
@@ -71,7 +72,6 @@ require (
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

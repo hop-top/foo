@@ -457,7 +457,7 @@ func (c *Client) enrichUnknownModel(err error) error {
 	}
 	return fmt.Errorf(
 		"%w; %q matched no known model prefix, so foo assumed an OpenAI-compatible provider and never asked anything else. "+
-			"If %[2]q is a RouteLLM tier, send it to your router: -m '%[2]s?base_url=$ROUTELLM_BASE_URL/v1'. "+
+			"If %[2]q is a RouteLLM tier, name the scheme: -m 'routellm://%[2]s'. "+
 			"If it lives on another endpoint, point foo at it with ?base_url=, LLM_BASE_URL, or providers.<scheme>.base_url (docs/how-to/use-a-local-endpoint.md). "+
 			"`foo model list` shows the ids foo can reach",
 		err, c.guessedModel)

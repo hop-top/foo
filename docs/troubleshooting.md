@@ -76,15 +76,22 @@ foo -m private "hi"
 ```
 
 The request never reached your router. foo cannot tell a tier name from
-a typo without asking a server, so name the endpoint yourself. Per
-invocation:
+a typo without asking a server, so name the scheme yourself:
 
 ```sh
-foo -m 'private?base_url=http://127.0.0.1:6060/v1' "hi"
+foo -m 'routellm://private' "hi"
 ```
 
-Or set it once for every call via `providers.openai.base_url` in
-`llm.yaml`, or `LLM_BASE_URL` for one shell — see
+The `routellm://` scheme takes a tier name or the classic
+`router-<name>:<threshold>` form; the server resolves the router and
+threshold from its own config either way. Its endpoint comes from
+`providers.routellm.routellm.base_url` in `llm.yaml` (default
+`http://localhost:6060`) — see
+[Route across models](how-to/route-across-models.md).
+
+If the id belongs to some other OpenAI-compatible server rather than a
+router, point foo at that endpoint instead with `?base_url=`,
+`LLM_BASE_URL`, or `providers.openai.base_url` — see
 [Use a local endpoint](how-to/use-a-local-endpoint.md).
 
 To confirm which ids foo can actually reach, run `foo model list`.
