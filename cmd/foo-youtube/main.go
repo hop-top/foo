@@ -222,11 +222,22 @@ interrogates it with --ext-info.`,
 	root.Cmd.SilenceUsage = true
 	root.Cmd.SilenceErrors = true
 
+	// Each negation binds its OWN variable. Binding --no-X to the same
+	// pointer as --X writes the negation's default (false) through that
+	// pointer at registration time, so both switches silently land on
+	// false and a bare invocation does no work — while --help still
+	// advertises the first registration's `true`. The RunE
+	// reconciliation below is what actually applies a negation.
+	var (
+		noMetadata   bool
+		noTranscript bool
+	)
+
 	flags := root.Cmd.Flags()
 	flags.BoolVar(&metadata, "metadata", true, "Include video metadata")
-	flags.BoolVar(&metadata, "no-metadata", false, "Skip video metadata")
+	flags.BoolVar(&noMetadata, "no-metadata", false, "Skip video metadata")
 	flags.BoolVar(&transcript, "transcript", true, "Extract transcript")
-	flags.BoolVar(&transcript, "no-transcript", false, "Skip transcript extraction")
+	flags.BoolVar(&noTranscript, "no-transcript", false, "Skip transcript extraction")
 	flags.BoolVar(&timestamps, "timestamps", false, "Include timestamps in transcript")
 	flags.BoolVar(&comments, "comments", false, "Include top comments")
 	flags.BoolVar(&noCache, "no-cache", false, "Bypass the yt-dlp output cache for this run")
@@ -251,7 +262,7 @@ interrogates it with --ext-info.`,
 		if cmd.Flags().Changed("no-transcript") {
 			transcript = !boolFlag(cmd, "no-transcript")
 		}
-		return run(cmd, args, runOpts{
+		return runFunc(cmd, args, runOpts{
 			metadata:   metadata,
 			transcript: transcript,
 			timestamps: timestamps,
@@ -270,6 +281,12 @@ func boolFlag(cmd *cobra.Command, name string) bool {
 	v, _ := cmd.Flags().GetBool(name)
 	return v
 }
+
+// runFunc is the seam between flag parsing and the extraction itself.
+// It defaults to run; tests swap it to capture the runOpts the parsed
+// flags actually produce, so flag registration and the paired-negation
+// reconciliation are exercised as written rather than reimplemented.
+var runFunc = run
 
 type runOpts struct {
 	metadata   bool
