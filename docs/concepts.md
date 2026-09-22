@@ -132,7 +132,9 @@ every command a small set of guarantees you can rely on:
   action.
 - **Status surface.** `foo status` is the kit-shipped health probe.
   It boots cleanly even when the rest of foo is offline; use it to
-  introspect profile, env, workspace, auth, and config.
+  introspect profile, env, workspace, auth, and config. Pass
+  `--format json` or `--format yaml` — the default table format
+  prints nothing today.
 - **Config layering.** `-c/--config` (a kit global) layers extra
   config files or key=value overrides on top of the discovered
   user/project config.

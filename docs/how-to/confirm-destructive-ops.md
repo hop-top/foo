@@ -122,11 +122,11 @@ The default is `auto`. The intent is: nothing scary happens
 unattended, nothing slow happens when a human is sitting there.
 
 `foo status` is the kit-shipped status command. It boots cleanly
-even when the rest of foo is misconfigured. Use it to confirm
-which kit version is running:
+even when the rest of foo is misconfigured. Ask for a structured
+format — the default table format prints nothing today:
 
 ```sh
-foo status
+foo status --format json
 ```
 
 ## Options

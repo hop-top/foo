@@ -240,11 +240,17 @@ A degraded entry usually means one of:
 - Workspace store not yet initialized.
 - Config file at a path foo cannot read.
 
-Re-run with `--verbose` (`-V`) for the detail:
+Ask for a structured format to read the detail:
 
 ```sh
-foo status -V
+foo status --format json
 ```
+
+`--format json` and `--format yaml` are currently the only formats
+that print anything. The default table format renders nothing,
+because the status payload carries no column tags for the table
+renderer to pick up — a kit-side gap, not a foo misconfiguration.
+`--verbose` (`-V`) does not work around it.
 
 Address the specific entry and re-run; status is purely
 informational and never mutates state.
