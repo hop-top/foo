@@ -16,7 +16,7 @@ require (
 	golang.org/x/term v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	hop.top/aim v0.1.0-alpha.5
-	hop.top/kit v0.5.0-alpha.10
+	hop.top/kit v0.5.0-alpha.11
 	hop.top/wsm v0.0.0-20260913023204-6117d78251e7
 	hop.top/xrr v0.1.0-alpha.5
 )
