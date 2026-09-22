@@ -128,10 +128,24 @@ func New(v string) *kitcli.Root {
 		// set. Bound to package-level pointers so initializeRuntime can
 		// honor them without round-tripping through viper.
 		Globals: []kitcli.Flag{
-			{Name: "profile", Usage: "Select the aps profile scoping config + secret lookups", StringVar: &profileName},
-			{Name: "instance", Usage: "Select the backend instance (single-instance build: currently a no-op)", StringVar: &instanceName},
+			{Name: "profile", Usage: "Namespace secret lookups under an aps profile (keyring backend only)", StringVar: &profileName},
+			{Name: "instance", Usage: "Reserved for multi-instance builds; no effect in this build", StringVar: &instanceName},
 		},
 	}, kitcli.WithStatus(kitcli.StatusConfig{}))
+
+	// --instance is wired end to end (it feeds config.Secrets.Service in
+	// initializeRuntime) but foo is a single-instance local-state build,
+	// so there is no second backend for it to select: setting it only
+	// renames the keyring service. Advertising it in --help implies a
+	// capability that does not exist. Hide rather than remove — the flag
+	// stays registered, so scripts already passing it keep parsing
+	// instead of dying on an unknown flag, and the forward-compat wiring
+	// survives for the multi-instance build. kit's cli.Flag has no
+	// Hidden field, so mark it on the persistent flag set after
+	// registration.
+	if f := root.Cmd.PersistentFlags().Lookup("instance"); f != nil {
+		f.Hidden = true
+	}
 
 	logger = kitlog.New(root.Viper)
 	slog.SetDefault(slog.New(logger))

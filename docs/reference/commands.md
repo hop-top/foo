@@ -88,6 +88,7 @@ foo < /dev/null
 | `--verbose` / `-V` | Increase log verbosity |
 | `--api-version` | Request a specific CLI schema version |
 | `--policy` | Named delegation policy |
+| `--profile` | Namespace secret lookups under an aps profile — binds on the `keyring` secrets backend only (foo defaults to `env`, where it has no effect) |
 | `--progress-format` | Progress output format (`human` or `json`) |
 
 ## `embed`
