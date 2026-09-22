@@ -164,6 +164,20 @@ continues (does not fail the run). A non-zero exit produces no stdout,
 which downstream surfaces as `no prompt provided (stdin was empty)` —
 see [Troubleshooting](../../docs/troubleshooting.md#empty-pipe-into-foo).
 
+A video with **no English captions** is a fetch failure (exit 1), not an
+empty `## Transcript` section:
+
+```
+$ foo youtube "https://youtu.be/<no-captions-id>"
+GENERIC: fetching transcript: no English transcript available for this video
+```
+
+`yt-dlp` exits 0 for a captionless video, so the absence has to be
+detected here. Reporting it as success would emit a document with
+nothing in it — which downstream reads as an empty prompt rather than as
+a missing transcript. Pass `--no-transcript` to extract metadata alone
+from such a video.
+
 ## Caching
 
 Raw `yt-dlp` output is cached **on by default**, keyed by a hash of the

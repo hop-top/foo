@@ -669,47 +669,108 @@ func fetchMetadata(ctx context.Context, url string) (*videoMetadata, error) {
 	return &md, nil
 }
 
+// errNoTranscript reports a video yt-dlp fetched successfully but which
+// carries no English subtitle track. It is a real failure, not an empty
+// section: a silently empty transcript exits 0 with nothing on stdout,
+// which downstream reads as "summarize this" with an empty prompt. The
+// caller wraps it into the exit-1 fetch error so the operator learns the
+// video has no captions instead of receiving a blank document.
+var errNoTranscript = errors.New("no English transcript available for this video")
+
+// transcriptSubLang is the subtitle language yt-dlp is asked for.
+//
+// Exactly "en", never a pattern. yt-dlp anchors --sub-lang as a regex,
+// so "en" matches the English track alone, while "en.*" would also pull
+// en-en and the ~1.2 MB en-orig track, and a bare language prefix would
+// drag in the hundreds of <lang>-en machine translations this video
+// exposes. Selecting the wrong one silently yields a translated or
+// duplicated transcript, so the exact tag is load-bearing.
+const transcriptSubLang = "en"
+
+// fetchTranscript downloads the English subtitle track and renders it as
+// text.
+//
+// yt-dlp has no "subtitles on stdout" mode: -o is its output *template*,
+// so `-o -` does not stream — it writes a file literally named "-.en.json3"
+// into the process's working directory and leaves stdout empty. This
+// downloads into a temp dir with a real template instead, reads the
+// produced .json3 back, and removes the directory afterwards, so nothing
+// is left in the user's cwd.
 func fetchTranscript(ctx context.Context, url string, withTimestamps bool) (string, error) {
-	out, err := runYTDLP(ctx, []string{
+	dir, err := os.MkdirTemp("", "foo-youtube-subs-")
+	if err != nil {
+		return "", fmt.Errorf("subtitle temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	// The output template is deliberately id-only and extension-free:
+	// yt-dlp appends ".<lang>.<format>" itself, and keeping the video
+	// title out of the name avoids filesystem-hostile characters.
+	if _, err := runYTDLP(ctx, []string{
 		"--skip-download",
 		"--write-subs",
 		"--write-auto-subs",
-		"--sub-lang", "en",
+		"--sub-lang", transcriptSubLang,
 		"--sub-format", "json3",
 		"--no-playlist",
-		"-o", "-",
+		"-o", filepath.Join(dir, "%(id)s"),
 		url,
-	})
-	if err != nil {
-		// Fallback: try getting subtitles via different approach
-		return fetchTranscriptFallback(ctx, url, withTimestamps)
-	}
-
-	return parseTranscript(out, withTimestamps)
-}
-
-func fetchTranscriptFallback(ctx context.Context, url string, withTimestamps bool) (string, error) {
-	// Use yt-dlp to get subtitle file
-	out, err := runYTDLP(ctx, []string{
-		"--skip-download",
-		"--write-subs",
-		"--write-auto-subs",
-		"--sub-lang", "en",
-		"--sub-format", "vtt",
-		"--print", "subtitle",
-		"--no-playlist",
-		url,
-	})
-	if err != nil {
+	}); err != nil {
 		return "", fmt.Errorf("yt-dlp transcript: %w", err)
 	}
 
-	text := strings.TrimSpace(string(out))
-	if text == "" {
-		return "", fmt.Errorf("no transcript available for this video")
+	data, err := readSubtitleFile(dir)
+	if err != nil {
+		return "", err
 	}
 
+	text, err := parseTranscript(data, withTimestamps)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", errNoTranscript
+	}
 	return text, nil
+}
+
+// readSubtitleFile returns the contents of the English json3 subtitle
+// file yt-dlp wrote into dir.
+//
+// A successful yt-dlp exit with no subtitle file means the video has no
+// English captions — yt-dlp reports that on stderr and still exits 0, so
+// the missing file is the only signal available here. That is
+// errNoTranscript, never an empty string: the whole point of this path
+// is that "nothing" must not reach stdout as a silent success.
+func readSubtitleFile(dir string) ([]byte, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("reading subtitle dir: %w", err)
+	}
+
+	// Prefer the exact ".<lang>.json3" suffix. yt-dlp is asked for one
+	// language, but pinning the suffix keeps a future multi-track change
+	// from picking an auto-translation by directory order.
+	want := "." + transcriptSubLang + ".json3"
+	var match string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), want) {
+			match = e.Name()
+			break
+		}
+	}
+	if match == "" {
+		return nil, errNoTranscript
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, match))
+	if err != nil {
+		return nil, fmt.Errorf("reading subtitle file: %w", err)
+	}
+	return data, nil
 }
 
 type json3Transcript struct {
