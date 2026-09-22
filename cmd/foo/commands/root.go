@@ -147,6 +147,7 @@ func New(v string) *kitcli.Root {
 		f.Hidden = true
 	}
 
+	installStyledTables(root)
 	logger = kitlog.New(root.Viper)
 	slog.SetDefault(slog.New(logger))
 
