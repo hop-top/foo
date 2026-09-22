@@ -197,6 +197,7 @@ func newRoot() *kitcli.Root {
 		metadata   bool
 		noCache    bool
 		debug      bool
+		raw        bool
 	)
 
 	root := kitcli.New(kitcli.Config{
@@ -211,14 +212,20 @@ Arguments:
   <url|id>  YouTube video URL (youtube.com/watch, youtu.be, or
             youtube.com/shorts), or a bare 11-character video ID
             such as dQw4w9WgXcQ. Required.
+  <prompt>  Optional question to answer about the video. With one,
+            the transcript is sent to a model and the answer is
+            printed. Without one, the markdown itself is printed, so
+            piping foo-youtube into foo keeps working.
+            FOO_YOUTUBE_PROMPT, then FOO_PROMPT, supply a default;
+            --raw suppresses both and always prints markdown.
 
 It is an external plugin for foo: the host discovers it on $PATH and
 interrogates it with --ext-info.`,
 		},
 	}, kitcli.WithStatus(kitcli.StatusConfig{}))
 
-	root.Cmd.Use = "foo-youtube [flags] <url|id>"
-	root.Cmd.Args = cobra.MaximumNArgs(1)
+	root.Cmd.Use = "foo-youtube [flags] <url|id> [prompt]"
+	root.Cmd.Args = cobra.MaximumNArgs(2)
 	root.Cmd.SilenceUsage = true
 	root.Cmd.SilenceErrors = true
 
@@ -241,6 +248,7 @@ interrogates it with --ext-info.`,
 	flags.BoolVar(&timestamps, "timestamps", false, "Include timestamps in transcript")
 	flags.BoolVar(&comments, "comments", false, "Include top comments")
 	flags.BoolVar(&noCache, "no-cache", false, "Bypass the yt-dlp output cache for this run")
+	flags.BoolVar(&raw, "raw", false, "Print the markdown even when a prompt is configured")
 	// yt-dlp's own stderr is suppressed by default so it never mixes
 	// with this sidecar's progress lines; --debug restores the raw
 	// passthrough for diagnosis. -V/--verbose is kit-owned (log level),
@@ -269,6 +277,7 @@ interrogates it with --ext-info.`,
 			comments:   comments,
 			noCache:    noCache,
 			debug:      debug,
+			raw:        raw,
 		})
 	}
 
@@ -295,11 +304,32 @@ type runOpts struct {
 	comments   bool
 	noCache    bool
 	debug      bool
+	raw        bool
 }
 
 func run(cmd *cobra.Command, args []string, opts runOpts) error {
 	if len(args) == 0 {
 		return usageErrorf("YouTube URL required")
+	}
+
+	// Resolve the question before any fetching: --raw suppresses the
+	// prompt path entirely so a configured FOO_YOUTUBE_PROMPT cannot
+	// hijack a pipeline that wants the markdown. A second positional
+	// outranks both env names; no prompt from any source leaves
+	// question empty and the markdown goes to stdout as it always has.
+	var promptArg string
+	if len(args) > 1 {
+		promptArg = args[1]
+	}
+	question := resolvePrompt(promptArg)
+	if opts.raw {
+		question = ""
+	}
+	// A prompt is a question about what the video says, so the
+	// transcript is not optional on that path. Refuse rather than
+	// silently answering from the metadata header alone.
+	if question != "" && !opts.transcript {
+		return usageErrorf("--no-transcript cannot answer a prompt; drop the prompt or drop --no-transcript")
 	}
 
 	// Normalize before anything downstream sees the argument: a bare
@@ -371,12 +401,38 @@ func run(cmd *cobra.Command, args []string, opts runOpts) error {
 	// line went to the reporter's stderr stream.
 	var buf bytes.Buffer
 	renderMarkdown(&buf, md, transcriptText, commentList)
-	if _, err := cmd.OutOrStdout().Write(buf.Bytes()); err != nil {
-		return fetchErrorf("writing markdown: %v", err)
+
+	// With a question, the markdown is the model's input rather than
+	// the user's output; stdout then carries the answer alone so it
+	// stays as pipeable as the markdown was.
+	payload := buf.Bytes()
+	if question != "" {
+		reply, err := answerFunc(ctx, resolveModel(), buildPrompt(question, buf.String()))
+		if err != nil {
+			return promptError(err)
+		}
+		payload = []byte(strings.TrimRight(reply, "\n") + "\n")
 	}
 
-	emitDone(ctx, url, int64(buf.Len()), estimateTokens(buf.String()))
+	if _, err := cmd.OutOrStdout().Write(payload); err != nil {
+		return fetchErrorf("writing output: %v", err)
+	}
+
+	emitDone(ctx, url, int64(len(payload)), estimateTokens(string(payload)))
 	return nil
+}
+
+// promptError maps a completion failure onto the §8.1 exit-code set. An
+// error that already carries an envelope (the missing-key precheck)
+// keeps its own code; anything the provider raised — including a
+// context-window overflow on a long video — surfaces verbatim under the
+// generic code rather than being reinterpreted here.
+func promptError(err error) error {
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee
+	}
+	return fetchErrorf("answering prompt: %v", err)
 }
 
 // wireBusNetwork attaches a NetworkAdapter to the in-process bus so the
