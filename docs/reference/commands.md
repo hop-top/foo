@@ -8,12 +8,46 @@ the real `cobra.Command.Use` strings; descriptions come from
 
 | Command | Synopsis | Description | How-to |
 |---------|----------|-------------|--------|
-| `foo [prompt]` | `foo [command] [prompt] [--flags]` | Run a one-shot prompt or open the REPL when no prompt given | [Quickstart](../quickstart.md) |
+| `foo` | `foo [command] [--flags]` | Run a subcommand, a one-shot prompt, or open the REPL — see [Invocation modes](#invocation-modes) | [Quickstart](../quickstart.md) |
 | `foo status` | `foo status [--flags]` | Show kit runtime status (profile, env, workspace, auth, config) | [Troubleshooting](../troubleshooting.md#foo-status-shows-degraded-health) |
 | `foo repl` | `foo repl` | Open an interactive REPL session — TTY required (Enter sends; Ctrl+C/Esc exits) | (No how-to; same as bare `foo` on a TTY) |
 | `foo upgrade` | `foo upgrade` | Upgrade foo to the latest version | [Upgrade foo](../how-to/upgrade-foo.md) |
 | `foo completion` | `foo completion [shell]` | Generate the autocompletion script for the specified shell | (kit-shipped) |
 | `foo <plugin>` | `foo <plugin> [argv...]` | Dispatch to `foo-<plugin>` binary on `$PATH` (PLUGINS group, descriptions from `--ext-info`) | [Use plugins](../how-to/use-plugins.md) |
+
+### Invocation modes
+
+The bare `foo` command takes **either** a subcommand **or** a single
+positional prompt — never both. With neither it opens the REPL. The
+usage line cannot express that alternation (it renders one line), so the
+three modes are:
+
+```
+foo "explain this stack trace"   # one-shot prompt
+foo model list                   # subcommand
+foo                              # REPL (TTY required)
+```
+
+Root flags such as `-m` / `--model` are local to the root command, so
+they apply to the prompt form only. A subcommand rejects them wherever
+they appear on the line:
+
+```
+foo -m gpt-4o-mini strategy list
+# USAGE: unknown flag -m
+# Cause: no flag named -m on foo strategy list
+```
+
+Only persistent flags (`--budget`, `--picker-debug`, and the kit
+globals) are inherited by subcommands.
+
+Piping with no positional prompt is an error rather than a REPL, since
+stdin is not a terminal:
+
+```
+foo < /dev/null
+# GENERIC: no prompt provided (stdin was empty); pass a positional prompt or pipe non-empty content
+```
 
 ## Root flags
 

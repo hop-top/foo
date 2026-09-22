@@ -132,10 +132,24 @@ func New(v string) *kitcli.Root {
 			{Name: "instance", Usage: "Select the backend instance (single-instance build: currently a no-op)", StringVar: &instanceName},
 		},
 	}, kitcli.WithStatus(kitcli.StatusConfig{}))
+
 	logger = kitlog.New(root.Viper)
 	slog.SetDefault(slog.New(logger))
 
-	root.Cmd.Use = "foo [prompt]"
+	// Use carries no positional placeholder on purpose. fang synthesizes
+	// the usage line as `<name> [command] <other args> [--flags]`: it
+	// injects [command] ahead of anything bracketed in Use and cannot
+	// render alternatives. A Use of "foo [prompt]" therefore printed
+	// `foo [command] [prompt] [--flags]`, which reads as "a command AND
+	// then a prompt" — but the root takes EITHER a subcommand OR a single
+	// bare prompt (Args=MaximumNArgs(1), RunE=runPromptOrREPL), and
+	// neither opens the REPL. Dropping the placeholder yields the
+	// least-wrong single line fang can produce; Example carries the three
+	// real modes, which fang renders as an EXAMPLES block below USAGE.
+	root.Cmd.Use = "foo"
+	root.Cmd.Example = `foo "explain this stack trace"
+foo model list
+foo`
 	root.Cmd.SilenceUsage = true
 	root.Cmd.SilenceErrors = true
 	root.Cmd.SuggestionsMinimumDistance = 2
