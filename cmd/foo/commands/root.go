@@ -95,6 +95,7 @@ var commandGroups = map[string]string{
 	"config":   "management",
 	"alias":    "management",
 	"upgrade":  "management",
+	"status":   "management",
 }
 
 // version is bound by main via ldflags (-X main.version) and threaded

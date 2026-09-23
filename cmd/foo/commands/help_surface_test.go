@@ -105,3 +105,64 @@ func TestProfileFlag_VisibleAndHonest(t *testing.T) {
 			"otherwise it reads as universally effective", f.Usage)
 	}
 }
+
+// TestEveryVisibleCommand_IsGrouped stops a framework-injected command
+// from silently claiming the top of --help.
+//
+// applyCommandGroups only stamps a GroupID when commandGroups has an
+// entry for the command name. kit registers `status` itself, foo never
+// claimed it, so it stayed ungrouped — and cobra prints ungrouped
+// commands FIRST, under a bare "COMMANDS" heading, above KNOWLEDGE and
+// ORGANIZE. A framework diagnostic outranked every command a user came
+// for, and nothing failed.
+//
+// Every kit upgrade can add another root command, so assert the
+// invariant rather than the one name: any visible command must carry a
+// GroupID, and that ID must name a registered group (an unknown ID
+// drops the command from help entirely instead of promoting it).
+func TestEveryVisibleCommand_IsGrouped(t *testing.T) {
+	root := New("test")
+
+	registered := make(map[string]bool, len(root.Cmd.Groups()))
+	for _, g := range root.Cmd.Groups() {
+		registered[g.ID] = true
+	}
+
+	for _, cmd := range root.Cmd.Commands() {
+		if cmd.Hidden || cmd.Name() == "help" {
+			continue
+		}
+		switch {
+		case cmd.GroupID == "":
+			t.Errorf("command %q has no GroupID: cobra prints ungrouped "+
+				"commands above every titled group, so it outranks the "+
+				"commands users came for — add it to commandGroups",
+				cmd.Name())
+		case !registered[cmd.GroupID]:
+			t.Errorf("command %q has GroupID %q, which is not a "+
+				"registered group: cobra omits it from help entirely",
+				cmd.Name(), cmd.GroupID)
+		}
+	}
+}
+
+// TestStatusCmd_IsManagement pins the specific regression above: kit's
+// runtime diagnostic belongs with the other management commands, not in
+// the unnamed group ahead of them.
+func TestStatusCmd_IsManagement(t *testing.T) {
+	root := New("test")
+
+	for _, cmd := range root.Cmd.Commands() {
+		if cmd.Name() != "status" {
+			continue
+		}
+		if cmd.GroupID != "management" {
+			t.Fatalf("status GroupID = %q; want %q — it reports kit's "+
+				"runtime state, which is management, not a headline "+
+				"feature", cmd.GroupID, "management")
+		}
+		return
+	}
+	t.Fatal("no `status` command registered: kit is expected to supply " +
+		"it; if kit dropped it, remove its commandGroups entry too")
+}
