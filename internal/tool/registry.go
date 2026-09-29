@@ -3,6 +3,8 @@ package tool
 import (
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 
 	"hop.top/kit/go/ai/llm"
@@ -76,18 +78,76 @@ func (r *Registry) ToolDefs() []llm.ToolDef {
 	return defs
 }
 
-// Filter returns a new registry containing only the named tools.
-// Missing names are silently skipped.
-func (r *Registry) Filter(names []string) *Registry {
-	filtered := NewRegistry()
+// Select returns a new registry containing only the named tools.
+// Repeated names are kept once. Any name not in the registry fails the
+// whole selection with an *UnknownToolError: running the model with a
+// silently shortened tool list turns a typo into a wrong answer.
+func (r *Registry) Select(names []string) (*Registry, error) {
+	selected := NewRegistry()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	var unknown []string
+	seenUnknown := make(map[string]bool)
 	for _, n := range names {
-		if t, ok := r.tools[n]; ok {
-			filtered.tools[n] = t
-			filtered.order = append(filtered.order, n)
+		t, ok := r.tools[n]
+		if !ok {
+			if !seenUnknown[n] {
+				seenUnknown[n] = true
+				unknown = append(unknown, n)
+			}
+			continue
 		}
+		if _, dup := selected.tools[n]; dup {
+			continue
+		}
+		selected.tools[n] = t
+		selected.order = append(selected.order, n)
 	}
-	return filtered
+	if len(unknown) > 0 {
+		available := make([]string, len(r.order))
+		copy(available, r.order)
+		sort.Strings(available)
+		return nil, &UnknownToolError{Unknown: unknown, Available: available}
+	}
+	return selected, nil
+}
+
+// UnknownToolError reports tool names that matched nothing in the
+// registry, alongside every name that would have.
+type UnknownToolError struct {
+	// Unknown lists the unmatched names in the order given.
+	Unknown []string
+	// Available lists every registered tool name, sorted.
+	Available []string
+}
+
+// Summary names the unmatched tools without the available list, e.g.
+// `unknown tool "x"` or `unknown tools "a", "b"`.
+func (e *UnknownToolError) Summary() string {
+	quoted := make([]string, len(e.Unknown))
+	for i, n := range e.Unknown {
+		quoted[i] = strconv.Quote(n)
+	}
+	noun := "tool"
+	if len(e.Unknown) > 1 {
+		noun = "tools"
+	}
+	return "unknown " + noun + " " + strings.Join(quoted, ", ")
+}
+
+func (e *UnknownToolError) Error() string {
+	return fmt.Sprintf("%s; available: %s", e.Summary(), strings.Join(e.Available, ", "))
+}
+
+// SourceBuiltin is the SourceOf value for tools compiled into foo.
+const SourceBuiltin = "builtin"
+
+// SourceOf reports where a tool comes from: the binary path for a tool
+// backed by an external executable, SourceBuiltin otherwise.
+func SourceOf(t Tool) string {
+	if p, ok := t.(interface{ Path() string }); ok {
+		return p.Path()
+	}
+	return SourceBuiltin
 }

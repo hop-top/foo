@@ -18,6 +18,7 @@ cause → fix; the longer sections below give the detail.
 | `model "..." not available (provider "openai")` for an id you never meant to send to OpenAI | Unrecognised model id; foo assumed an OpenAI-compatible provider | [Point foo at the right endpoint](#unknown-model-id-routed-to-openai) |
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
+| `unknown tool "..."` | `-T` name not a builtin or a `foo-tool-*` on `$PATH` | `foo tool list` |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
 | `interactive REPL requires a terminal` | `foo repl` invoked without a TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
 | `no prompt provided (stdin was empty)` | `foo` got an empty pipe and no positional prompt | [Diagnose the upstream pipe](#empty-pipe-into-foo) |
