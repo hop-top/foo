@@ -46,6 +46,10 @@ func TestToolShims_Acceptance(t *testing.T) {
 	mkfile(t, filepath.Join(to, "secrets", "key.txt"), "needle KEY\n")
 	mkfile(t, filepath.Join(to, "secrets", "nested", "deep.txt"), "needle DEEP\n")
 	mkfile(t, filepath.Join(to, "private", "p.txt"), "hidden\n")
+	mkfile(t, filepath.Join(to, ".ssh", "id"), "needle SSHPRIV\n")
+	mkfile(t, filepath.Join(to, ".aws", "credentials"), "needle AWSCRED\n")
+	mkfile(t, filepath.Join(to, ".aws", "config"), "needle AWSCFG\n")
+	mkfile(t, filepath.Join(to, ".sshx", "f"), "needle lookalike\n")
 	mkfile(t, filepath.Join(to, "big"), strings.Repeat("0123456789abcdef", 10<<16)) // 10 MiB
 	mkfile(t, filepath.Join(to, "img.png"), "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 	mkfile(t, e.path("-R"), "outside the grant\n")
@@ -153,6 +157,33 @@ func TestToolShims_Acceptance(t *testing.T) {
 			require.Contains(t, o.stdout(), "alpha needle")
 			require.NotContains(t, o.stdout(), "KEY")
 			require.NotContains(t, o.stdout(), "DEEP")
+		}},
+
+		// Additions: credential dirs inside the grant, not only under home.
+		{"cat a project .ssh/id denied", e.root, "cat", map[string]any{"path": []string{to + "/.ssh/id"}}, func(t *testing.T, o outcome) {
+			wantRefused(t, o, "denied", "path", "deny rule")
+			require.NotContains(t, o.Raw, "SSHPRIV")
+		}},
+		{"cat a project .aws/credentials denied", e.root, "cat", map[string]any{"path": []string{to + "/.aws/credentials"}}, func(t *testing.T, o outcome) {
+			wantRefused(t, o, "denied", "path", "deny rule")
+			require.NotContains(t, o.Raw, "AWSCRED")
+		}},
+		{"cat a project .aws/config denied", e.root, "cat", map[string]any{"path": []string{to + "/.aws/config"}}, func(t *testing.T, o outcome) {
+			wantRefused(t, o, "denied", "path", "deny rule")
+			require.NotContains(t, o.Raw, "AWSCFG")
+		}},
+		{"find omits project .ssh/ and .aws/", e.root, "find", map[string]any{"path": []string{to}}, func(t *testing.T, o outcome) {
+			wantRan(t, o)
+			require.Contains(t, o.stdout(), to+"/.sshx/f")
+			require.NotContains(t, o.stdout(), to+"/.ssh\n")
+			require.NotContains(t, o.stdout(), to+"/.ssh/")
+			require.NotContains(t, o.stdout(), to+"/.aws")
+		}},
+		{"grep recursive skips project .ssh/ and .aws/", e.root, "grep", map[string]any{"pattern": "needle", "path": []string{to}, "recursive": true}, func(t *testing.T, o outcome) {
+			wantRan(t, o)
+			require.Contains(t, o.stdout(), "needle lookalike")
+			require.NotContains(t, o.stdout(), "SSHPRIV")
+			require.NotContains(t, o.stdout(), "AWS")
 		}},
 
 		// Additions: argument smuggling.

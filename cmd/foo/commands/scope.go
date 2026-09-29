@@ -52,7 +52,8 @@ func scopeCmd() *cobra.Command {
 may read, write or execute, from scope.yaml in foo's config directory
 (and /etc/xdg/foo/scope.yaml), plus a built-in deny list for secrets
 (.env, keys, secrets*, ~/.ssh, ...) that also covers everything under a
-directory with such a name. With no scope.yaml every tool call is
+directory with such a name, and credential stores (.ssh/, .aws/,
+.kube/, .netrc, ...) at any depth, not only in home. With no scope.yaml every tool call is
 denied.
 
 A path a deny rule matches, or that no allow rule covers, is handled by
