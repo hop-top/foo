@@ -315,7 +315,13 @@ For every call, before anything runs, foo:
    on macOS, `~/code/**` where `~/code` is a link). A link from
    outside into the grant is no way in, as one from inside to outside
    is no way out; otherwise what the link points to would be the
-   answer.
+   answer. Only links in the path as sent are held to this: a link
+   the model reaches *through* another link (a granted `p/x` pointing
+   at `/out/y`, which points back into the grant) is followed like
+   any other, so the answer can still show whether `/out/y` leads into
+   the grant. The model cannot create links, so this needs one already
+   on disk; keep links that leave the grant out of granted trees if
+   that matters.
 4. Runs the pinned binary (`/bin/ls`, never a `$PATH` lookup) with
    the **checked** canonical paths, each after a literal `--`, so a
    path named `-R` is a file, never a flag.
