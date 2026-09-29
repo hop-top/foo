@@ -111,8 +111,9 @@ error, never silently dropped.
 `foo <name>` dispatches to a binary on `$PATH` named `foo-<name>`
 when no built-in subcommand matches. This is the Git extension
 convention: write a plugin in any language, drop it on the PATH,
-and it becomes a foo subcommand. Implement `--ext-info` to return
-metadata in the standard JSON shape.
+and it becomes a foo subcommand. `foo-tool-<name>` binaries are
+the exception: they are LLM tools, never subcommands. Implement
+`--ext-info` to return metadata in the standard JSON shape.
 
 Plugins typically emit markdown on stdout, which composes with
 foo's stdin reader: `foo youtube ... | foo -p summarize`. End-to-end
