@@ -50,6 +50,9 @@ func (t *ExternalTool) Name() string                { return t.name }
 func (t *ExternalTool) Description() string         { return t.description }
 func (t *ExternalTool) Parameters() json.RawMessage { return t.parameters }
 
+// Path returns the absolute path of the backing binary.
+func (t *ExternalTool) Path() string { return t.path }
+
 // Execute runs the external binary with JSON stdin/stdout protocol.
 func (t *ExternalTool) Execute(
 	ctx context.Context, args json.RawMessage,

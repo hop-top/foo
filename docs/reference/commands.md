@@ -59,7 +59,7 @@ foo < /dev/null
 | `--max-tokens` | | `0` | Cap completion length in tokens (`0` = provider default, field omitted) |
 | `--no-stream` | | `false` | Wait for full response |
 | `--dry-run` | | `false` | Print assembled prompt and exit |
-| `--tool` | `-T` | (none) | Enable specific tools by name (repeatable) |
+| `--tool` | `-T` | (none) | Enable tools by name (repeatable); names come from [`foo tool list`](#tool). An unknown name fails with exit 3 before any model call |
 | `--chain-limit` | | `5` | Max tool-call iterations |
 | `--tools-debug` | | `false` | Log tool calls + results to stderr |
 | `--tools-approve` | | `false` | Confirm before each tool execution. Answers come from the terminal, never stdin; with no terminal the call is denied |
@@ -262,6 +262,33 @@ filters on, so the two surfaces always agree: a provider reported
 `missing` here is a provider whose models the default listing hides.
 `secret_key` names the secret-store key that satisfied the
 requirement, or the first alternative when none did.
+
+## `tool`
+
+Inspect the tools `-T` / `--tool` can enable.
+
+| Subcommand | Synopsis | Description | How-to |
+|------------|----------|-------------|--------|
+| `list` | `foo tool list` | List tools available to -T | [Write plugins](../how-to/write-plugins.md#llm-tool-plugin--foo-tool-name) |
+
+Columns: `name` (the value `-T` takes), `source` (`builtin`, or the
+absolute path of the `foo-tool-<name>` binary on `$PATH`), and
+`description` (what the model sees). A binary's name and description
+come from its `--ext-info` output; listing runs each `foo-tool-*`
+binary once to read it. Every `--format` works:
+
+```sh
+foo tool list --format json
+```
+
+An unknown `-T` name fails before stdin is read or any model is
+called, names the bad tool, and lists the valid ones. The exit code is
+3 (not found), the same as an unknown `--pattern` or `--schema`:
+
+```
+foo -T foo_tme "what time is it?"
+# NOT_FOUND: unknown tool "foo_tme"; did you mean "foo_time"? Available tools: foo_time, foo_version (run `foo tool list` for details)
+```
 
 ## Kit conformance annotations
 

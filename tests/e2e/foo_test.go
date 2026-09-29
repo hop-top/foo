@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -250,4 +251,33 @@ func TestCLI_BudgetValidation(t *testing.T) {
 		require.NoError(t, err,
 			"--budget should be silently ignored when -m is set")
 	})
+}
+
+// TestCLI_Tool covers the -T discovery surface on the built binary,
+// where main.go maps typed errors to exit codes: `go test` against the
+// command tree alone cannot see the process status.
+func TestCLI_Tool(t *testing.T) {
+	ensureBinary(t)
+	tmpDir := t.TempDir()
+
+	t.Run("list", func(t *testing.T) {
+		stdout, _, err := runFoo(t, tmpDir, "--offline", "tool", "list", "--format=json")
+		require.NoError(t, err)
+		require.Contains(t, stdout, `"name": "foo_time"`)
+		require.Contains(t, stdout, `"source": "builtin"`)
+	})
+
+	for _, args := range [][]string{
+		{"--offline", "--dry-run", "-T", "nope", "hi"},
+		{"--offline", "--dry-run", "hi", "-T", "nope"},
+	} {
+		t.Run("unknown -T exits not-found: "+strings.Join(args, " "), func(t *testing.T) {
+			_, stderr, err := runFoo(t, tmpDir, args...)
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, 3, exitErr.ExitCode(), "stderr: %s", stderr)
+			require.Contains(t, stderr, `"nope"`)
+			require.Contains(t, stderr, "foo tool list")
+		})
+	}
 }

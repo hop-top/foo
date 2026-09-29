@@ -170,6 +170,8 @@ and result on stderr.
 | Description shows as generic placeholder | `--ext-info` errored or returned non-JSON | Run `foo-<name> --ext-info` directly and validate the JSON |
 | `pipe broken` when running `foo <plugin> | foo` | Plugin wrote binary to stdout | Emit markdown; diagnostics to stderr |
 | `foo <name>` is treated as a prompt arg | Binary not on PATH at all | `go install` the plugin or `chmod +x` after copying |
+| Tool plugin missing from `foo tool list` | Wrong PATH, wrong filename, or not executable | `which foo-tool-<name>`; check the `foo-tool-` prefix and `chmod +x` |
+| `unknown tool "<name>"` | `-T` value differs from the listed name (`--ext-info` `name` overrides the filename) | Use the NAME column of `foo tool list` |
 | Tool plugin never invoked | Did you pass `-T <name>`? Model declines to call | Confirm `--tools-debug` shows the tool offered to the model |
 
 ## How it works

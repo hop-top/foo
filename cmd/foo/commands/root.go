@@ -91,6 +91,7 @@ var commandGroups = map[string]string{
 	"embed":    "knowledge",
 	"model":    "organize",
 	"provider": "organize",
+	"tool":     "organize",
 	"config":   "management",
 	"alias":    "management",
 	"upgrade":  "management",
@@ -179,7 +180,7 @@ foo`
 	flags.BoolVar(&noStream, "no-stream", false, "Disable streaming output")
 	flags.IntVar(&maxTokens, "max-tokens", 0, "Cap completion length in tokens (0 = provider default)")
 	flags.BoolVar(&dryRun, "dry-run", false, "Print assembled prompt without calling the model")
-	flags.StringSliceVarP(&toolNames, "tool", "T", nil, "Enable specific tools by name")
+	flags.StringSliceVarP(&toolNames, "tool", "T", nil, "Enable tools by name (repeatable); see \"foo tool list\"")
 	flags.IntVar(&chainLimit, "chain-limit", 5, "Maximum tool-call iterations")
 	flags.BoolVar(&toolsDebug, "tools-debug", false, "Write tool call traces to stderr")
 	flags.BoolVar(&toolsApprove, "tools-approve", false, "Prompt before each tool execution")
@@ -202,6 +203,7 @@ foo`
 	root.Cmd.AddCommand(schemaCmd())
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
+	root.Cmd.AddCommand(toolCmd())
 	root.Cmd.AddCommand(configCmd())
 	root.Cmd.AddCommand(aliasCmd())
 	root.Cmd.AddCommand(upgradeCmd())
@@ -370,6 +372,13 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 }
 
 func runPromptOrREPL(cmd *cobra.Command, args []string) error {
+	// Resolve -T first so an unknown tool name fails before stdin is
+	// read or any client is built. The dispatcher below reuses this
+	// registry rather than scanning $PATH again.
+	registry, err := selectedTools()
+	if err != nil {
+		return err
+	}
 	prompt, err := readPrompt(cmd, args)
 	if err != nil {
 		return err
@@ -421,10 +430,6 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 	recordMessage(cmd.Context(), "user", prompt)
 
 	if len(toolNames) > 0 {
-		registry, err := buildRegistry(toolNames)
-		if err != nil {
-			return err
-		}
 		dispatcher := tool.NewDispatcher(client, registry, tool.DispatchConfig{
 			ChainLimit:  chainLimit,
 			Debug:       toolsDebug,
@@ -817,7 +822,11 @@ func buildRegistry(names []string) (*tool.Registry, error) {
 	}
 
 	if len(names) > 0 {
-		return registry.Filter(names), nil
+		selected, err := registry.Select(names)
+		if err != nil {
+			return nil, enrichUnknownTools(err)
+		}
+		return selected, nil
 	}
 	return registry, nil
 }
