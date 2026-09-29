@@ -391,7 +391,7 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 	// Resolve -T first so an unknown tool name fails before stdin is
 	// read or any client is built. The dispatcher below reuses this
 	// registry rather than scanning $PATH again.
-	registry, err := selectedTools()
+	registry, err := selectedTools(cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -818,7 +818,13 @@ the upgrade in-place when one is available. Local binary mutation.`,
 	return cmd
 }
 
-func buildRegistry(names []string) (*tool.Registry, error) {
+// buildRegistry assembles foo's builtins plus every foo-tool-* binary
+// on $PATH, then narrows it to names when given. A binary whose
+// --ext-info declares unusable parameters is skipped: offered to the
+// model, it would be called without the arguments it declared. The
+// skip is reported on warn when listing everything, or when names
+// asks for that tool; an unselected broken plugin stays quiet.
+func buildRegistry(names []string, warn io.Writer) (*tool.Registry, error) {
 	registry := tool.NewRegistry()
 	_ = registry.Register(builtin.TimeTool{})
 	_ = registry.Register(builtin.VersionTool{})
@@ -828,11 +834,11 @@ func buildRegistry(names []string) (*tool.Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range found {
-		toolDef := tool.NewExternalTool(item.Name, item.Name, item.Path, nil)
-		if err := item.Enrich(); err == nil {
-			meta := item.Meta()
-			toolDef = tool.NewExternalTool(meta.Name, meta.Description, item.Path, nil)
+	for i := range found {
+		toolDef, err := tool.ExternalToolFromFound(&found[i])
+		if err != nil {
+			warnSkippedTool(warn, names, err)
+			continue
 		}
 		_ = registry.Register(toolDef)
 	}

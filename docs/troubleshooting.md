@@ -19,6 +19,7 @@ cause → fix; the longer sections below give the detail.
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
 | `unknown tool "..."` | `-T` name not a builtin or a `foo-tool-*` on `$PATH` | `foo tool list` |
+| `[foo] warning: skipping tool plugin ...` | The plugin's `--ext-info` `parameters` is not a JSON Schema object of type `object` | [Fix the plugin's schema](how-to/write-plugins.md#--ext-info-for-tool-plugins) |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
 | `interactive REPL requires a terminal` | `foo repl` invoked without a TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
 | `no prompt provided (stdin was empty)` | `foo` got an empty pipe and no positional prompt | [Diagnose the upstream pipe](#empty-pipe-into-foo) |

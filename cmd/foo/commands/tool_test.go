@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"hop.top/foo/internal/tool"
+	"hop.top/kit/go/ai/llm"
 	"hop.top/kit/go/console/output"
 )
 
@@ -305,5 +308,210 @@ func TestKnownTool_ScansOnceAndCallsModel(t *testing.T) {
 	}
 	if got := env.extInfoCalls(t) - before; got != 1 {
 		t.Errorf("prompt run interrogated foo-tool-demo %d times; want 1", got)
+	}
+}
+
+// addToolScript drops another foo-tool-<file> script on the test PATH.
+// It prints extInfo for --ext-info; a call copies stdin to
+// <bin>/<file>.stdin and prints {"result":{"ok":true}}.
+func (e toolTestEnv) addToolScript(t *testing.T, file, extInfo string) string {
+	t.Helper()
+	bin := filepath.Dir(e.demoPath)
+	path := filepath.Join(bin, "foo-tool-"+file)
+	script := "#!/bin/sh\nif [ \"$1\" = \"--ext-info\" ]; then\n  cat <<'JSON'\n" + extInfo +
+		"\nJSON\n  exit 0\nfi\ncat > '" + filepath.Join(bin, file+".stdin") + "'\necho '{\"result\":{\"ok\":true}}'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+const weatherToolInfo = `{"name":"weather","version":"0.1.0","description":"Forecast for a city",` +
+	`"parameters":{"type":"object","properties":{"city":{"type":"string"},"days":{"type":"integer"}},"required":["city"]}}`
+
+func toolRowsByName(t *testing.T, stdout string) map[string]map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
+		t.Fatalf("stdout is not a JSON array (%v): %q", err, stdout)
+	}
+	out := make(map[string]map[string]any, len(rows))
+	for _, r := range rows {
+		out[r["name"].(string)] = r
+	}
+	return out
+}
+
+// TestToolList_ShowsDeclaredParameters: the listing says which tools
+// take arguments, so a plugin author can see foo picked up the schema.
+func TestToolList_ShowsDeclaredParameters(t *testing.T) {
+	env := newToolTestEnv(t)
+	env.addToolScript(t, "weather", weatherToolInfo)
+
+	stdout, _, _, err := runFooArgs(t, env, "tool", "list", "--offline", "--format=json")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	rows := toolRowsByName(t, stdout)
+	for name, want := range map[string]bool{"weather": true, "demo": false, "foo_time": false} {
+		row, ok := rows[name]
+		if !ok {
+			t.Errorf("%s missing from listing: %v", name, rows)
+			continue
+		}
+		if got, _ := row["params"].(bool); got != want || row["params"] == nil {
+			t.Errorf("%s params = %v; want %v", name, row["params"], want)
+		}
+	}
+}
+
+// TestToolList_InvalidParametersSkippedLoudly: a plugin whose
+// --ext-info parameters is not a JSON Schema object is left out of the
+// registry and named on stderr — never offered to the model with a
+// schema it cannot honour, never dropped silently.
+func TestToolList_InvalidParametersSkippedLoudly(t *testing.T) {
+	env := newToolTestEnv(t)
+	bad := env.addToolScript(t, "bad",
+		`{"name":"bad","version":"0.1.0","description":"d","parameters":"city"}`)
+
+	stdout, stderr, _, err := runFooArgs(t, env, "tool", "list", "--offline", "--format=json")
+	if err != nil {
+		t.Fatalf("a broken plugin must not fail the listing: %v", err)
+	}
+	rows := toolRowsByName(t, stdout)
+	if _, ok := rows["bad"]; ok {
+		t.Errorf("plugin with invalid parameters was listed: %v", rows["bad"])
+	}
+	if _, ok := rows["demo"]; !ok {
+		t.Errorf("healthy plugin demo missing: %v", rows)
+	}
+	for _, want := range []string{"warning", bad, "parameters"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr %q missing %q", stderr, want)
+		}
+	}
+}
+
+// TestToolList_BlankExtInfoNameUsesFilename: an empty --ext-info name
+// must not register a blank-named tool.
+func TestToolList_BlankExtInfoNameUsesFilename(t *testing.T) {
+	env := newToolTestEnv(t)
+	env.addToolScript(t, "anon", `{"name":"","version":"0.1.0","description":"Nameless"}`)
+
+	stdout, _, _, err := runFooArgs(t, env, "tool", "list", "--offline", "--format=json")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	rows := toolRowsByName(t, stdout)
+	if _, ok := rows[""]; ok {
+		t.Error("blank-named tool registered")
+	}
+	if row, ok := rows["anon"]; !ok || row["description"] != "Nameless" {
+		t.Errorf("anon = %v; want the filename-derived name with its --ext-info description", row)
+	}
+}
+
+// TestInvalidParametersTool_Rejected: selecting a skipped plugin by
+// name fails as an unknown tool, with the reason on stderr.
+func TestInvalidParametersTool_Rejected(t *testing.T) {
+	env := newToolTestEnv(t)
+	env.addToolScript(t, "bad",
+		`{"name":"bad","version":"0.1.0","description":"d","parameters":{"type":"string"}}`)
+
+	_, stderr, _, err := runFooArgs(t, env, "--offline", "--dry-run", "-T", "bad", "hi")
+	if err == nil || !strings.Contains(err.Error(), `unknown tool "bad"`) {
+		t.Fatalf("err = %v; want unknown tool \"bad\"", err)
+	}
+	if !strings.Contains(stderr, "warning") || !strings.Contains(stderr, "parameters") {
+		t.Errorf("stderr %q must explain why bad was skipped", stderr)
+	}
+}
+
+// argsClient is foo's injectable ToolClient: it calls weather once
+// with fixed arguments, then returns a text answer.
+type argsClient struct {
+	args  string
+	defs  []llm.ToolDef
+	calls int
+}
+
+func (c *argsClient) CallWithTools(_ context.Context, _ []llm.Message, defs []llm.ToolDef) (llm.ToolResponse, error) {
+	c.calls++
+	if c.calls == 1 {
+		c.defs = defs
+		return llm.ToolResponse{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "weather", Arguments: json.RawMessage(c.args)}}}, nil
+	}
+	return llm.ToolResponse{Content: "done"}, nil
+}
+
+// TestSelectedTool_ArgumentsReachPlugin drives foo's own -T registry
+// through the dispatcher: the model is offered the plugin's declared
+// schema, and the arguments it sends arrive on the plugin's stdin.
+func TestSelectedTool_ArgumentsReachPlugin(t *testing.T) {
+	env := newToolTestEnv(t)
+	env.addToolScript(t, "weather", weatherToolInfo)
+
+	var warn bytes.Buffer
+	reg, err := buildRegistry([]string{"weather"}, &warn)
+	if err != nil {
+		t.Fatalf("buildRegistry: %v", err)
+	}
+	client := &argsClient{args: `{"city":"Toronto","days":3}`}
+	if _, err := tool.NewDispatcher(client, reg, tool.DispatchConfig{}).Run(context.Background(), "pack for Toronto"); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if len(client.defs) != 1 {
+		t.Fatalf("model offered %d tools; want 1", len(client.defs))
+	}
+	var schema struct {
+		Type       string                     `json:"type"`
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(client.defs[0].Parameters, &schema); err != nil {
+		t.Fatalf("offered schema is not JSON: %v", err)
+	}
+	if schema.Type != "object" || schema.Properties["city"] == nil || schema.Properties["days"] == nil {
+		t.Errorf("offered schema %s; want the declared city/days schema", client.defs[0].Parameters)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(env.demoPath), "weather.stdin"))
+	if err != nil {
+		t.Fatalf("plugin never ran: %v", err)
+	}
+	var got struct {
+		Name      string `json:"name"`
+		Arguments struct {
+			City string `json:"city"`
+			Days int    `json:"days"`
+		} `json:"arguments"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("plugin stdin is not JSON (%v): %s", err, raw)
+	}
+	if got.Name != "weather" || got.Arguments.City != "Toronto" || got.Arguments.Days != 3 {
+		t.Errorf("plugin stdin = %s; want name weather, city Toronto, days 3", raw)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("unexpected warnings: %q", warn.String())
+	}
+}
+
+// TestInvalidParametersTool_QuietWhenNotSelected: a broken plugin the
+// user did not ask for must not add a warning to every prompt run.
+func TestInvalidParametersTool_QuietWhenNotSelected(t *testing.T) {
+	env := newToolTestEnv(t)
+	env.addToolScript(t, "bad",
+		`{"name":"bad","version":"0.1.0","description":"d","parameters":{"type":"string"}}`)
+
+	stdout, stderr, _, err := runFooArgs(t, env, "--offline", "--dry-run", "-T", "demo", "hi")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(stdout, "hi") {
+		t.Errorf("dry-run stdout %q missing the prompt", stdout)
+	}
+	if strings.Contains(stderr, "bad") {
+		t.Errorf("stderr %q warns about a plugin -T did not select", stderr)
 	}
 }

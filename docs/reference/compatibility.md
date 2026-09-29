@@ -63,7 +63,9 @@ exposed via `--ext-info` and follows the documented JSON shape
 (`{"name", "version", "description", "capabilities"}`).
 
 Tool extensions follow the same shape under the `foo-tool-`
-prefix and are discovered at tool-dispatch time.
+prefix and are discovered at tool-dispatch time. Their `--ext-info`
+may add a `parameters` JSON Schema object (`"type": "object"`),
+passed to the model as the tool's arguments.
 
 ## Deprecations
 

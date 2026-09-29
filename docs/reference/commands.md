@@ -272,10 +272,16 @@ Inspect the tools `-T` / `--tool` can enable.
 | `list` | `foo tool list` | List tools available to -T | [Write plugins](../how-to/write-plugins.md#llm-tool-plugin--foo-tool-name) |
 
 Columns: `name` (the value `-T` takes), `source` (`builtin`, or the
-absolute path of the `foo-tool-<name>` binary on `$PATH`), and
-`description` (what the model sees). A binary's name and description
-come from its `--ext-info` output; listing runs each `foo-tool-*`
-binary once to read it. Every `--format` works:
+absolute path of the `foo-tool-<name>` binary on `$PATH`),
+`description` (what the model sees), and `params` (`true` when the
+tool declares arguments for the model to fill in). A binary's name,
+description and parameter schema come from its `--ext-info` output;
+listing runs each `foo-tool-*` binary once to read it. A binary whose
+`parameters` is not a JSON Schema object of type `object` is left out
+of the listing and of `-T`, with a warning on stderr from the listing
+and from any `-T` run that names it (see
+[Write plugins](../how-to/write-plugins.md#--ext-info-for-tool-plugins)).
+Every `--format` works:
 
 ```sh
 foo tool list --format json

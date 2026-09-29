@@ -102,7 +102,10 @@ foo runs the tool, and the result is fed back. The loop bounds at
 Two built-in tools ship with foo (`foo_time`, `foo_version`).
 Additional tools are discovered as external binaries on `$PATH`
 matching `foo-tool-<name>`. They speak the same `--ext-info`
-metadata protocol as plugin commands. `foo tool list` shows every name
+metadata protocol as plugin commands, plus an optional `parameters`
+JSON Schema that tells the model which arguments to pass
+([Write plugins](how-to/write-plugins.md#--ext-info-for-tool-plugins)).
+`foo tool list` shows every name
 `-T` accepts and where each one comes from; an unknown name is an
 error, never silently dropped.
 
