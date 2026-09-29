@@ -61,6 +61,12 @@ func (f *Flavors) Detect(bin string) string {
 		return fl
 	}
 	fl := ClassifyVersion(versionOutput(bin))
+	// A busybox applet is a link to the multi-call binary. Not every
+	// applet names BusyBox in --version: sed prints "This is not GNU
+	// sed version 4.0".
+	if real, err := filepath.EvalSymlinks(bin); err == nil && filepath.Base(real) == "busybox" {
+		fl = FlavorBusyBox
+	}
 	f.cache[key] = fl
 	f.save()
 	return fl
