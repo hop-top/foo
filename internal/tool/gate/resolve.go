@@ -27,7 +27,7 @@ func Canonical(cwd, raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r, err := physical(abs)
+	r, err := physical(abs, 0, nil)
 	if err != nil {
 		return "", err
 	}
@@ -44,6 +44,32 @@ type resolved struct {
 	path string
 	// missing counts trailing components that do not exist.
 	missing int
+	// seen lists the directories in which a component the model named
+	// turned out to be a symlink: resolving it read something there
+	// that the path as written does not say.
+	seen []string
+}
+
+// climbError is a ".." the model wrote that leaves a directory the
+// caller does not let it climb out of, cancelling a component looked
+// up where it may not look either: resolving it would tell whether
+// that component exists, and what it is.
+type climbError struct{ dir string }
+
+func (e *climbError) Error() string { return fmt.Sprintf("%q: \"..\" climbs out of it", e.dir) }
+
+// modelFrom is the index in abs where the part the model wrote begins:
+// the working directory and the home directory anchor() puts in front
+// of it are foo's, not the model's.
+func modelFrom(abs, raw string) int {
+	switch {
+	case filepath.IsAbs(raw):
+		return 0
+	case raw == "~" || strings.HasPrefix(raw, "~/"):
+		return len(abs) - len(raw[1:])
+	default:
+		return len(abs) - len(raw)
+	}
 }
 
 // anchor makes raw absolute without cleaning it: cleaning before
@@ -71,27 +97,55 @@ func anchor(cwd, raw string) (string, error) {
 // a symlink-free existing directory, so ".." is its parent. Once a
 // component is missing the rest is kept as written; ".." after that
 // point cannot be resolved and is rejected.
-func physical(abs string) (resolved, error) {
+//
+// from is the index where the model's part of abs begins (modelFrom).
+// A ".." in that part cancels the model's last component; unless
+// climb allows the directory the ".." leaves (missing tail included)
+// or the directory that component was looked up in, it stops with
+// *climbError. A ".." cancelling part of the working directory is
+// allowed; a nil climb allows every "..". On an error the returned
+// resolved is how far resolution got.
+func physical(abs string, from int, climb func(dir string) bool) (resolved, error) {
 	dest := "/"
 	rest := abs
 	links := 0
-	var tail []string
+	// model is the length of the suffix of rest the model wrote; link
+	// targets spliced in front of it are the filesystem's.
+	model := len(abs) - from
+	// looked holds, for each of the model's components still in the
+	// path, the directory it was looked up in.
+	var tail, seen, looked []string
+	partial := func() resolved {
+		return resolved{path: filepath.Join(append([]string{dest}, tail...)...), missing: len(tail), seen: seen}
+	}
 	for {
 		rest = strings.TrimLeft(rest, "/")
+		model = min(model, len(rest))
 		if rest == "" {
 			break
 		}
+		byModel := len(rest) <= model
 		comp := rest
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
 			comp, rest = rest[:i], rest[i:]
 		} else {
 			rest = ""
 		}
+		model = min(model, len(rest))
+		if byModel && comp == ".." && len(looked) > 0 {
+			in := looked[len(looked)-1]
+			looked = looked[:len(looked)-1]
+			if climb != nil && !climb(partial().path) && !climb(in) {
+				return partial(), &climbError{dir: partial().path}
+			}
+		} else if byModel && comp != "." && comp != ".." {
+			looked = append(looked, partial().path)
+		}
 		switch {
 		case comp == ".":
 			continue
 		case comp == ".." && tail != nil:
-			return resolved{}, fmt.Errorf("%q: \"..\" follows the missing component %q", abs, tail[0])
+			return partial(), fmt.Errorf("%q: \"..\" follows the missing component %q", abs, tail[0])
 		case comp == "..":
 			dest = filepath.Dir(dest)
 			continue
@@ -106,7 +160,7 @@ func physical(abs string) (resolved, error) {
 				tail = []string{comp}
 				continue
 			}
-			return resolved{}, err
+			return partial(), err
 		}
 		if fi.Mode()&fs.ModeSymlink == 0 {
 			dest = next
@@ -114,18 +168,21 @@ func physical(abs string) (resolved, error) {
 		}
 		links++
 		if links > maxLinks {
-			return resolved{}, fmt.Errorf("%q: too many levels of symbolic links", abs)
+			return partial(), fmt.Errorf("%q: too many levels of symbolic links", abs)
 		}
 		target, err := os.Readlink(next)
 		if err != nil {
-			return resolved{}, err
+			return partial(), err
+		}
+		if byModel {
+			seen = append(seen, dest)
 		}
 		if filepath.IsAbs(target) {
 			dest = "/"
 		}
 		rest = target + "/" + rest
 	}
-	return resolved{path: filepath.Join(append([]string{dest}, tail...)...), missing: len(tail)}, nil
+	return partial(), nil
 }
 
 // isMissing reports a component that does not exist, including a
@@ -137,24 +194,22 @@ func isMissing(err error) bool {
 // dirent resolves abs as a directory entry: the parent is resolved
 // physically and the final component kept, so a final symlink names
 // the link itself. A final "." or ".." or a trailing slash names the
-// resolved directory, as the kernel would.
-func dirent(abs string) (entry, parent resolved, err error) {
+// resolved directory, as the kernel would. from and climb are as for
+// physical; on an error entry is how far resolution got.
+func dirent(abs string, from int, climb func(string) bool) (entry, parent resolved, err error) {
 	base := abs[strings.LastIndexByte(abs, '/')+1:]
 	if base == "" || base == "." || base == ".." {
-		entry, err = physical(abs)
-		if err != nil {
-			return resolved{}, resolved{}, err
-		}
-		return entry, parentOf(entry), nil
+		entry, err = physical(abs, from, climb)
+		return entry, parentOf(entry), err
 	}
-	parent, err = physical(abs[:len(abs)-len(base)])
+	parent, err = physical(abs[:len(abs)-len(base)], min(from, len(abs)-len(base)), climb)
 	if err != nil {
-		return resolved{}, resolved{}, err
+		return parent, parent, err
 	}
-	entry = resolved{path: filepath.Join(parent.path, base), missing: parent.missing}
+	entry = resolved{path: filepath.Join(parent.path, base), missing: parent.missing, seen: parent.seen}
 	if _, lerr := os.Lstat(entry.path); lerr != nil {
 		if !isMissing(lerr) {
-			return resolved{}, resolved{}, lerr
+			return parent, parent, lerr
 		}
 		entry.missing++
 	}
@@ -163,7 +218,7 @@ func dirent(abs string) (entry, parent resolved, err error) {
 
 // parentOf is the directory holding r.
 func parentOf(r resolved) resolved {
-	p := resolved{path: filepath.Dir(r.path)}
+	p := resolved{path: filepath.Dir(r.path), seen: r.seen}
 	if r.missing > 0 {
 		p.missing = r.missing - 1
 	}

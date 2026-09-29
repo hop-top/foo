@@ -191,11 +191,18 @@ The model receives:
 | `declined` | Approval was needed and you said no, or nobody could be asked |
 | `policy` | `tool-policy.yaml` denies this side effect |
 | `invalid_args` | Bad arguments, an existing destination without `overwrite=true`, or a protected path (below) |
-| `not_found` | A path that must exist does not |
+| `not_found` | A path that must exist does not (only for a path the scope grants) |
 | `timeout` | The command ran past its limit (30s; 60s for `find`, `grep`, `cp`, `mv`, `rm`); output discarded |
 
 One denied path refuses the whole call: `cat a b` with `b` denied
 prints nothing.
+
+Outside the grant the model learns nothing about your files: a path
+the scope does not grant gets the same refusal whether it exists or
+not, and whatever it is (file, directory, link, or a path through
+one). `not_found`, "is a directory" and similar errors come only for
+paths the scope grants, or after you approve the path in
+`mode: prompt`.
 
 ### 6. Approve changes
 
@@ -268,10 +275,10 @@ A recursive `grep` or `find` never asks per file: in `strict` and
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Every call `denied` with `no scope policy: … scope.yaml does not exist` | No `scope.yaml` where foo looks | Create the file the message names; `foo scope show` prints the path |
-| `denied` on a path you allowed | A symlink on the way resolves outside the rule, or a relative path was taken from another directory | `foo scope check <path>` from the same directory shows the resolved path; grant that |
+| `denied` on a path you allowed | A symlink on the way resolves outside the rule, a `..` climbs through a directory outside it, or a relative path was taken from another directory | `foo scope check <path>` from the same directory shows the resolved path; grant that, or name the path without `..` |
 | `declined … cannot be asked: no terminal` | A write or destructive call, or `mode: prompt`, with no terminal | Run on a terminal, or auto-allow with `tool-policy.yaml` |
 | `rm`/`mkdir` denied inside a write grant | The entry's parent directory is not writable in the scope | Grant `dir/**` rather than `dir/sub/**`, or accept that the grant root itself cannot be removed |
-| Output shows `/private/tmp/…` for `/tmp/…` (macOS) | foo reports canonical paths; `/tmp` links to `/private/tmp` | Nothing to fix; rules written as `/tmp/**` still match |
+| Output shows `/private/tmp/…` for `/tmp/…` (macOS) | foo reports canonical paths; `/tmp` links to `/private/tmp` | Nothing to fix; rules written as `/tmp/**` still match. Refusals name such paths as sent |
 | `invalid_args: is the home directory …` | `rm`, `mv` and `cp` never act on `/`, `~` or an entry directly under `/` | Name a path below them |
 | `timeout` | The command outran its limit (a FIFO, a huge tree) | Narrow the path; `find maxdepth=`, `head` instead of `cat` |
 
@@ -289,7 +296,11 @@ For every call, before anything runs, foo:
    physically, so `link/..` means the parent of the link's target.
 3. Checks every path against the scope for the op the tool performs,
    then the side effect against the policy table, and asks once if
-   either wants a confirmation.
+   either wants a confirmation. Only then does it report what is
+   wrong with a path (missing, wrong kind, unresolvable). A `..` that
+   climbs out of a directory the scope does not grant is refused, and
+   a refusal names a path outside the grant as it was sent, not what
+   it resolves to.
 4. Runs the pinned binary (`/bin/ls`, never a `$PATH` lookup) with
    the **checked** canonical paths, each after a literal `--`, so a
    path named `-R` is a file, never a flag.

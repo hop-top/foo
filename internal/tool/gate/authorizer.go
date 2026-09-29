@@ -108,6 +108,14 @@ func New(opts ...Option) (*Gate, error) {
 // An IntoDir argument with AllOrNothing also write-checks every entry
 // of an AllOrNothing source tree at its mapped place under the
 // destination.
+//
+// The scope is checked before anything about a path is reported: a
+// path the scope does not grant is refused alike whether it exists or
+// not, and whatever it is. A path's own errors (not found, cannot be
+// resolved, not a directory, a tree too large) are reported once the
+// scope lets the call reach it: at once for a path the scope allows,
+// after approval (or with the warning) for one the scope asks or warns
+// about.
 func (g *Gate) Authorize(ctx context.Context, req Request) (Grant, error) {
 	if err := ctx.Err(); err != nil {
 		return Grant{}, err
@@ -129,11 +137,14 @@ func (g *Gate) Authorize(ctx context.Context, req Request) (Grant, error) {
 		grant.Canonical[st.arg.Param] = paths
 	}
 
-	a := &audit{g: g, ctx: ctx, tool: req.Tool}
+	a := &audit{g: g, ctx: ctx, tool: req.Tool, flagged: map[int]bool{}}
 	for _, st := range args {
 		a.checkArg(st)
 	}
 	if err := a.denial(); err != nil {
+		return Grant{}, err
+	}
+	if err := a.later(args, true); err != nil {
 		return Grant{}, err
 	}
 	if err := a.recurse(args, &grant); err != nil {
@@ -153,6 +164,9 @@ func (g *Gate) Authorize(ctx context.Context, req Request) (Grant, error) {
 	if err := a.approve(req, grant.Canonical, dec); err != nil {
 		return Grant{}, err
 	}
+	if err := a.later(args, false); err != nil {
+		return Grant{}, err
+	}
 	a.logWarnings()
 	return grant, nil
 }
@@ -160,7 +174,7 @@ func (g *Gate) Authorize(ctx context.Context, req Request) (Grant, error) {
 // argState is one path argument after resolution.
 type argState struct {
 	arg    PathArg
-	values []value
+	values []*value
 }
 
 // value is one resolved path value.
@@ -168,12 +182,37 @@ type value struct {
 	entry  resolved
 	parent resolved // Dirent only
 	// srcRoot is the source tree an IntoDir value receives, when that
-	// source argument is AllOrNothing; "" otherwise.
+	// source argument is AllOrNothing; "" otherwise. srcID is that
+	// source's id.
 	srcRoot string
+	srcID   int
+	// id numbers the value the model sent; an IntoDir destination
+	// mapped once per source gives several values the same id.
+	id int
+	// abs is the value as the model sent it, anchored; lexical is abs
+	// cleaned lexically: what a refusal names when the canonical path
+	// would tell the model more than it wrote.
+	abs, lexical string
+	// opaque: resolving the value read the filesystem where the scope
+	// grants the model nothing (a component it named is a symlink, or
+	// an into_dir destination is a directory, outside the grant).
+	// Refusals then name lexical paths and give the reason of a path
+	// no rule covers.
+	opaque bool
+	// climb: a ".." the model wrote leaves a directory the scope does
+	// not grant; whether that resolves depends on what exists there.
+	climb bool
+	// unresolved: the value could not be resolved; entry is how far it
+	// got and err says why.
+	unresolved bool
+	// err is the value's own error, reported only once the scope lets
+	// the call reach the value (see Authorize).
+	err *Error
 }
 
 func (g *Gate) resolveArgs(req Request) ([]argState, error) {
 	out := make([]argState, 0, len(req.Paths))
+	id := 0
 	for _, arg := range req.Paths {
 		st := argState{arg: arg}
 		for _, raw := range arg.Values {
@@ -181,19 +220,13 @@ func (g *Gate) resolveArgs(req Request) ([]argState, error) {
 			if err != nil {
 				return nil, &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: raw, Op: arg.Op, Message: err.Error()}
 			}
-			if !arg.IntoDir {
-				v, err := g.resolveValue(arg, abs, "")
-				if err != nil {
-					return nil, err
-				}
-				st.values = append(st.values, v)
-				continue
+			from := modelFrom(abs, raw)
+			if arg.IntoDir {
+				st.values = append(st.values, g.resolveIntoDir(arg, abs, from, id, out)...)
+			} else {
+				st.values = append(st.values, g.resolveValue(arg, abs, from, id, "", -1))
 			}
-			vs, err := g.resolveIntoDir(arg, abs, out)
-			if err != nil {
-				return nil, err
-			}
-			st.values = append(st.values, vs...)
+			id++
 		}
 		out = append(out, st)
 	}
@@ -203,80 +236,115 @@ func (g *Gate) resolveArgs(req Request) ([]argState, error) {
 // source is a value an IntoDir destination receives.
 type source struct {
 	path      string
+	id        int
 	recursive bool
 }
 
-func (g *Gate) resolveIntoDir(arg PathArg, abs string, before []argState) ([]value, error) {
+func (g *Gate) resolveIntoDir(arg PathArg, abs string, from, id int, before []argState) []*value {
 	var srcs []source
 	for _, st := range before {
 		for _, v := range st.values {
-			srcs = append(srcs, source{path: v.entry.path, recursive: st.arg.Recursion == AllOrNothing})
+			s := source{path: v.entry.path, id: v.id, recursive: st.arg.Recursion == AllOrNothing}
+			if v.err != nil {
+				// The call fails on the source's own error: map it by
+				// the name the model gave, and walk nothing.
+				s.path, s.recursive = v.lexical, false
+			}
+			srcs = append(srcs, s)
 		}
 	}
-	root := func(s source) string {
+	root := func(s source) (string, int) {
 		if s.recursive {
-			return s.path
+			return s.path, s.id
 		}
-		return ""
+		return "", -1
 	}
 
-	dir, err := physical(abs)
-	if err != nil {
-		return nil, &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: abs, Op: arg.Op, Message: "cannot resolve: " + err.Error()}
+	dir, err := physical(abs, from, g.scope.grants)
+	var climb *climbError
+	if errors.As(err, &climb) {
+		dir, err = physical(abs, from, nil)
 	}
 	isDir := false
-	if fi, serr := os.Stat(dir.path); dir.missing == 0 && serr == nil && fi.IsDir() {
+	if fi, serr := os.Stat(dir.path); err == nil && dir.missing == 0 && serr == nil && fi.IsDir() {
 		isDir = true
 	}
 	if !isDir || len(srcs) == 0 {
-		if len(srcs) > 1 {
-			return nil, &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: dir.path, Op: arg.Op,
+		srcRoot, srcID := "", -1
+		if len(srcs) == 1 {
+			srcRoot, srcID = root(srcs[0])
+		}
+		v := g.resolveValue(arg, abs, from, id, srcRoot, srcID)
+		if len(srcs) > 1 && v.err == nil {
+			v.err = &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: v.entry.path, Op: arg.Op,
 				Message: fmt.Sprintf("must be an existing directory to receive %d sources", len(srcs))}
 		}
-		srcRoot := ""
-		if len(srcs) == 1 {
-			srcRoot = root(srcs[0])
-		}
-		v, err := g.resolveValue(arg, abs, srcRoot)
-		if err != nil {
-			return nil, err
-		}
-		return []value{v}, nil
+		return []*value{v}
 	}
 
-	out := make([]value, 0, len(srcs))
+	// dst is an existing directory: that it is one was read in its
+	// parent.
+	opaque := !g.scope.grants(filepath.Dir(dir.path)) || g.hidden(dir)
+	out := make([]*value, 0, len(srcs))
 	for _, s := range srcs {
 		base := filepath.Base(s.path)
 		if base == "/" {
-			return nil, &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: dir.path, Op: arg.Op,
-				Message: "cannot place / inside a directory"}
+			v := g.resolveValue(arg, abs, from, id, "", -1)
+			if v.err == nil {
+				v.err = &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: dir.path, Op: arg.Op,
+					Message: "cannot place / inside a directory"}
+			}
+			return []*value{v}
 		}
-		v, err := g.resolveValue(arg, dir.path+"/"+base, root(s))
-		if err != nil {
-			return nil, err
-		}
+		mapped := dir.path + "/" + base
+		srcRoot, srcID := root(s)
+		v := g.resolveValue(arg, mapped, len(mapped), id, srcRoot, srcID)
+		v.abs, v.lexical = abs, filepath.Clean(abs)
+		v.opaque = v.opaque || opaque
+		v.climb = climb != nil
 		out = append(out, v)
 	}
-	return out, nil
+	return out
 }
 
-func (g *Gate) resolveValue(arg PathArg, abs, srcRoot string) (value, error) {
-	var (
-		v   = value{srcRoot: srcRoot}
-		err error
-	)
-	if arg.Target == Dirent {
-		v.entry, v.parent, err = dirent(abs)
-	} else {
-		v.entry, err = physical(abs)
+func (g *Gate) resolveValue(arg PathArg, abs string, from, id int, srcRoot string, srcID int) *value {
+	v := &value{srcRoot: srcRoot, srcID: srcID, id: id, abs: abs, lexical: filepath.Clean(abs)}
+	resolve := func(climb func(string) bool) (err error) {
+		if arg.Target == Dirent {
+			v.entry, v.parent, err = dirent(abs, from, climb)
+		} else {
+			v.entry, err = physical(abs, from, climb)
+		}
+		return err
 	}
+	err := resolve(g.scope.grants)
+	var climb *climbError
+	if errors.As(err, &climb) {
+		// Refused unless approved; resolve it fully for then.
+		v.climb = true
+		err = resolve(nil)
+	}
+	v.opaque = g.hidden(v.entry) || g.hidden(v.parent)
 	if err != nil {
-		return value{}, &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: abs, Op: arg.Op, Message: "cannot resolve: " + err.Error()}
+		v.unresolved = true
+		v.err = &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: abs, Op: arg.Op, Message: "cannot resolve: " + err.Error()}
+		return v
 	}
 	if arg.MustExist && v.entry.missing > 0 {
-		return value{}, &Error{Kind: KindNotFound, Param: arg.Param, Path: v.entry.path, Op: arg.Op, Message: "no such file or directory"}
+		v.err = &Error{Kind: KindNotFound, Param: arg.Param, Path: v.entry.path, Op: arg.Op, Message: "no such file or directory"}
 	}
-	return v, nil
+	return v
+}
+
+// hidden reports whether resolving r followed a symlink the model named
+// in a directory the scope does not grant.
+func (g *Gate) hidden(r resolved) bool {
+	for _, dir := range r.seen {
+		if !g.scope.grants(dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // opBits splits op into single operations: kit matches a rule when it

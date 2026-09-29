@@ -268,6 +268,56 @@ func TestToolShims_Writes(t *testing.T) {
 	}
 }
 
+// TestToolShims_OutsideGrantAlike: outside the grant, a missing path,
+// an existing file or directory and a link all get the same refusal,
+// so the model cannot probe what exists there. Only the path it sent
+// differs. strict denies; prompt with nobody to ask denies too.
+func TestToolShims_OutsideGrantAlike(t *testing.T) {
+	ensureBinary(t)
+	e := newShimEnv(t)
+	w := e.path("w")
+	mkfile(t, filepath.Join(w, "f"), "f\n")
+	out := e.path("outside")
+	mkfile(t, filepath.Join(out, "f"), "secret\n")
+	mkfile(t, filepath.Join(out, "d", "x"), "x\n")
+	mkfile(t, e.path("elsewhere", "g"), "g\n")
+	require.NoError(t, os.Symlink(e.path("elsewhere", "g"), filepath.Join(out, "l")))
+	require.NoError(t, os.Symlink(e.path("elsewhere", "nothing"), filepath.Join(out, "dl")))
+	probes := []string{"f", "d", "missing", "l", "dl", "missing-dir/x", "f/x", "d/../../w/f", "missing-dir/../../w/f"}
+
+	for _, scopeMode := range []string{"strict", "prompt"} {
+		e.scope("mode: " + scopeMode + "\nallow:\n  - \"" + w + "/**\"\n")
+		for _, mode := range shimModes {
+			for _, tool := range []string{"cat", "ls", "rm"} {
+				t.Run(scopeMode+"/"+mode+"/"+tool, func(t *testing.T) {
+					answers := map[string][]string{}
+					for _, rel := range probes {
+						p := out + "/" + rel // not filepath.Join: keep ".."
+						o := e.call(mode, e.root, tool, jsonArgs(t, map[string]any{"path": []string{p}}))
+						require.NotNilf(t, o.Err, "%s %s ran: %s", tool, rel, o.Raw)
+						require.Equalf(t, "denied", o.Err.Kind, "%s %s: %s", tool, rel, o.Raw)
+						// Shapes: the lexical path climbs back into the grant or not.
+						shape := "outside"
+						if strings.Contains(rel, "..") {
+							shape = "climb"
+						}
+						raw := strings.ReplaceAll(o.Raw, p, "<P>")
+						raw = strings.ReplaceAll(raw, filepath.Clean(p), "<P>")
+						raw = strings.ReplaceAll(raw, filepath.Dir(filepath.Clean(p)), "<P/..>")
+						answers[shape] = append(answers[shape], rel+"\t"+raw)
+					}
+					for shape, list := range answers {
+						want := strings.SplitN(list[0], "\t", 2)[1]
+						for _, a := range list[1:] {
+							require.Equalf(t, want, strings.SplitN(a, "\t", 2)[1], "%s answers differ:\n%s", shape, strings.Join(list, "\n"))
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 // TestToolShims_NoScope: without scope.yaml every call is denied, and
 // the message names the file to create and `foo scope`.
 func TestToolShims_NoScope(t *testing.T) {

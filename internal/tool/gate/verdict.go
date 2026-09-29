@@ -48,32 +48,58 @@ const uncoveredReason = "no scope rule covers this path"
 // A deny rule wins, then an allow rule. A path no rule covers is
 // treated like a denied one: denied in strict mode, asked about in
 // prompt mode, logged in warn mode. kit allows such paths outside
-// strict mode; foo does not let a gap in the rules run silently.
-// Without a scope.yaml every path is denied.
+// strict mode; foo does not let a gap in the rules run silently. A
+// path kit cannot check (a component is a file, or unreadable) is
+// handled the same way. Without a scope.yaml every path is denied.
 func (s Scope) Classify(path string, op scope.Op) (Verdict, string) {
+	v, reason, _ := s.classify(path, op)
+	return v, reason
+}
+
+// classify is Classify plus the reason a model may be told. It differs
+// only for a path kit cannot check: kit's error says what is on disk
+// there (a file where a directory would be), so the model gets the
+// reason of a path no rule covers instead.
+func (s Scope) classify(path string, op scope.Op) (v Verdict, reason, public string) {
 	if !s.Configured() || s.Policy == nil {
-		return VerdictDeny, "no scope policy: no scope.yaml exists"
+		reason = "no scope policy: no scope.yaml exists"
+		return VerdictDeny, reason, reason
 	}
 	pol := s.Policy
 	mode := pol.Mode()
 	dec, err := pol.Check(scope.Path(path), op)
 	if err != nil {
-		if mode == scope.Strict {
-			return VerdictDeny, "cannot be checked: " + err.Error()
-		}
-		return VerdictWarn, "cannot be checked: " + err.Error()
+		return byMode(mode), "cannot be checked: " + err.Error(), uncovered(mode, op)
 	}
 	switch dec {
 	case scope.Allowed:
-		return VerdictAllow, ""
+		return VerdictAllow, "", ""
 	case scope.Denied:
-		return byMode(mode), fmt.Sprintf("matches a scope deny rule for %s", opName(op))
+		reason = fmt.Sprintf("matches a scope deny rule for %s", opName(op))
 	default:
-		if mode == scope.Strict {
-			return VerdictDeny, fmt.Sprintf("no scope allow rule covers %s here", opName(op))
-		}
-		return byMode(mode), uncoveredReason
+		reason = uncovered(mode, op)
 	}
+	return byMode(mode), reason, reason
+}
+
+// uncovered explains a path no scope rule covers.
+func uncovered(mode scope.Mode, op scope.Op) string {
+	if mode == scope.Strict {
+		return fmt.Sprintf("no scope allow rule covers %s here", opName(op))
+	}
+	return uncoveredReason
+}
+
+// grants reports whether an allow rule lets the model read or write
+// dir: whatever it may learn by resolving a path there, it could learn
+// with a tool call anyway.
+func (s Scope) grants(dir string) bool {
+	for _, op := range []scope.Op{scope.Read, scope.Write} {
+		if v, _, _ := s.classify(dir, op); v == VerdictAllow {
+			return true
+		}
+	}
+	return false
 }
 
 // byMode maps a path that did not pass to what mode does with it.
