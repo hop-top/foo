@@ -1,0 +1,44 @@
+# wc: count lines, words, bytes or characters. Read-only, path-gated.
+spec: 1
+name: wc
+description: >-
+  Count lines, words, bytes or characters in files. With no count
+  selected, prints lines, words and bytes; one line per file plus a
+  total when given several.
+command:
+  bin: [/usr/bin/wc, /bin/wc]
+side_effect: read
+network: none
+timeout: 30s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: path
+    type: path
+    description: Files to count.
+    op: [read]
+    repeated: true
+    max_items: 64
+    must_exist: true
+    kind: file
+  - name: lines
+    type: bool
+    description: Count lines.
+    default: false
+    argv: {true: ["-l"]}
+  - name: words
+    type: bool
+    description: Count words.
+    default: false
+    argv: {true: ["-w"]}
+  - name: bytes
+    type: bool
+    description: Count bytes.
+    default: false
+    argv: {true: ["-c"]}
+  - name: chars
+    type: bool
+    description: Count characters (multibyte-aware).
+    default: false
+    argv: {true: ["-m"]}
+argv: ["{lines}", "{words}", "{bytes}", "{chars}", "--", "{path}"]
