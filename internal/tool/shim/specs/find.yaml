@@ -1,0 +1,67 @@
+# find: walk trees and print matching paths. Read-only, path-gated per
+# output entry (filter_after): foo checks every emitted path and drops
+# the ones outside scope. -P never follows links. Only tests, no
+# actions: -exec/-execdir/-ok/-delete/-fprint*/-fls/-printf/-ls are not
+# expressible, nor -L/-H/-follow (escape the checked tree), -newer
+# (a path in an option value) or -regex (flavor-divergent syntax).
+spec: 1
+name: find
+description: >-
+  Walk directory trees and print matching paths, one per line.
+  Symlinks are listed, never followed. Entries outside the permitted
+  scope are left out and counted in "filtered". name and iname are
+  shell glob patterns matched against the base name (e.g. "*.go").
+command:
+  bin: [/usr/bin/find, /bin/find]
+side_effect: read
+network: none
+timeout: 60s
+ok_exit_codes: [0]
+output: paths0
+expression_after_paths: true
+params:
+  - name: path
+    type: path
+    description: Directories to search from.
+    op: [read]
+    repeated: true
+    max_items: 16
+    default: ["."]
+    must_exist: true
+    recursive: true
+    recursion: filter_after
+  - name: maxdepth
+    type: int
+    description: Descend at most this many levels below the starting paths (0 = the paths themselves).
+    min: 0
+    max: 64
+    argv: ["-maxdepth", "{}"]
+  - name: mindepth
+    type: int
+    description: Skip entries fewer than this many levels below the starting paths.
+    min: 0
+    max: 64
+    argv: ["-mindepth", "{}"]
+  - name: type
+    type: enum
+    description: Only regular files (f), directories (d) or symlinks (l).
+    values: {f: ["-type", "f"], d: ["-type", "d"], l: ["-type", "l"]}
+  - name: name
+    type: string
+    description: Base name glob, case-sensitive.
+    max_len: 255
+    argv: ["-name", "{}"]
+  - name: iname
+    type: string
+    description: Base name glob, case-insensitive.
+    max_len: 255
+    argv: ["-iname", "{}"]
+  - name: mtime_days
+    type: int
+    description: >-
+      Modification age in whole days: -N = less than N days ago, N =
+      exactly N days ago (0 = within the last 24 hours).
+    min: -3650
+    max: 3650
+    argv: ["-mtime", "{}"]
+argv: ["-P", "--", "{path}", "{maxdepth}", "{mindepth}", "{type}", "{name}", "{iname}", "{mtime_days}", "-print0"]

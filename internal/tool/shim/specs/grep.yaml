@@ -1,0 +1,97 @@
+# grep: search files for a pattern. Read-only, path-gated. Recursion is
+# foo's walk (filter_before): grep only ever receives an explicit list
+# of permitted regular files, never a directory and never -r/-R. The
+# pattern is always the argument of -e, so it is a regex, never a flag
+# or a file. Not offered: -f/--include/--exclude-from (paths in option
+# values), -r/-R/-d recurse, -P (GNU only).
+spec: 1
+name: grep
+description: >-
+  Search files for lines matching a pattern (basic regular expression
+  unless extended or fixed). Prints path:line:text. With
+  recursive=true, searches every permitted regular file under the given
+  directories; symlinks are skipped and files outside the permitted
+  scope are left out and counted in "filtered". Exit code 1 means no
+  match and is ok.
+command:
+  bin: [/usr/bin/grep, /bin/grep]
+side_effect: read
+network: none
+timeout: 60s
+ok_exit_codes: [0, 1]
+output: text
+params:
+  - name: pattern
+    type: string
+    description: The pattern to search for.
+    required: true
+    max_len: 1024
+    argv: ["-e", "{}"]
+  - name: path
+    type: path
+    description: Files to search, or directories with recursive=true.
+    op: [read]
+    repeated: true
+    max_items: 64
+    must_exist: true
+    kind: file
+    recursive_when: {recursive: true}
+    recursion: filter_before
+  - name: recursive
+    type: bool
+    description: Search every permitted regular file under directory paths.
+    default: false
+  - name: ignore_case
+    type: bool
+    description: Case-insensitive match.
+    default: false
+    argv: {true: ["-i"]}
+  - name: fixed
+    type: bool
+    description: Treat the pattern as a literal string.
+    default: false
+    argv: {true: ["-F"]}
+  - name: extended
+    type: bool
+    description: Treat the pattern as an extended regular expression.
+    default: false
+    argv: {true: ["-E"]}
+  - name: word
+    type: bool
+    description: Match whole words only.
+    default: false
+    argv: {true: ["-w"]}
+  - name: invert
+    type: bool
+    description: Print lines that do not match.
+    default: false
+    argv: {true: ["-v"]}
+  - name: count
+    type: bool
+    description: Print only a count of matching lines per file.
+    default: false
+    argv: {true: ["-c"]}
+  - name: files_only
+    type: bool
+    description: Print only the names of files with a match.
+    default: false
+    argv: {true: ["-l"]}
+  - name: line_number
+    type: bool
+    description: Prefix each line with its line number.
+    default: true
+    argv: {true: ["-n"]}
+  - name: max_count
+    type: int
+    description: Stop reading a file after this many matching lines.
+    min: 1
+    max: 10000
+    argv: ["-m", "{}"]
+  - name: context
+    type: int
+    description: Lines of context to print around each match.
+    min: 0
+    max: 20
+    argv: ["-C", "{}"]
+exclusive: [[fixed, extended], [count, files_only]]
+argv: ["-H", "{ignore_case}", "{fixed}", "{extended}", "{word}", "{invert}", "{count}", "{files_only}", "{line_number}", "{max_count}", "{context}", "{pattern}", "--", "{path}"]

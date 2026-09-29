@@ -1,0 +1,52 @@
+# ls: list directory contents. Read-only, path-gated. Never recursive:
+# ls output cannot be filtered per entry, so walking a tree is find's
+# job (-R, -L, -H and color are not offered).
+spec: 1
+name: ls
+description: >-
+  List directory contents, or show files themselves. One name per line,
+  or a long listing (mode, links, owner, group, size, date) with
+  long=true. Not recursive: use find to walk a tree.
+command:
+  bin: [/bin/ls, /usr/bin/ls]
+side_effect: read
+network: none
+timeout: 30s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: path
+    type: path
+    description: Directories or files to list.
+    op: [read]
+    repeated: true
+    max_items: 64
+    default: ["."]
+    must_exist: true
+    kind: any
+  - name: long
+    type: bool
+    description: Long listing instead of one name per line.
+    default: false
+    argv: {true: ["-l"], false: ["-1"]}
+  - name: all
+    type: bool
+    description: Include names starting with a dot (never . and ..).
+    default: false
+    argv: {true: ["-A"]}
+  - name: sort
+    type: enum
+    description: Sort by name, modification time (newest first) or size (largest first).
+    values: {name: [], time: ["-t"], size: ["-S"]}
+    default: name
+  - name: reverse
+    type: bool
+    description: Reverse the sort order.
+    default: false
+    argv: {true: ["-r"]}
+  - name: directory
+    type: bool
+    description: List directories themselves, not their contents.
+    default: false
+    argv: {true: ["-d"]}
+argv: ["{long}", "{all}", "{sort}", "{reverse}", "{directory}", "--", "{path}"]

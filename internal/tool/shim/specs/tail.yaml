@@ -1,0 +1,38 @@
+# tail: last lines or bytes of files. Read-only, path-gated. Never
+# follows (-f/-F would not terminate).
+spec: 1
+name: tail
+description: >-
+  Print the last lines (default 10) or bytes of files. With several
+  files each is preceded by a "==> path <==" header. Does not follow
+  growing files.
+command:
+  bin: [/usr/bin/tail, /bin/tail]
+side_effect: read
+network: none
+timeout: 30s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: path
+    type: path
+    description: Files to read.
+    op: [read]
+    repeated: true
+    max_items: 64
+    must_exist: true
+    kind: file
+  - name: lines
+    type: int
+    description: Number of lines to print from the end (default 10).
+    min: 1
+    max: 100000
+    argv: ["-n", "{}"]
+  - name: bytes
+    type: int
+    description: Number of bytes to print from the end instead of lines.
+    min: 1
+    max: 1048576
+    argv: ["-c", "{}"]
+exclusive: [[lines, bytes]]
+argv: ["{lines}", "{bytes}", "--", "{path}"]

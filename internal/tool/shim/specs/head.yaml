@@ -1,0 +1,36 @@
+# head: first lines or bytes of files. Read-only, path-gated.
+spec: 1
+name: head
+description: >-
+  Print the first lines (default 10) or bytes of files. With several
+  files each is preceded by a "==> path <==" header.
+command:
+  bin: [/usr/bin/head, /bin/head]
+side_effect: read
+network: none
+timeout: 30s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: path
+    type: path
+    description: Files to read.
+    op: [read]
+    repeated: true
+    max_items: 64
+    must_exist: true
+    kind: file
+  - name: lines
+    type: int
+    description: Number of lines to print (default 10).
+    min: 1
+    max: 100000
+    argv: ["-n", "{}"]
+  - name: bytes
+    type: int
+    description: Number of bytes to print instead of lines.
+    min: 1
+    max: 1048576
+    argv: ["-c", "{}"]
+exclusive: [[lines, bytes]]
+argv: ["{lines}", "{bytes}", "--", "{path}"]

@@ -1,0 +1,30 @@
+# cat: print files. Read-only, path-gated. Never stdin: "-" is a file
+# name relative to the working directory like any other.
+spec: 1
+name: cat
+description: >-
+  Print the contents of files, concatenated in order. Large output is
+  truncated (see stdout_truncated); use head, tail or grep for big
+  files, and stat for binary ones.
+command:
+  bin: [/bin/cat, /usr/bin/cat]
+side_effect: read
+network: none
+timeout: 30s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: path
+    type: path
+    description: Files to print.
+    op: [read]
+    repeated: true
+    max_items: 16
+    must_exist: true
+    kind: file
+  - name: number
+    type: bool
+    description: Number output lines.
+    default: false
+    argv: {true: ["-n"]}
+argv: ["{number}", "--", "{path}"]
