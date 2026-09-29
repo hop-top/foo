@@ -68,6 +68,7 @@ type PathAnnots struct {
 	RecursiveWhen map[string]any `json:"recursive_when,omitempty"`
 	Recursion     string         `json:"recursion,omitempty"`
 	ClobberWhen   map[string]any `json:"clobber_when,omitempty"`
+	ProtectRoots  bool           `json:"protect_roots,omitempty"`
 }
 
 // NewExtInfo builds the payload for l on the given flavor variant.
@@ -81,7 +82,7 @@ func NewExtInfo(l *Loaded, v *Variant, version string) ExtInfo {
 		paths[p.Name] = PathAnnots{
 			Op: p.Op, OpWhen: p.OpWhen, Target: p.Target, IntoDir: p.IntoDir, MustExist: p.MustExist,
 			Kind: p.Kind, Recursive: p.Recursive, RecursiveWhen: p.RecursiveWhen, Recursion: p.Recursion,
-			ClobberWhen: p.ClobberWhen,
+			ClobberWhen: p.ClobberWhen, ProtectRoots: p.ProtectRoots,
 		}
 	}
 	return ExtInfo{

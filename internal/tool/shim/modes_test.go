@@ -200,7 +200,7 @@ spec: 1
 name: sedx
 description: Fixture substitution.
 command:
-  bin: [/usr/bin/sed]
+  bin: [/usr/bin/sed, /bin/sed]
   variants:
     gnu: {prefix: ["--sandbox"]}
     bsd:

@@ -174,6 +174,10 @@ type Param struct {
 	// ClobberWhen allows an existing destination only when it matches
 	// (e.g. {overwrite: true}); otherwise the engine refuses the call.
 	ClobberWhen map[string]any `yaml:"clobber_when"`
+	// ProtectRoots refuses "/", the home directory and every entry
+	// directly under "/" (or what such an entry links to) as a value,
+	// whatever the scope (rm, mv).
+	ProtectRoots bool `yaml:"protect_roots"`
 
 	// enum
 	Values map[string][]string `yaml:"values"`

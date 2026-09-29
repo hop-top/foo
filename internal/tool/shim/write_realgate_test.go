@@ -66,14 +66,37 @@ func TestRealGate_RMRefusesRootHomeAndGrantRoot(t *testing.T) {
 	// be touched even if the gate let a call through.
 	l := wWithBin(wTool(t, "rm"), wArgvRecorder(t, b.p("out"), "rm", "rm: illegal option -- -"))
 
-	for _, p := range []string{"/", "~", ".", b.p("w"), "..", "/.."} {
+	// /, ~ and entries directly under /: the root guard, whatever the
+	// scope says (home/** is granted read+write).
+	for _, p := range []string{"/", "~", "~/", b.p("home"), "/..", "/tmp/..", "/usr"} {
+		_, err := call(t, b.eng, l, `{"path":["`+p+`"],"recursive":true}`)
+		if ge := wantKind(t, err, gate.KindInvalidArgs); !strings.Contains(ge.Message, "whatever the scope") {
+			t.Errorf("rm %s: refusal %v; want the root guard", p, ge)
+		}
+	}
+	// The grant root: the parent-write rule.
+	for _, p := range []string{".", b.p("w"), ".."} {
 		_, err := call(t, b.eng, l, `{"path":["`+p+`"],"recursive":true}`)
 		if ge := wantKind(t, err, gate.KindDenied); ge.Op != scope.Write {
 			t.Errorf("rm %s: denied op %v; want write on the parent", p, ge.Op)
 		}
 	}
 	if len(ask.asked) != 0 {
-		t.Errorf("denied calls prompted: %q", ask.asked)
+		t.Errorf("refused calls prompted: %q", ask.asked)
+	}
+
+	// mv of ~ is refused unprompted; mv into ~ lands below it and runs
+	// (one write prompt).
+	mv := wWithBin(wTool(t, "mv"), wArgvRecorder(t, b.p("out"), "mv", "mv: illegal option -- -"))
+	_, err := call(t, b.eng, mv, `{"src":["~"],"dst":"x"}`)
+	wantKind(t, err, gate.KindInvalidArgs)
+	b.file(t, "w/into", "I")
+	res := mustCall(t, b.eng, mv, `{"src":["into"],"dst":"~"}`)
+	if got := stdout(res); got != "[-n][--]["+b.p("w/into")+"]["+b.p("home")+"]" {
+		t.Errorf("mv into ~: argv %s", got)
+	}
+	if len(ask.asked) != 1 {
+		t.Errorf("prompts %q; want one, for mv into ~", ask.asked)
 	}
 }
 
