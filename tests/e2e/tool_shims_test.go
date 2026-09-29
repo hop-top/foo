@@ -300,9 +300,10 @@ func TestToolShims_Writes(t *testing.T) {
 }
 
 // TestToolShims_OutsideGrantAlike: outside the grant, a missing path,
-// an existing file or directory and a link all get the same refusal,
-// so the model cannot probe what exists there. Only the path it sent
-// differs. strict denies; prompt with nobody to ask denies too.
+// an existing file or directory and a link (into the grant included)
+// all get the same refusal, so the model cannot probe what exists
+// there or where a link points. Only the path it sent differs. strict
+// denies; prompt with nobody to ask denies too.
 func TestToolShims_OutsideGrantAlike(t *testing.T) {
 	ensureBinary(t)
 	e := newShimEnv(t)
@@ -319,17 +320,27 @@ func TestToolShims_OutsideGrantAlike(t *testing.T) {
 	require.NoError(t, os.Symlink("/", filepath.Join(out, "rl")))
 	require.NoError(t, os.Symlink("/usr", filepath.Join(out, "ul")))
 	require.NoError(t, os.Symlink(topLinkTarget(), filepath.Join(out, "tl")))
-	probes := []string{"f", "d", "missing", "l", "dl", "hl", "rl", "ul", "tl", "missing-dir/x", "f/x", "d/../../w/f", "missing-dir/../../w/f"}
+	// Links into the grant: where they point is read outside it.
+	require.NoError(t, os.MkdirAll(filepath.Join(w, "sub"), 0o755))
+	require.NoError(t, os.Symlink(w, filepath.Join(out, "lw")))
+	require.NoError(t, os.Symlink(filepath.Join(w, "f"), filepath.Join(out, "lwf")))
+	require.NoError(t, os.Symlink(filepath.Join(w, "sub"), filepath.Join(out, "lws")))
+	probes := []string{"f", "d", "missing", "l", "dl", "hl", "rl", "ul", "tl", "missing-dir/x", "f/x",
+		"lw", "lwf", "lws", "lw/f", "lw/x", "d/../../w/f", "missing-dir/../../w/f"}
 
 	for _, scopeMode := range []string{"strict", "prompt"} {
 		e.scope("mode: " + scopeMode + "\nallow:\n  - \"" + w + "/**\"\n")
 		for _, mode := range shimModes {
-			for _, tool := range []string{"cat", "ls", "rm"} {
+			for _, tool := range []string{"cat", "ls", "rm", "cp"} {
 				t.Run(scopeMode+"/"+mode+"/"+tool, func(t *testing.T) {
 					answers := map[string][]string{}
 					for _, rel := range probes {
 						p := out + "/" + rel // not filepath.Join: keep ".."
-						o := e.call(mode, e.root, tool, jsonArgs(t, map[string]any{"path": []string{p}}))
+						args := map[string]any{"path": []string{p}}
+						if tool == "cp" {
+							args = map[string]any{"src": []string{filepath.Join(w, "f")}, "dst": p}
+						}
+						o := e.call(mode, e.root, tool, jsonArgs(t, args))
 						require.NotNilf(t, o.Err, "%s %s ran: %s", tool, rel, o.Raw)
 						require.Equalf(t, "denied", o.Err.Kind, "%s %s: %s", tool, rel, o.Raw)
 						// Shapes: the lexical path climbs back into the grant or not.

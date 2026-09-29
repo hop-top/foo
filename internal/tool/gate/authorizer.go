@@ -199,6 +199,12 @@ type value struct {
 	// Refusals then name lexical paths and give the reason of a path
 	// no rule covers.
 	opaque bool
+	// linked: resolving the value followed a symlink the model named
+	// in a directory the scope does not grant. Unless the rules as
+	// written grant the value's lexical path, it is refused like a
+	// path outside the grant: that it resolves into the grant is
+	// something only that link says.
+	linked bool
 	// climb: a ".." the model wrote leaves a directory the scope does
 	// not grant; whether that resolves depends on what exists there.
 	climb bool
@@ -301,6 +307,7 @@ func (g *Gate) resolveIntoDir(arg PathArg, abs string, from, id int, before []ar
 		v := g.resolveValue(arg, mapped, len(mapped), id, srcRoot, srcID)
 		v.abs, v.lexical = abs, filepath.Clean(abs)
 		v.opaque = v.opaque || opaque
+		v.linked = v.linked || g.hidden(dir)
 		v.climb = climb != nil
 		out = append(out, v)
 	}
@@ -324,7 +331,8 @@ func (g *Gate) resolveValue(arg PathArg, abs string, from, id int, srcRoot strin
 		v.climb = true
 		err = resolve(nil)
 	}
-	v.opaque = g.hidden(v.entry) || g.hidden(v.parent)
+	v.linked = g.hidden(v.entry) || g.hidden(v.parent)
+	v.opaque = v.linked
 	if err != nil {
 		v.unresolved = true
 		v.err = &Error{Kind: KindInvalidArgs, Param: arg.Param, Path: abs, Op: arg.Op, Message: "cannot resolve: " + err.Error()}

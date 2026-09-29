@@ -76,7 +76,10 @@ Every param has:
 
 The value is resolved from the run's directory (`~` = home; no glob,
 no `$VAR`), symlinks and `..` physically, checked against the scope
-for `op`, and passed to the command as a canonical absolute path. It
+for `op`, and passed to the command as a canonical absolute path. A
+value that follows a symlink in a directory the scope does not grant
+is `denied` like any path outside the grant, unless an allow rule as
+written (not resolved) covers the value as sent. It
 takes no `argv`; place it with `{name}` after `--`.
 
 | Key | Default | Meaning |

@@ -102,6 +102,18 @@ func (s Scope) grants(dir string) bool {
 	return false
 }
 
+// grantsAsWritten reports whether an allow rule, as the user wrote it,
+// covers every bit of op on the absolute lexical path, deny rules
+// winning: neither side resolved, so the answer never depends on the
+// filesystem.
+func (s Scope) grantsAsWritten(path string, op scope.Op) bool {
+	if !s.Configured() || s.Policy == nil {
+		return false
+	}
+	dec, err := s.Policy.CheckLexical(scope.Path(path), op)
+	return err == nil && dec == scope.Allowed
+}
+
 // byMode maps a path that did not pass to what mode does with it.
 func byMode(mode scope.Mode) Verdict {
 	switch mode {
