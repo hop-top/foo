@@ -93,7 +93,7 @@ takes no `argv`; place it with `{name}` after `--`.
 | `recursion` | | Required when the param may recurse. `filter_before`: foo walks the tree (no symlinks) and passes only permitted regular files; needs `op: [read]` and `target: follow`; one per spec. `filter_after`: the command walks, foo filters its `paths0` output. `all_or_nothing`: foo checks every entry first and refuses the call if any is out of scope |
 | `parents` / `parents_when` | | Every missing ancestor is checked for `write` too (mkdir -p). Exclusive |
 | `clobber_when` | | `{param: value}` that permits an existing destination; otherwise the call is refused with `exists`. An existing directory is always refused. Needs `write` |
-| `protect_roots` | `false` | Refuse `/`, the home directory and entries directly under `/` (or what they link to), whatever the scope. Needs `write`. On an `into_dir` param it applies where the entry lands |
+| `protect_roots` | `false` | Refuse `/`, the home directory and entries directly under `/` (or what they link to), whatever the scope: as written before the scope check, as resolved after it (see [Root guard](commands.md#write-tools)). Needs `write`. On an `into_dir` param it applies where the entry lands |
 
 ### `bool`
 

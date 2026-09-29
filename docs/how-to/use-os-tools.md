@@ -279,7 +279,7 @@ A recursive `grep` or `find` never asks per file: in `strict` and
 | `declined … cannot be asked: no terminal` | A write or destructive call, or `mode: prompt`, with no terminal | Run on a terminal, or auto-allow with `tool-policy.yaml` |
 | `rm`/`mkdir` denied inside a write grant | The entry's parent directory is not writable in the scope | Grant `dir/**` rather than `dir/sub/**`, or accept that the grant root itself cannot be removed |
 | Output shows `/private/tmp/…` for `/tmp/…` (macOS) | foo reports canonical paths; `/tmp` links to `/private/tmp` | Nothing to fix; rules written as `/tmp/**` still match. Refusals name such paths as sent |
-| `invalid_args: is the home directory …` | `rm`, `mv` and `cp` never act on `/`, `~` or an entry directly under `/` | Name a path below them |
+| `invalid_args: is the home directory …` | `rm`, `mv` and `cp` never act on `/`, `~` or an entry directly under `/`, nor on a granted link to one (possibly after you approved the call) | Name a path below them |
 | `timeout` | The command outran its limit (a FIFO, a huge tree) | Narrow the path; `find maxdepth=`, `head` instead of `cat` |
 
 More: [Troubleshooting](../troubleshooting.md#tool-calls-denied-or-declined).
@@ -306,11 +306,15 @@ For every call, before anything runs, foo:
    path named `-R` is a file, never a flag.
 
 `rm`, `mv` and `cp` also refuse `/`, the home directory and every entry
-directly under `/`, whatever the scope. `rm` paths and `mv` sources are
-refused before any question is asked; where an `mv` or `cp` destination
-lands is checked after mapping into a directory, so for those you may be
-asked first and refused after. Recursive `rm`, `cp` and `mv` check every
-entry of the tree and refuse the whole call if one is out of scope.
+directly under `/`, whatever the scope. A path that names one as written
+(`~`, `/`, `/tmp/..`, `/usr`) is refused before step 3, with no question
+asked. A path that reaches one only through the disk (a link to `~`,
+`/private/tmp` on macOS, where an `mv` or `cp` destination lands) is
+refused after step 3 and before step 4: you may be asked first and
+refused after. A path outside the scope gets the scope's `denied` either
+way, so a refusal never tells what an ungranted link points to.
+Recursive `rm`, `cp` and `mv` check every entry of the tree and refuse
+the whole call if one is out of scope.
 
 ## Related docs
 

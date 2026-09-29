@@ -365,14 +365,23 @@ call asks for confirmation before it runs.
 | `sed` | `path[]`, `find`, `replace`, `backrefs`, `global`, `ignore_case`, `occurrence`, `extended`, `dry_run` | `path` read + write; `dry_run=true` → read | destructive; `dry_run=true` → read | One substitution per call: foo builds the `s` command from `find` and `replace`, so a sed script (`w`, `e`, `r`, addresses) can never be passed. `replace` is inserted literally: foo escapes `&` and `\`, so `a/b&c` or `\1` land as written on BSD, GNU and busybox sed. `backrefs=true` switches to sed replacement syntax (`&`, `\1`–`\9`, `\&`, `\\`); `replace` then may not end in a lone `\`. Newlines and `\x01` are rejected. `dry_run=true` prints the result and changes nothing, so it only needs read scope on the path: a read-only grant can be previewed. GNU sed runs with `--sandbox` |
 
 **Root guard.** `rm`, `mv` and `cp` refuse `/`, the home directory and every
-entry directly under `/`, whatever the scope, with `invalid_args` and
-before any prompt. A path counts as it is written (`/tmp/..` is `/`,
-`~/` is home) and as it resolves: a link to `/` or to home, and what a
-top-level link points to (`/private/tmp` on macOS, `/usr/bin` where
-`/bin` links to it). Paths are also compared by file identity, so a
-different letter case on a case-insensitive disk does not slip past.
-`mv` and `cp` check `dst` where the entry lands, after mapping into a
-directory, so `overwrite=true` cannot replace one either.
+entry directly under `/`, whatever the scope, with `invalid_args`. The
+check runs in two steps:
+
+1. **As written, before the scope check.** The path with `~` expanded,
+   taken from the working directory and cleaned (`/`, `//`, `/tmp/..`,
+   `~`, `~/`, your home spelled out, `/usr`, `/tmp`) is refused before
+   anything else, without looking at the disk and without a prompt.
+2. **As it resolves, after the scope check and before the command runs.**
+   A link to `/` or to home, what a top-level link points to
+   (`/private/tmp` on macOS, `/usr/bin` where `/bin` links to it), and a
+   match by file identity (another letter case on a case-insensitive
+   disk). `mv` and `cp` check `dst` here too, where the entry lands after
+   mapping into a directory, so `overwrite=true` cannot replace one.
+
+Step 2 runs only on paths the scope grants or you approved, so a path
+outside the scope gets the scope's `denied`, whatever it points to. A
+call that needs approval may therefore ask first and be refused after.
 
 ## `scope`
 

@@ -283,7 +283,12 @@ func TestToolShims_OutsideGrantAlike(t *testing.T) {
 	mkfile(t, e.path("elsewhere", "g"), "g\n")
 	require.NoError(t, os.Symlink(e.path("elsewhere", "g"), filepath.Join(out, "l")))
 	require.NoError(t, os.Symlink(e.path("elsewhere", "nothing"), filepath.Join(out, "dl")))
-	probes := []string{"f", "d", "missing", "l", "dl", "missing-dir/x", "f/x", "d/../../w/f", "missing-dir/../../w/f"}
+	// Aliases of places the root guard protects answer like the rest.
+	require.NoError(t, os.Symlink(e.home, filepath.Join(out, "hl")))
+	require.NoError(t, os.Symlink("/", filepath.Join(out, "rl")))
+	require.NoError(t, os.Symlink("/usr", filepath.Join(out, "ul")))
+	require.NoError(t, os.Symlink(topLinkTarget(), filepath.Join(out, "tl")))
+	probes := []string{"f", "d", "missing", "l", "dl", "hl", "rl", "ul", "tl", "missing-dir/x", "f/x", "d/../../w/f", "missing-dir/../../w/f"}
 
 	for _, scopeMode := range []string{"strict", "prompt"} {
 		e.scope("mode: " + scopeMode + "\nallow:\n  - \"" + w + "/**\"\n")
@@ -315,6 +320,60 @@ func TestToolShims_OutsideGrantAlike(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// topLinkTarget is what a top-level link points to when the target is
+// not itself directly under / (macOS /tmp -> /private/tmp); "/" when
+// no such link exists.
+func topLinkTarget() string {
+	for _, top := range []string{"/tmp", "/var", "/etc", "/bin", "/lib", "/sbin"} {
+		fi, err := os.Lstat(top)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if target, err := filepath.EvalSymlinks(top); err == nil && filepath.Dir(target) != "/" {
+			return target
+		}
+	}
+	return "/"
+}
+
+// TestToolShims_RootGuardPhases: a value naming $HOME as written is
+// refused before the scope is consulted; a granted link to $HOME is
+// refused after it, before rm runs; an ungranted one is denied by the
+// scope. $HOME (a throwaway dir here) and the links stay.
+func TestToolShims_RootGuardPhases(t *testing.T) {
+	ensureBinary(t)
+	e := newShimEnv(t)
+	w := e.path("w")
+	mkfile(t, filepath.Join(e.home, "keep"), "keep\n")
+	require.NoError(t, os.MkdirAll(w, 0o755))
+	require.NoError(t, os.Symlink(e.home, filepath.Join(w, "hl")))
+	require.NoError(t, os.Symlink(e.home, e.path("hl")))
+	e.scope("mode: strict\nallow:\n  - \"" + w + "/**\"\n  - \"" + e.home + "/**\"\n")
+	e.policy(allowLocalChanges)
+	rm := func(p string) map[string]any { return map[string]any{"path": []string{p}} }
+	runShimCases(t, e, []shimCase{
+		{"rm ~ refused as written", w, "rm", rm("~"), func(t *testing.T, o outcome) {
+			wantRefused(t, o, "invalid_args", "path", "is the home directory")
+		}},
+		{"rm $HOME refused as written", w, "rm", rm(e.home), func(t *testing.T, o outcome) {
+			wantRefused(t, o, "invalid_args", "path", "is the home directory")
+		}},
+		{"rm granted link to $HOME refused", w, "rm", rm("hl"), func(t *testing.T, o outcome) {
+			wantRefused(t, o, "invalid_args", "path", "is the home directory")
+		}},
+		{"rm ungranted link to $HOME denied", w, "rm", rm(e.path("hl")), func(t *testing.T, o outcome) {
+			wantRefused(t, o, "denied", "path", e.root)
+			require.NotContains(t, o.Raw, "home directory")
+		}},
+	})
+	require.Equal(t, "keep\n", readFile(t, filepath.Join(e.home, "keep")))
+	for _, l := range []string{filepath.Join(w, "hl"), e.path("hl")} {
+		fi, err := os.Lstat(l)
+		require.NoError(t, err)
+		require.NotZero(t, fi.Mode()&os.ModeSymlink, l)
 	}
 }
 
