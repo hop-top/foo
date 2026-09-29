@@ -75,22 +75,22 @@ func TestSed_DryRunChangesNothing(t *testing.T) {
 	}
 }
 
-// Find and replace are data: slashes, &, backrefs and delimiter-like
-// characters behave as sed defines them inside one s command, and can
-// never end it or add flags.
+// Find and replace are data: slashes and delimiter-like characters can
+// never end the s command or add flags. replace is literal unless
+// backrefs=true, which opts into sed's replacement syntax.
 func TestSed_TrickyFindReplace(t *testing.T) {
 	for _, tc := range []struct {
 		name, in, out string
 		args          map[string]any
 	}{
 		{"slashes", "/usr/local/bin\n", "/opt/bin\n", map[string]any{"find": "/usr/local/", "replace": "/opt/"}},
-		{"ampersand is the match", "cat\n", "[cat]\n", map[string]any{"find": "cat", "replace": "[&]"}},
-		{"escaped ampersand is literal", "cat\n", "c&t\n", map[string]any{"find": "a", "replace": `\&`}},
-		{"BRE backref", "ab\n", "ba\n", map[string]any{"find": `\(a\)\(b\)`, "replace": `\2\1`}},
-		{"ERE backref", "key=val\n", "val=key\n", map[string]any{"find": `([a-z]+)=([a-z]+)`, "replace": `\2=\1`, "extended": true}},
+		{"backrefs: ampersand is the match", "cat\n", "[cat]\n", map[string]any{"find": "cat", "replace": "[&]", "backrefs": true}},
+		{"backrefs: escaped ampersand is literal", "cat\n", "c&t\n", map[string]any{"find": "a", "replace": `\&`, "backrefs": true}},
+		{"backrefs: BRE backref", "ab\n", "ba\n", map[string]any{"find": `\(a\)\(b\)`, "replace": `\2\1`, "backrefs": true}},
+		{"backrefs: ERE backref", "key=val\n", "val=key\n", map[string]any{"find": `([a-z]+)=([a-z]+)`, "replace": `\2=\1`, "extended": true, "backrefs": true}},
+		{"backrefs: escaped backslash", "x\n", `\` + "\n", map[string]any{"find": "x", "replace": `\\`, "backrefs": true}},
 		{"delimiter-like chars", "a|b#c,d;e\n", "a b c d e\n", map[string]any{"find": `[|#,;]`, "replace": " ", "global": true}},
 		{"w and e are text", "x\n", "w /tmp/leak e\n", map[string]any{"find": "x", "replace": "w /tmp/leak e"}},
-		{"escaped trailing backslash", "x\n", `\` + "\n", map[string]any{"find": "x", "replace": `\\`}},
 		{"occurrence", "a a a\n", "a b a\n", map[string]any{"find": "a", "replace": "b", "occurrence": 2}},
 		{"ignore case", "Hello\n", "Bye\n", map[string]any{"find": "hello", "replace": "Bye", "ignore_case": true}},
 		{"empty replace deletes", "keep-drop\n", "keep\n", map[string]any{"find": "-drop", "replace": ""}},
@@ -105,6 +105,81 @@ func TestSed_TrickyFindReplace(t *testing.T) {
 				t.Errorf("file = %q; want %q", got, tc.out)
 			}
 		})
+	}
+}
+
+// By default replace is inserted verbatim: & and every backslash
+// sequence (\1, \&, \n, GNU's \L \U \x41 ...) are plain text on every
+// sed flavor, and a trailing backslash is just a backslash.
+func TestSed_ReplaceIsLiteralByDefault(t *testing.T) {
+	for _, repl := range []string{
+		"a/b&c", "&&", `\1`, `\&`, `\\`, `y\`, `\`, `\n\t\L\U\E\x41\o101\cA`, `C:\dir\&\2`,
+	} {
+		t.Run(repl, func(t *testing.T) {
+			b := newWriteBox(t)
+			f := b.file(t, "w/f", "say world\n")
+			l := wTool(t, "sed")
+			res := mustCall(t, b.eng, l, sedArgs(t, map[string]any{"path": []string{"f"}, "find": "world", "replace": repl}))
+			wWantOK(t, res)
+			if got, want := wRead(t, f), "say "+repl+"\n"; got != want {
+				t.Errorf("file = %q; want %q (%s sed)", got, want, b.eng.flavors().Detect(l.Bin))
+			}
+			// dry_run prints the same literal text.
+			b.file(t, "w/g", "world\n")
+			res = mustCall(t, b.eng, l, sedArgs(t, map[string]any{"path": []string{"g"}, "find": "world", "replace": repl, "dry_run": true}))
+			if got := stdout(res); got != repl+"\n" {
+				t.Errorf("dry run stdout = %q; want %q", got, repl+"\n")
+			}
+		})
+	}
+}
+
+// The generated script escapes & and backslashes in literal mode and
+// passes replace through untouched with backrefs=true.
+func TestSed_ReplaceEscapingInScript(t *testing.T) {
+	b := newWriteBox(t)
+	b.file(t, "w/f", "world\n")
+	l := wTool(t, "sed")
+	for _, tc := range []struct {
+		backrefs   bool
+		repl, want string
+	}{
+		{false, `a/b&c\1\`, "s\x01world\x01" + `a/b\&c\\1\\` + "\x01"},
+		{true, `a/b&c\1`, "s\x01world\x01" + `a/b&c\1` + "\x01"},
+	} {
+		res := mustCall(t, b.eng, l, sedArgs(t, map[string]any{"path": []string{"f"}, "find": "world", "replace": tc.repl, "backrefs": tc.backrefs, "dry_run": true}))
+		if indexOf(res.Argv, tc.want) < 0 {
+			t.Errorf("backrefs=%v: argv %q lacks %q", tc.backrefs, res.Argv, tc.want)
+		}
+	}
+}
+
+// The model is told what replace does and how to opt into sed syntax.
+func TestSed_ReplaceDescriptions(t *testing.T) {
+	b := newWriteBox(t)
+	tool := NewTool(b.eng, wTool(t, "sed"))
+	var schema struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(tool.Parameters(), &schema); err != nil {
+		t.Fatal(err)
+	}
+	repl := schema.Properties["replace"].Description
+	br := schema.Properties["backrefs"].Description
+	for _, want := range []string{"literally", "backrefs"} {
+		if !strings.Contains(repl, want) {
+			t.Errorf("replace description %q lacks %q", repl, want)
+		}
+	}
+	for _, want := range []string{"&", `\1`} {
+		if !strings.Contains(br, want) {
+			t.Errorf("backrefs description %q lacks %q", br, want)
+		}
+	}
+	if d := tool.Description(); strings.Contains(d, "& is the whole match") && !strings.Contains(d, "backrefs") {
+		t.Errorf("tool description still promises sed semantics by default: %q", d)
 	}
 }
 
@@ -123,7 +198,8 @@ func TestSed_RejectsUnsafeOrAmbiguousInput(t *testing.T) {
 		{"delimiter in find", map[string]any{"find": "x\x01", "replace": "y"}, "find"},
 		{"delimiter in replace", map[string]any{"find": "x", "replace": "y\x01w /tmp/leak"}, "replace"},
 		{"NUL", map[string]any{"find": "x\x00", "replace": "y"}, "find"},
-		{"trailing backslash", map[string]any{"find": "x", "replace": `y\`}, "replace"},
+		{"trailing backslash with backrefs", map[string]any{"find": "x", "replace": `y\`, "backrefs": true}, "replace"},
+		{"trailing backslash in find", map[string]any{"find": `x\`, "replace": "y"}, "find"},
 		{"empty find", map[string]any{"find": "", "replace": "y"}, "find"},
 		{"global with occurrence", map[string]any{"find": "x", "replace": "y", "global": true, "occurrence": 2}, "occurrence"},
 		{"occurrence out of range", map[string]any{"find": "x", "replace": "y", "occurrence": 513}, "occurrence"},

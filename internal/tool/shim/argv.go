@@ -12,7 +12,8 @@ import (
 // containing it are rejected, so a value can never end its own part.
 const sedDelim = "\x01"
 
-// check rejects script inputs the generator cannot render safely.
+// check rejects script inputs the generator cannot render safely. A
+// literal replace may end in a backslash: it is escaped like any other.
 func (sc *Script) check(vals values) error {
 	for _, name := range []string{sc.Find, sc.Replace} {
 		str, _ := vals[name].(string)
@@ -22,11 +23,40 @@ func (sc *Script) check(vals values) error {
 		if strings.ContainsAny(str, "\n\r\x00") {
 			return invalid(name, "contains a newline or NUL")
 		}
+		if name == sc.Replace && !sc.backrefs(vals) {
+			continue
+		}
 		if trailingBackslashes(str)%2 == 1 {
 			return invalid(name, "ends with an unescaped backslash")
 		}
 	}
 	return nil
+}
+
+// backrefs reports whether this call opted into sed's replacement
+// syntax.
+func (sc *Script) backrefs(vals values) bool {
+	on, _ := vals[sc.Backrefs].(bool)
+	return sc.Backrefs != "" && on
+}
+
+// sedLiteral escapes the only characters a sed replacement interprets
+// besides newline (rejected) and the delimiter (rejected): backslash
+// and &. BSD, GNU and busybox sed all read \\ as \ and \& as &, so
+// the text lands verbatim, including GNU's \L \U \n \x41 sequences.
+func sedLiteral(s string) string {
+	if !strings.ContainsAny(s, `\&`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' || s[i] == '&' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func trailingBackslashes(s string) int {
@@ -37,12 +67,16 @@ func trailingBackslashes(s string) int {
 	return n
 }
 
-// render builds the s command: s<D>find<D>replace<D>flags. Flags come
-// only from declared bools (g, I) and the occurrence int, so the w and
-// e flags cannot be expressed.
+// render builds the s command: s<D>find<D>replace<D>flags, with replace
+// escaped to a literal unless backrefs is on. Flags come only from
+// declared bools (g, I) and the occurrence int, so the w and e flags
+// cannot be expressed.
 func (sc *Script) render(vals values) string {
 	find, _ := vals[sc.Find].(string)
 	repl, _ := vals[sc.Replace].(string)
+	if !sc.backrefs(vals) {
+		repl = sedLiteral(repl)
+	}
 	var flags strings.Builder
 	names := make([]string, 0, len(sc.Flags))
 	for n := range sc.Flags {

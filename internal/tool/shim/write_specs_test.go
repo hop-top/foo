@@ -2,8 +2,10 @@ package shim
 
 import (
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -17,7 +19,7 @@ func TestWriteSpecs_Declarations(t *testing.T) {
 		{"mv", "write", "src:w dst:w", map[string]string{"overwrite": "destructive"}, []string{"dst", "overwrite", "src"}},
 		{"mkdir", "write", "path:w", nil, []string{"parents", "path"}},
 		{"rm", "destructive", "path:w", nil, []string{"dir", "path", "recursive"}},
-		{"sed", "destructive", "path:rw", map[string]string{"dry_run": "read"}, []string{"dry_run", "extended", "find", "global", "ignore_case", "occurrence", "path", "replace"}},
+		{"sed", "destructive", "path:rw", map[string]string{"dry_run": "read"}, []string{"backrefs", "dry_run", "extended", "find", "global", "ignore_case", "occurrence", "path", "replace"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := wTool(t, tc.name)
@@ -44,6 +46,29 @@ func TestWriteSpecs_Declarations(t *testing.T) {
 			info := NewExtInfo(l, nil, "0.0.0")
 			if info.FooTool.SideEffect != tc.effect || len(info.FooTool.Paths) == 0 {
 				t.Errorf("ext-info foo_tool %+v", info.FooTool)
+			}
+		})
+	}
+}
+
+// Lint rules for the keys the write specs rely on, checked by editing
+// the built-in sources.
+func TestLint_WriteSpecKeys(t *testing.T) {
+	for _, tc := range []struct{ tool, from, to, want string }{
+		{"sed", "  backrefs: backrefs\n", "  backrefs: nope\n", `unknown param "nope"`},
+		{"sed", "  backrefs: backrefs\n", "  backrefs: extended\n", `feeds the script`},
+		{"sed", "  backrefs: backrefs\n", "  backrefs: find\n", `must be bool`},
+	} {
+		t.Run(tc.tool+" "+tc.want, func(t *testing.T) {
+			raw := string(wTool(t, tc.tool).Raw)
+			src := strings.Replace(raw, tc.from, tc.to, 1)
+			if src == raw {
+				t.Fatalf("fixture edit %q did not apply", tc.from)
+			}
+			_, err := Parse([]byte(src))
+			var le *LintError
+			if !errors.As(err, &le) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v; want lint error containing %q", err, tc.want)
 			}
 		})
 	}

@@ -129,6 +129,10 @@ type Script struct {
 	Flags map[string]string `yaml:"flags"`
 	// Occurrence names an int param rendered as the numeric flag.
 	Occurrence string `yaml:"occurrence"`
+	// Backrefs names a bool param that opts into sed's replacement
+	// syntax (& and \1..\9). Without it, or when it is false, Replace
+	// is inserted literally: the generator escapes & and backslashes.
+	Backrefs string `yaml:"backrefs"`
 }
 
 // scriptPlaceholder is the argv placeholder a Script renders into.
