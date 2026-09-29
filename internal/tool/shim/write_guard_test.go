@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,13 +14,13 @@ import (
 
 // guardBox is a writeBox whose authorizer grants every path (fakeAuth:
 // canonicalizes, never walks a tree), HOME is a throwaway directory,
-// and rm/mv are argv recorders: the guard must refuse on its own, and
+// and rm/mv/cp are argv recorders: the guard must refuse on its own, and
 // even a guard bug runs nothing but a printf.
 type guardBox struct {
 	*writeBox
-	auth   *fakeAuth
-	home   string
-	rm, mv *Loaded
+	auth       *fakeAuth
+	home       string
+	rm, mv, cp *Loaded
 }
 
 func newGuardBox(t *testing.T) *guardBox {
@@ -36,6 +37,7 @@ func newGuardBox(t *testing.T) *guardBox {
 		home:     home,
 		rm:       wWithBin(wTool(t, "rm"), wArgvRecorder(t, b.p("out"), "rm", "rm: illegal option -- -")),
 		mv:       wWithBin(wTool(t, "mv"), wArgvRecorder(t, b.p("out"), "mv", "mv: illegal option -- -")),
+		cp:       wWithBin(wTool(t, "cp"), wArgvRecorder(t, b.p("out"), "cp", "cp: illegal option -- -")),
 	}
 }
 
@@ -151,6 +153,59 @@ func TestRootGuard_MVDestinationWhereItLands(t *testing.T) {
 	}
 }
 
+// cp dst is guarded like mv dst, where the copy lands: replacing an
+// entry directly under /, landing on $HOME, or copying into "/" is
+// refused after mapping and before exec, overwrite or not; copying into
+// $HOME lands below it and runs.
+func TestRootGuard_CPDestinationWhereItLands(t *testing.T) {
+	g := newGuardBox(t)
+	g.link(t, "/", "w/rootln")
+	g.file(t, "w/a", "A")
+	g.dir(t, "w/d")
+	for _, dst := range []string{"/", "//", "/no-such-top-entry-foo-guard", "rootln", "rootln/no-such-top-entry-foo-guard"} {
+		for _, overwrite := range []bool{false, true} {
+			args, _ := json.Marshal(map[string]any{"src": []string{"a"}, "dst": dst, "overwrite": overwrite})
+			res, err := call(t, g.eng, g.cp, string(args))
+			if res != nil {
+				t.Fatalf("cp to %s ran: argv %q", dst, res.Argv)
+			}
+			wantGuard(t, err, "dst")
+		}
+		args, _ := json.Marshal(map[string]any{"src": []string{"d"}, "dst": dst, "recursive": true, "overwrite": true})
+		res, err := call(t, g.eng, g.cp, string(args))
+		if res != nil {
+			t.Fatalf("cp -R to %s ran: argv %q", dst, res.Argv)
+		}
+		wantGuard(t, err, "dst")
+	}
+
+	// An entry named like $HOME copied into $HOME's parent lands on
+	// $HOME itself: the replaced entry is the home directory.
+	g.file(t, "w/"+filepath.Base(g.home), "H")
+	g.dir(t, "w/x/"+filepath.Base(g.home))
+	for _, args := range []map[string]any{
+		{"src": []string{filepath.Base(g.home)}, "dst": filepath.Dir(g.home), "overwrite": true},
+		{"src": []string{"x/" + filepath.Base(g.home)}, "dst": filepath.Dir(g.home), "recursive": true, "overwrite": true},
+	} {
+		raw, _ := json.Marshal(args)
+		res, err := call(t, g.eng, g.cp, string(raw))
+		if res != nil {
+			t.Fatalf("cp %s ran: argv %q", raw, res.Argv)
+		}
+		wantGuard(t, err, "dst")
+	}
+
+	// Into $HOME lands at a child: fine. (fakeAuth does not expand ~;
+	// the real gate test covers "~".)
+	for _, dst := range []string{g.home, g.home + "/"} {
+		args, _ := json.Marshal(map[string]any{"src": []string{"a"}, "dst": dst})
+		res := mustCall(t, g.eng, g.cp, string(args))
+		if got, want := stdout(res), "[-n][--]["+g.p("w/a")+"]["+g.home+"]"; got != want {
+			t.Errorf("cp into %s: argv %s; want %s", dst, got, want)
+		}
+	}
+}
+
 // Ordinary entries, including ones inside $HOME and links that point
 // at ordinary files, are not caught by the guard.
 func TestRootGuard_LeavesOrdinaryPathsAlone(t *testing.T) {
@@ -214,7 +269,8 @@ func catalogWith(t *testing.T, l *Loaded) *Catalog {
 }
 
 func TestRootGuard_Declarations(t *testing.T) {
-	for tool, params := range map[string][]string{"rm": {"path"}, "mv": {"src", "dst"}} {
+	protected := map[string][]string{"rm": {"path"}, "mv": {"src", "dst"}, "cp": {"dst"}}
+	for tool, params := range protected {
 		l := wTool(t, tool)
 		for _, name := range params {
 			p, _ := l.Spec.Param(name)
@@ -226,9 +282,9 @@ func TestRootGuard_Declarations(t *testing.T) {
 			}
 		}
 	}
-	for _, tool := range []string{"cp", "mkdir", "sed", "cat", "ls"} {
+	for _, tool := range []string{"rm", "mv", "cp", "mkdir", "sed", "cat", "ls"} {
 		for _, p := range wTool(t, tool).Spec.Params {
-			if p.ProtectRoots {
+			if p.ProtectRoots && !slices.Contains(protected[tool], p.Name) {
 				t.Errorf("%s %s: unexpected protect_roots", tool, p.Name)
 			}
 		}

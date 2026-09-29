@@ -330,20 +330,21 @@ call asks for confirmation before it runs.
 
 | Tool | Parameters | Paths (op) | Side effect | Notes |
 |------|------------|------------|-------------|-------|
-| `cp` | `src[]`, `dst`, `recursive`, `overwrite` | `src` read, `dst` write | write; `overwrite=true` → destructive | Never replaces an existing file unless `overwrite=true`, never an existing directory. An existing directory `dst` receives each source under its own name. `recursive=true` checks every entry of the tree, at the source and at its destination; one denied entry refuses the whole call. Links inside a tree are copied as links |
+| `cp` | `src[]`, `dst`, `recursive`, `overwrite` | `src` read, `dst` write | write; `overwrite=true` → destructive | Never replaces an existing file unless `overwrite=true`, never an existing directory. An existing directory `dst` receives each source under its own name. `recursive=true` checks every entry of the tree, at the source and at its destination; one denied entry refuses the whole call. Links inside a tree are copied as links. Root guard (below) on where `dst` lands: `cp x ~` is fine, `cp x /` is not |
 | `mv` | `src[]`, `dst`, `overwrite` | `src` read + write, `dst` write | write; `overwrite=true` → destructive | The source needs write, since moving removes it from its directory, and read, since a move across filesystems copies its content. Same no-clobber, directory and whole-tree rules as `cp`. A link moves as the link. Root guard (below) on every source and on where `dst` lands: `mv x ~` is fine, `mv x /` is not |
 | `mkdir` | `path[]`, `parents` | `path` write | write | `parents=true` also creates, and checks, every missing parent. No mode option |
 | `rm` | `path[]`, `recursive`, `dir` | `path` write | destructive | Removes a link, never its target. Root guard (below). Removing an entry needs write on its directory, so the root of a scope grant cannot be removed unless its parent is writable too. `recursive=true` refuses the whole call if any entry under the tree is out of scope. No `-f`. `dir` is not offered with busybox `rm` |
 | `sed` | `path[]`, `find`, `replace`, `backrefs`, `global`, `ignore_case`, `occurrence`, `extended`, `dry_run` | `path` read + write; `dry_run=true` → read | destructive; `dry_run=true` → read | One substitution per call: foo builds the `s` command from `find` and `replace`, so a sed script (`w`, `e`, `r`, addresses) can never be passed. `replace` is inserted literally: foo escapes `&` and `\`, so `a/b&c` or `\1` land as written on BSD, GNU and busybox sed. `backrefs=true` switches to sed replacement syntax (`&`, `\1`–`\9`, `\&`, `\\`); `replace` then may not end in a lone `\`. Newlines and `\x01` are rejected. `dry_run=true` prints the result and changes nothing, so it only needs read scope on the path: a read-only grant can be previewed. GNU sed runs with `--sandbox` |
 
-**Root guard.** `rm` and `mv` refuse `/`, the home directory and every
+**Root guard.** `rm`, `mv` and `cp` refuse `/`, the home directory and every
 entry directly under `/`, whatever the scope, with `invalid_args` and
 before any prompt. A path counts as it is written (`/tmp/..` is `/`,
 `~/` is home) and as it resolves: a link to `/` or to home, and what a
 top-level link points to (`/private/tmp` on macOS, `/usr/bin` where
 `/bin` links to it). Paths are also compared by file identity, so a
 different letter case on a case-insensitive disk does not slip past.
-`mv` checks `dst` where the entry lands, after mapping into a directory.
+`mv` and `cp` check `dst` where the entry lands, after mapping into a
+directory, so `overwrite=true` cannot replace one either.
 
 ## `scope`
 
