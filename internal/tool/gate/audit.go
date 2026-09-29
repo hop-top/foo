@@ -18,10 +18,13 @@ type verdict int
 
 const (
 	allow verdict = iota
-	warn          // denied, but warn mode lets it run
-	ask           // denied, prompt mode asks
+	warn          // denied or uncovered, but warn mode lets it run
+	ask           // denied or uncovered, prompt mode asks
 	deny
 )
+
+// uncoveredReason explains a path no scope rule covers.
+const uncoveredReason = "no scope rule covers this path"
 
 // maxOffenders is how many denied tree entries an error lists.
 const maxOffenders = 5
@@ -46,9 +49,11 @@ type audit struct {
 	denyErr *Error
 }
 
-// verdictOf classifies (path, op) with kit's semantics: a deny rule
-// wins; with no matching rule the path is denied in strict mode and
-// allowed in warn and prompt modes.
+// verdictOf classifies (path, op): a deny rule wins, then an allow
+// rule. A path no rule covers is treated like a denied one: denied in
+// strict mode, asked about in prompt mode, logged in warn mode. kit
+// allows such paths outside strict mode; foo does not let a gap in the
+// rules run silently.
 func (a *audit) verdictOf(path string, op scope.Op) (verdict, string) {
 	pol := a.g.scope.Policy
 	mode := pol.Mode()
@@ -73,10 +78,14 @@ func (a *audit) verdictOf(path string, op scope.Op) (verdict, string) {
 			return deny, reason
 		}
 	default:
-		if mode == scope.Strict {
+		switch mode {
+		case scope.Warn:
+			return warn, uncoveredReason
+		case scope.Prompt:
+			return ask, uncoveredReason
+		default:
 			return deny, fmt.Sprintf("no scope allow rule covers %s here", opName(op))
 		}
-		return allow, ""
 	}
 }
 
@@ -455,7 +464,7 @@ func argvOf(req Request, canonical map[string][]string) []string {
 
 func (a *audit) logWarnings() {
 	for _, f := range a.warns {
-		a.g.logger.Warn("scope: path denied (warn mode, allowing)",
+		a.g.logger.Warn("scope: path not allowed (warn mode, allowing)",
 			"tool", a.tool, "param", f.param, "path", f.path, "op", opName(f.op), "reason", f.reason)
 	}
 }

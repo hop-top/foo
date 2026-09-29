@@ -151,10 +151,60 @@ func TestScopePromptMode(t *testing.T) {
 	if !strings.Contains(ge.Message, "terminal") {
 		t.Fatalf("message %q should say no terminal", ge.Message)
 	}
+}
 
-	// kit semantics: Unknown is allowed outside strict mode.
+// foo diverges from kit here: a path no rule covers is asked about in
+// prompt mode, like a denied one, instead of running silently.
+func TestScopePromptMode_UncoveredPathAsks(t *testing.T) {
+	e := promptModeTree(t)
+	uncovered := e.p("elsewhere/b")
+
+	c := &confirmer{answers: []bool{true}}
+	g, _ := newGate(t, e.root, gate.WithConfirmer(c))
+	mustAllow(t, g, readCall("cat", uncovered))
+	if len(c.asked) != 1 {
+		t.Fatalf("asked %d questions; want 1", len(c.asked))
+	}
+	q := c.asked[0]
+	for _, want := range []string{"scope: read " + uncovered, "no scope rule covers this path"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("question lacks %q: %s", want, q)
+		}
+	}
+
+	c = &confirmer{answers: []bool{false}}
+	g, _ = newGate(t, e.root, gate.WithConfirmer(c))
+	mustRefuse(t, g, readCall("cat", uncovered), gate.KindDeclined)
+	if len(c.asked) != 1 {
+		t.Fatalf("asked %d questions; want 1", len(c.asked))
+	}
+
+	// No terminal: denied like a denied path, with the reason.
+	g, _ = newGate(t, e.root, gate.WithConfirmer(noTTY(&bytes.Buffer{})))
+	ge := mustRefuse(t, g, readCall("cat", uncovered), gate.KindDenied)
+	if ge.Path != uncovered || !strings.Contains(ge.Message, "no scope rule covers") || !strings.Contains(ge.Message, "terminal") {
+		t.Fatalf("error %+v should name the path, the missing rule and the terminal", ge)
+	}
+
+	// Covered paths still run without a question.
 	g, _ = newGate(t, e.root, gate.WithConfirmer(refuseConfirm{t}))
-	mustAllow(t, g, readCall("cat", e.p("elsewhere/b")))
+	mustAllow(t, g, readCall("cat", e.p("p/a")))
+}
+
+// A denied and an uncovered path in one call share one question.
+func TestScopePromptMode_DeniedAndUncoveredOneQuestion(t *testing.T) {
+	e := promptModeTree(t)
+	c := &confirmer{answers: []bool{true}}
+	g, _ := newGate(t, e.root, gate.WithConfirmer(c))
+	mustAllow(t, g, readCall("cat", e.p("p/.env"), e.p("elsewhere/b")))
+	if len(c.asked) != 1 {
+		t.Fatalf("asked %d questions; want 1", len(c.asked))
+	}
+	for _, want := range []string{e.p("p/.env"), "deny rule", e.p("elsewhere/b"), "no scope rule covers this path"} {
+		if !strings.Contains(c.asked[0], want) {
+			t.Errorf("question lacks %q: %s", want, c.asked[0])
+		}
+	}
 }
 
 func TestScopeWarnMode(t *testing.T) {
@@ -168,6 +218,63 @@ allow:
 	mustAllow(t, g, readCall("cat", e.p("p/.env")))
 	if !strings.Contains(logs.String(), "WARN") || !strings.Contains(logs.String(), e.p("p/.env")) {
 		t.Fatalf("warn mode should log the path: %q", logs.String())
+	}
+}
+
+// A filtered walk cannot ask per entry, so in prompt mode uncovered
+// entries are withheld, as denied ones are; approving the root does
+// not extend to the tree under it.
+func TestScopePromptMode_FilterBeforeWithholdsUncovered(t *testing.T) {
+	e := promptModeTree(t)
+	c := &confirmer{answers: []bool{true}}
+	g, _ := newGate(t, e.root, gate.WithConfirmer(c))
+	grant := mustAllow(t, g, gate.Request{Tool: "grep", SideEffect: "read", Paths: []gate.PathArg{
+		{Param: "path", Values: []string{e.p("elsewhere")}, Op: scope.Read, Recursion: gate.FilterBefore},
+	}})
+	if len(c.asked) != 1 || !strings.Contains(c.asked[0], e.p("elsewhere")) {
+		t.Fatalf("want one question naming the root; got %q", c.asked)
+	}
+	if len(grant.Files["path"]) != 0 || grant.Filtered != 1 {
+		t.Fatalf("Files = %q, Filtered = %d; want none granted, 1 filtered", grant.Files["path"], grant.Filtered)
+	}
+}
+
+// Warn mode logs a path no rule covers, as it does a denied one, and
+// runs the call.
+func TestScopeWarnMode_UncoveredPathWarns(t *testing.T) {
+	e := newFS(t)
+	e.file(t, "p/a", "a")
+	e.file(t, "elsewhere/b", "b")
+	e.scopeYAML(t, `mode: warn
+allow:
+  - "{root}/p/**"
+`)
+	g, logs := newGate(t, e.root, gate.WithConfirmer(refuseConfirm{t}))
+	mustAllow(t, g, readCall("cat", e.p("elsewhere/b")))
+	out := logs.String()
+	for _, want := range []string{"WARN", e.p("elsewhere/b"), "no scope rule covers this path"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("warn log lacks %q: %q", want, out)
+		}
+	}
+
+	logs.Reset()
+	mustAllow(t, g, readCall("cat", e.p("p/a")))
+	if logs.Len() != 0 {
+		t.Fatalf("covered path logged a warning: %q", logs.String())
+	}
+}
+
+// Strict mode still denies a path no rule covers, without asking.
+func TestScopeStrictMode_UncoveredPathDenied(t *testing.T) {
+	e := writableTree(t)
+	g, logs := newGate(t, e.root, gate.WithConfirmer(refuseConfirm{t}))
+	ge := mustRefuse(t, g, readCall("cat", e.p("outside")), gate.KindDenied)
+	if !strings.Contains(ge.Message, "no scope allow rule covers read here") {
+		t.Fatalf("message %q should keep the strict-mode reason", ge.Message)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("strict denial logged a warning: %q", logs.String())
 	}
 }
 

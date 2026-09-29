@@ -32,8 +32,11 @@ may read, write or execute, from scope.yaml in foo's config directory
 (and /etc/xdg/foo/scope.yaml), plus a built-in deny list for secrets
 (.env, keys, ~/.ssh, ...). With no scope.yaml every tool call is denied.
 
-Mode strict denies any path no allow rule covers; warn and prompt allow
-those paths and only log or ask for paths a deny rule matches.`
+A path a deny rule matches, or that no allow rule covers, is handled by
+the mode: strict denies the call, prompt asks once per call (showing
+each path, operation and reason; with no terminal the call is denied),
+and warn logs a warning and runs it. Walks such as grep's skip those
+entries in strict and prompt modes.`
 
 	for _, sub := range cmd.Commands() {
 		adaptScopeCmd(sub)
@@ -49,7 +52,8 @@ rule, including the built-in secret deny list.`,
 read, write or exec; default read). The path is resolved as a tool's
 path argument is: relative to the working directory, "~" to the home
 directory, symlinks and ".." physically. Exits 0 when allowed, 1 when
-denied.`,
+denied. A decision of "unknown" means no rule covers the path: tool
+calls treat it like a denied path (see "foo scope --help").`,
 	"test": `Check several paths against foo's scope policy for one operation.
 Paths are resolved as for "foo scope check". Exits 1 when any path is
 denied.`,
