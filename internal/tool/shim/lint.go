@@ -193,7 +193,7 @@ func (s *Spec) lintWhen(l *linter, where string, when map[string]any) {
 }
 
 func (p *Param) lintNotPath(l *linter) {
-	if len(p.Op) > 0 || p.Repeated || p.MaxItems != 0 || p.MustExist || p.Kind != "" ||
+	if len(p.Op) > 0 || p.OpWhen != nil || p.Repeated || p.MaxItems != 0 || p.MustExist || p.Kind != "" ||
 		p.Target != "" || p.IntoDir || p.Recursive != nil || p.RecursiveWhen != nil ||
 		p.Recursion != "" || p.Parents != nil || p.ParentsWhen != nil || p.ClobberWhen != nil {
 		l.addf("param %q: path keys on a %s param", p.Name, p.Type)
@@ -213,17 +213,9 @@ func (p *Param) lintPath(l *linter, s *Spec) {
 	if len(p.Op) == 0 {
 		l.addf("param %q: op is required", p.Name)
 	}
-	for _, o := range p.Op {
-		switch o {
-		case "read":
-			p.op |= scope.Read
-		case "write":
-			p.op |= scope.Write
-		case "exec":
-			p.op |= scope.Exec
-		default:
-			l.addf("param %q: op %q must be read, write or exec", p.Name, o)
-		}
+	p.op = parseOps(l, fmt.Sprintf("param %q", p.Name), p.Op)
+	if p.OpWhen != nil {
+		s.lintOpWhen(l, p)
 	}
 	if p.Repeated {
 		if p.MaxItems == 0 {
@@ -289,6 +281,57 @@ func (p *Param) lintPath(l *linter, s *Spec) {
 		s.lintWhen(l, "param "+p.Name+" clobber_when", p.ClobberWhen)
 	}
 	p.lintDefault(l)
+}
+
+// parseOps turns op names into scope bits, reporting unknown names.
+func parseOps(l *linter, where string, ops []string) scope.Op {
+	var out scope.Op
+	for _, o := range ops {
+		switch o {
+		case "read":
+			out |= scope.Read
+		case "write":
+			out |= scope.Write
+		case "exec":
+			out |= scope.Exec
+		default:
+			l.addf("%s: op %q must be read, write or exec", where, o)
+		}
+	}
+	return out
+}
+
+// lintOpWhen checks a conditional op: a valid condition, a non-empty
+// op that narrows the param's op, and, when it drops write, a read
+// side effect on the calls it applies to: a path checked for read
+// alone must never be written.
+func (s *Spec) lintOpWhen(l *linter, p *Param) {
+	ow := p.OpWhen
+	where := fmt.Sprintf("param %q op_when", p.Name)
+	s.lintWhen(l, where, ow.When)
+	if len(ow.Op) == 0 {
+		l.addf("%s: op is required", where)
+		return
+	}
+	ow.op = parseOps(l, where, ow.Op)
+	if ow.op&^p.op != 0 || ow.op == p.op {
+		l.addf("param %q: op_when may only narrow op %v, got %v", p.Name, p.Op, ow.Op)
+		return
+	}
+	if p.op&scope.Write == 0 || ow.op&scope.Write != 0 {
+		return
+	}
+	vals := values{}
+	for name, v := range ow.When {
+		if q, ok := s.byName[name]; ok {
+			if cv, err := q.coerce(v); err == nil {
+				vals[name] = cv
+			}
+		}
+	}
+	if eff := s.effectiveSideEffect(vals); eff != "read" {
+		l.addf("param %q: op_when drops write but the side effect is %q when %s", p.Name, eff, whenText(ow.When))
+	}
 }
 
 func (p *Param) lintBool(l *linter) {

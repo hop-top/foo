@@ -65,8 +65,11 @@ func TestSed_DryRunChangesNothing(t *testing.T) {
 	if got := wRead(t, f); got != "a-A-a\n" {
 		t.Fatalf("dry run edited the file: %q", got)
 	}
-	if b.gate.last.SideEffect != "read" {
-		t.Errorf("dry run side effect %q; want read", b.gate.last.SideEffect)
+	if req := b.gate.last; req.SideEffect != "read" || req.Paths[0].Op != scope.Read {
+		t.Errorf("dry run side effect %q op %v; want read, read", req.SideEffect, req.Paths[0].Op)
+	}
+	if len(res.Paths) != 1 || res.Paths[0].Op != "read" {
+		t.Errorf("dry run path report %+v; want op read", res.Paths)
 	}
 	for _, a := range res.Argv {
 		if strings.HasPrefix(a, "-i") {
@@ -288,6 +291,34 @@ func TestSed_EditsLinkTargetKeepsLink(t *testing.T) {
 	wWantArgv(t, l, res, target)
 	if !wIsLink(b.p("w/ln")) || wRead(t, target) != "new\n" {
 		t.Fatalf("link replaced or target not edited: link %v, target %q", wIsLink(b.p("w/ln")), wRead(t, target))
+	}
+}
+
+// dry_run only reads (op_when), so it previews a file under a read-only
+// grant; editing that file in place still needs write.
+func TestSed_DryRunOnReadOnlyGrant(t *testing.T) {
+	b := newWriteBox(t)
+	f := b.file(t, "r/f", "x\n")
+	l := wTool(t, "sed")
+
+	res := mustCall(t, b.eng, l, `{"path":["`+f+`"],"find":"x","replace":"y","dry_run":true}`)
+	wWantOK(t, res)
+	if got := stdout(res); got != "y\n" {
+		t.Errorf("preview stdout = %q", got)
+	}
+	if want := []string{"read " + f}; strings.Join(b.gate.checked, ",") != strings.Join(want, ",") {
+		t.Errorf("dry run checked %q; want %q", b.gate.checked, want)
+	}
+
+	_, err := call(t, b.eng, l, `{"path":["`+f+`"],"find":"x","replace":"y"}`)
+	if ge := wantKind(t, err, gate.KindDenied); ge.Op != scope.Write {
+		t.Errorf("in-place denied op %v; want write", ge.Op)
+	}
+	if req := b.gate.last; req.Paths[0].Op != scope.Read|scope.Write {
+		t.Errorf("in-place op %v; want read|write", req.Paths[0].Op)
+	}
+	if wRead(t, f) != "x\n" {
+		t.Fatal("preview or denied call edited the file")
 	}
 }
 
