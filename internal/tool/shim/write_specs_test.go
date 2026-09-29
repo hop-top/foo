@@ -18,7 +18,7 @@ func TestWriteSpecs_Declarations(t *testing.T) {
 		params              []string
 	}{
 		{"cp", "write", "src:r dst:w", map[string]string{"overwrite": "destructive"}, []string{"dst", "overwrite", "recursive", "src"}},
-		{"mv", "write", "src:w dst:w", map[string]string{"overwrite": "destructive"}, []string{"dst", "overwrite", "src"}},
+		{"mv", "write", "src:rw dst:w", map[string]string{"overwrite": "destructive"}, []string{"dst", "overwrite", "src"}},
 		{"mkdir", "write", "path:w", nil, []string{"parents", "path"}},
 		{"rm", "destructive", "path:w", nil, []string{"dir", "path", "recursive"}},
 		{"sed", "destructive", "path:rw", map[string]string{"dry_run": "read"}, []string{"backrefs", "dry_run", "extended", "find", "global", "ignore_case", "occurrence", "path", "replace"}},
