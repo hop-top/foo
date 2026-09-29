@@ -204,6 +204,7 @@ foo`
 	root.Cmd.AddCommand(modelCmd())
 	root.Cmd.AddCommand(providerCmd())
 	root.Cmd.AddCommand(toolCmd())
+	root.Cmd.AddCommand(scopeCmd())
 	root.Cmd.AddCommand(configCmd())
 	root.Cmd.AddCommand(aliasCmd())
 	root.Cmd.AddCommand(upgradeCmd())
