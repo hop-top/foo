@@ -321,6 +321,21 @@ pinned binary.
 `ls` lists the names of every entry in a permitted directory, even
 entries the scope denies reading; `find` leaves them out.
 
+### Write tools
+
+Built-in shim tools that change files. Every path argument is resolved
+to its canonical path and checked against the path scope for the op
+listed, then passed after a literal `--`. A `write` or `destructive`
+call asks for confirmation before it runs.
+
+| Tool | Parameters | Paths (op) | Side effect | Notes |
+|------|------------|------------|-------------|-------|
+| `cp` | `src[]`, `dst`, `recursive`, `overwrite` | `src` read, `dst` write | write; `overwrite=true` → destructive | Never replaces an existing file unless `overwrite=true`, never an existing directory. An existing directory `dst` receives each source under its own name. `recursive=true` checks every entry of the tree, at the source and at its destination; one denied entry refuses the whole call. Links inside a tree are copied as links |
+| `mv` | `src[]`, `dst`, `overwrite` | `src` write, `dst` write | write; `overwrite=true` → destructive | The source needs write: moving removes it from its directory. Same no-clobber, directory and whole-tree rules as `cp`. A link moves as the link |
+| `mkdir` | `path[]`, `parents` | `path` write | write | `parents=true` also creates, and checks, every missing parent. No mode option |
+| `rm` | `path[]`, `recursive`, `dir` | `path` write | destructive | Removes a link, never its target. Removing an entry needs write on its directory, so `/` and the root of a scope grant cannot be removed unless their parent is writable too. `recursive=true` refuses the whole call if any entry under the tree is out of scope. No `-f`. `dir` is not offered with busybox `rm` |
+| `sed` | `path[]`, `find`, `replace`, `global`, `ignore_case`, `occurrence`, `extended`, `dry_run` | `path` read + write | destructive; `dry_run=true` → read | One substitution per call: foo builds the `s` command from `find` and `replace`, so a sed script (`w`, `e`, `r`, addresses) can never be passed. Newlines and `\x01` are rejected. `dry_run=true` prints the result and changes nothing, but still needs write scope on the path. GNU sed runs with `--sandbox` |
+
 ## Kit conformance annotations
 
 Each leaf carries side-effect, idempotency, and verb annotations
