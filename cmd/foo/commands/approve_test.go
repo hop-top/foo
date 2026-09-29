@@ -83,7 +83,7 @@ func runProbe(t *testing.T, cmd *cobra.Command) (prompt string, runs int) {
 	if err := reg.Register(probe); err != nil {
 		t.Fatal(err)
 	}
-	d := tool.NewDispatcher(&oneCallClient{}, reg, tool.DispatchConfig{Approve: approvalFunc(cmd)})
+	d := tool.NewDispatcher(&oneCallClient{}, reg, tool.DispatchConfig{Approve: approvalFunc(newToolPrompter(cmd))})
 	if _, err := d.Run(context.Background(), prompt); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}

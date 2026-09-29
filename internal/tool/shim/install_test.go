@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hop.top/foo/internal/tool/gate"
 )
 
 func linkActions(res []LinkResult) map[string]string {
@@ -167,5 +170,35 @@ func TestMultiCallName(t *testing.T) {
 		if got != want || ok != (want != "") {
 			t.Errorf("MultiCallName(%q) = %q, %v", argv0, got, ok)
 		}
+	}
+}
+
+// The authorizer is built per request, after the name and arguments
+// check out: --ext-info never reads the user's policy, and a policy
+// that cannot be loaded is a setup failure (stderr, exit 1), not a
+// protocol response a host would pass to its model.
+func TestMultiCall_AuthorizerSetup(t *testing.T) {
+	dir := tempDir(t)
+	writeFile(t, filepath.Join(dir, "a"), "x y\n")
+	cat := Load(LoadOptions{})
+	run := func(build func() (gate.Authorizer, error), stdin string, args ...string) (string, string, int) {
+		var out, errb bytes.Buffer
+		m := &MultiCall{Name: "wc", Catalog: cat, Engine: &Engine{Cwd: dir}, Authorizer: build,
+			Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: &errb}
+		code := m.Run(context.Background(), args)
+		return out.String(), errb.String(), code
+	}
+	broken := func() (gate.Authorizer, error) { return nil, errors.New(`scope: parse "/cfg/scope.yaml": bad`) }
+
+	if out, _, code := run(broken, "", "--ext-info"); code != 0 || !strings.Contains(out, `"name":"wc"`) {
+		t.Errorf("--ext-info with a broken policy: exit %d %q", code, out)
+	}
+	out, stderr, code := run(broken, `{"name":"wc","arguments":{"path":["a"]}}`)
+	if code != 1 || out != "" || stderr != "foo-tool-wc: scope: parse \"/cfg/scope.yaml\": bad\n" {
+		t.Errorf("broken policy: exit %d stdout %q stderr %q; want exit 1, the error on stderr only", code, out, stderr)
+	}
+	out, _, code = run(func() (gate.Authorizer, error) { return &fakeAuth{cwd: dir}, nil }, `{"name":"wc","arguments":{"path":["a"]}}`)
+	if code != 0 || !strings.Contains(out, `"result":{"exit_code":0`) {
+		t.Errorf("built authorizer: exit %d %s", code, out)
 	}
 }

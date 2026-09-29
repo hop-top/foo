@@ -51,3 +51,48 @@ func TestDispatch_ErrorToolMessage(t *testing.T) {
 		})
 	}
 }
+
+// selfApprover asks for approval inside its own Execute, like a shim
+// tool whose gate merges every reason to ask into one question.
+type selfApprover struct {
+	failingTool
+	runs int
+}
+
+func (*selfApprover) ApprovesItself() bool { return true }
+func (s *selfApprover) Execute(context.Context, json.RawMessage) (json.RawMessage, error) {
+	s.runs++
+	return json.RawMessage(`{"ok":true}`), nil
+}
+
+// The dispatcher's approval question is for tools that do not ask on
+// their own; a self-approving tool is not asked about twice.
+func TestDispatch_ApproveSkipsSelfApprovingTools(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		tool  Tool
+		asked int
+	}{
+		{"plain tool asked", failingTool{err: errors.New("ran")}, 1},
+		{"self-approving tool not asked", &selfApprover{failingTool: failingTool{}}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := NewRegistry()
+			if err := reg.Register(tc.tool); err != nil {
+				t.Fatal(err)
+			}
+			asked := 0
+			approve := func(string, json.RawMessage) bool { asked++; return true }
+			client := &scriptedClient{call: llm.ToolCall{ID: "c1", Name: "f", Arguments: json.RawMessage(`{}`)}}
+			if _, err := NewDispatcher(client, reg, DispatchConfig{Approve: approve}).Run(context.Background(), "go"); err != nil {
+				t.Fatal(err)
+			}
+			if asked != tc.asked {
+				t.Errorf("approval asked %d times; want %d", asked, tc.asked)
+			}
+			if s, ok := tc.tool.(*selfApprover); ok && s.runs != 1 {
+				t.Errorf("self-approving tool ran %d times; want 1 (its own check decides)", s.runs)
+			}
+		})
+	}
+}
