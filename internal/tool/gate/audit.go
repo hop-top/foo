@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 
 	"hop.top/kit/go/ai/toolspec/policy"
 	"hop.top/kit/go/core/scope"
@@ -324,7 +326,15 @@ func offendersError(arg PathArg, root string, offenders []finding) *Error {
 // outputFilter checks one output entry of a FilterAfter call: the
 // entry itself (kit follows an existing final link) and its physical
 // target (a dangling link).
+//
+// Warn-mode hits are logged at most once per call: entries arrive one
+// at a time with no end-of-call signal, so the first entry the call's
+// own warning does not already cover is logged, and later ones are not.
 func (a *audit) outputFilter(args []PathArg) func(string) bool {
+	var (
+		warnOnce sync.Once
+		prior    = append([]finding(nil), a.warns...)
+	)
 	return func(abs string) bool {
 		if !filepath.IsAbs(abs) {
 			return false
@@ -341,9 +351,32 @@ func (a *audit) outputFilter(args []PathArg) func(string) bool {
 				return false
 			}
 		}
-		entry.logWarnings()
+		entry.warns = slices.DeleteFunc(entry.warns, func(f finding) bool { return warnedUnder(prior, f) })
+		if len(entry.warns) > 0 {
+			warnOnce.Do(func() {
+				entry.logWarningsAs("scope: output entry not allowed (warn mode, allowing; later entries of this call are not logged)")
+			})
+		}
 		return true
 	}
+}
+
+// warnedUnder reports whether f repeats a warning already logged for
+// the call: same reason, on the same path or a directory above it.
+func warnedUnder(prior []finding, f finding) bool {
+	for _, p := range prior {
+		if p.reason != f.reason {
+			continue
+		}
+		dir := p.path
+		if !strings.HasSuffix(dir, "/") {
+			dir += "/"
+		}
+		if f.path == p.path || strings.HasPrefix(f.path, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // approve asks once when the scope (prompt mode), the policy table or
@@ -414,9 +447,38 @@ func argvOf(req Request, canonical map[string][]string) []string {
 	return out
 }
 
+// logWarnings logs the call's warn-mode hits as one warning: how many
+// paths, the first few, and the ops and reasons involved. A recursive
+// walk would otherwise log a line per file.
 func (a *audit) logWarnings() {
-	for _, f := range a.warns {
-		a.g.logger.Warn("scope: path not allowed (warn mode, allowing)",
-			"tool", a.tool, "param", f.param, "path", f.path, "op", opName(f.op), "reason", f.reason)
+	a.logWarningsAs("scope: paths not allowed (warn mode, allowing)")
+}
+
+func (a *audit) logWarningsAs(msg string) {
+	if len(a.warns) == 0 {
+		return
 	}
+	var paths, ops, reasons []string
+	seen := map[string]bool{}
+	add := func(list *[]string, kind, v string) {
+		if !seen[kind+v] {
+			seen[kind+v] = true
+			*list = append(*list, v)
+		}
+	}
+	for _, f := range a.warns {
+		add(&paths, "p:", f.path)
+		add(&ops, "o:", opName(f.op))
+		add(&reasons, "r:", f.reason)
+	}
+	shown := paths
+	if len(shown) > maxOffenders {
+		shown = shown[:maxOffenders]
+	}
+	list := strings.Join(shown, ", ")
+	if rest := len(paths) - len(shown); rest > 0 {
+		list += fmt.Sprintf(" and %d more", rest)
+	}
+	a.g.logger.Warn(msg, "tool", a.tool, "count", len(paths), "paths", list,
+		"op", strings.Join(ops, "|"), "reason", strings.Join(reasons, "; "))
 }
