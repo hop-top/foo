@@ -243,10 +243,16 @@ func TestSedScript_GeneratedNeverModelSupplied(t *testing.T) {
 		t.Errorf("in-place edit: file %q side effect %q", data, auth.last.SideEffect)
 	}
 
+	// A script without a backrefs param is always literal.
+	mustCall(t, e, l, `{"path":"f.txt","find":"c","replace":"[&\\1]"}`)
+	if data, _ := os.ReadFile(f); string(data) != "a-A-[&\\1]\n" {
+		t.Errorf("literal replace: file %q", data)
+	}
+
 	for _, bad := range []string{
 		`{"path":"f.txt","find":"a","replace":"b\nw /tmp/leak"}`,
 		`{"path":"f.txt","find":"a\u0001","replace":"b"}`,
-		`{"path":"f.txt","find":"a","replace":"b\\"}`,
+		`{"path":"f.txt","find":"a\\","replace":"b"}`,
 		`{"path":"f.txt","find":"a","replace":"b","script":"w /tmp/leak"}`,
 	} {
 		_, err := call(t, e, l, bad)

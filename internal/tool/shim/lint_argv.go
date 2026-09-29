@@ -35,6 +35,9 @@ func (s *Spec) lintScript(l *linter) {
 		}
 		use(name, TypeBool)
 	}
+	if sc.Backrefs != "" {
+		use(sc.Backrefs, TypeBool)
+	}
 	if sc.Occurrence != "" {
 		use(sc.Occurrence, TypeInt)
 		if p, ok := s.byName[sc.Occurrence]; ok && p.Min != nil && p.Max != nil &&
