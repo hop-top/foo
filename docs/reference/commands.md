@@ -360,7 +360,7 @@ rule, or missing rule, behind a verdict other than `allowed`).
 | `allowed` | An allow rule covers the path; the call runs | 0 |
 | `denied` | `mode: strict` and a deny rule matches or no allow rule covers the path; also every path when no `scope.yaml` exists | 1 |
 | `prompt` | `mode: prompt` and the same kind of path: the call asks for approval first, and is denied with no terminal | 8 |
-| `warn` | `mode: warn` and the same kind of path: the call runs and logs a warning | 9 |
+| `warn` | `mode: warn` and the same kind of path: the call runs and logs one warning | 9 |
 
 `test` exits with the most restrictive verdict among its paths
 (`denied`, then `prompt`, then `warn`). A `scope.yaml` that does not
@@ -375,6 +375,10 @@ SCOPE_PROMPT: path would prompt: a tool call would ask for approval first, and i
 $ echo $?
 8
 ```
+
+In warn mode a tool call logs one warning per call, naming how many
+paths were let through and the first few, rather than one line per
+file of a recursive walk.
 
 ## Kit conformance annotations
 

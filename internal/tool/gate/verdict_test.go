@@ -1,6 +1,7 @@
 package gate_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -75,5 +76,108 @@ func TestVerdictString(t *testing.T) {
 		if v.String() != want {
 			t.Errorf("%d.String() = %q; want %q", int(v), v.String(), want)
 		}
+	}
+}
+
+// warnModeTree is a warn-mode scope covering only p/, with n files
+// under elsewhere/ that no rule covers.
+func warnModeTree(t *testing.T, n int) *fsEnv {
+	t.Helper()
+	e := newFS(t)
+	e.file(t, "p/a", "x")
+	for i := range n {
+		e.file(t, fmt.Sprintf("elsewhere/f%02d", i), "x")
+	}
+	e.scopeYAML(t, "mode: warn\nallow:\n  - \"{root}/p/**\"\n")
+	return e
+}
+
+// A recursive walk over uncovered files logs one warning for the call,
+// with the count and the first few paths, not one line per file.
+func TestScopeWarnMode_WalkLogsOneWarningPerCall(t *testing.T) {
+	e := warnModeTree(t, 8)
+	g, logs := newGate(t, e.root, gate.WithConfirmer(refuseConfirm{t}))
+	grant := mustAllow(t, g, gate.Request{Tool: "grep", SideEffect: "read", Paths: []gate.PathArg{
+		{Param: "path", Values: []string{e.p("elsewhere")}, Op: scope.Read, Recursion: gate.FilterBefore},
+	}})
+	if len(grant.Files["path"]) != 8 {
+		t.Fatalf("granted %d files; want 8", len(grant.Files["path"]))
+	}
+	out := logs.String()
+	if n := strings.Count(out, "WARN"); n != 1 {
+		t.Fatalf("logged %d warnings; want 1:\n%s", n, out)
+	}
+	// root + 8 files = 9 paths; the first few are named, the rest counted.
+	for _, want := range []string{"count=9", e.p("elsewhere"), "and 4 more"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("warning lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, e.p("elsewhere/f07")) {
+		t.Errorf("warning should not list every path:\n%s", out)
+	}
+}
+
+// A single warn-mode path still names its op and reason.
+func TestScopeWarnMode_SinglePathNamesReason(t *testing.T) {
+	e := warnModeTree(t, 1)
+	g, logs := newGate(t, e.root, gate.WithConfirmer(refuseConfirm{t}))
+	mustAllow(t, g, readCall("cat", e.p("elsewhere/f00")))
+	out := logs.String()
+	if strings.Count(out, "WARN") != 1 {
+		t.Fatalf("want one warning:\n%s", out)
+	}
+	for _, want := range []string{e.p("elsewhere/f00"), "count=1", "op=read", "no scope rule covers this path"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("warning lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// find's output entries are checked one by one after the call ran,
+// with no end-of-call signal: the filter logs the first warn-mode entry
+// once, not every entry.
+func TestScopeWarnMode_OutputFilterLogsOnce(t *testing.T) {
+	e := warnModeTree(t, 0)
+	for _, d := range []string{"p/x", "p/y", "p/z"} {
+		e.file(t, d+"/.env", "x")
+	}
+	g, logs := newGate(t, e.root, gate.WithConfirmer(refuseConfirm{t}))
+	grant := mustAllow(t, g, gate.Request{Tool: "find", SideEffect: "read", Paths: []gate.PathArg{
+		{Param: "path", Values: []string{e.p("p")}, Op: scope.Read, Recursion: gate.FilterAfter},
+	}})
+	if strings.Contains(logs.String(), "WARN") {
+		t.Fatalf("covered root should not warn: %q", logs.String())
+	}
+	for _, d := range []string{"p/x", "p/y", "p/z"} {
+		if !grant.Allow(e.p(d + "/.env")) {
+			t.Fatalf("warn mode should allow %s/.env", d)
+		}
+	}
+	out := logs.String()
+	if n := strings.Count(out, "WARN"); n != 1 {
+		t.Fatalf("output filter logged %d warnings; want 1:\n%s", n, out)
+	}
+	if !strings.Contains(out, e.p("p/x/.env")) || !strings.Contains(out, "deny rule") {
+		t.Errorf("warning should name the first entry and its reason:\n%s", out)
+	}
+}
+
+// Entries under a root the call already warned about, for the same
+// reason, add no warning: find over an uncovered tree logs one line.
+func TestScopeWarnMode_FindUnderWarnedRootLogsOnce(t *testing.T) {
+	e := warnModeTree(t, 5)
+	g, logs := newGate(t, e.root, gate.WithConfirmer(refuseConfirm{t}))
+	grant := mustAllow(t, g, gate.Request{Tool: "find", SideEffect: "read", Paths: []gate.PathArg{
+		{Param: "path", Values: []string{e.p("elsewhere")}, Op: scope.Read, Recursion: gate.FilterAfter},
+	}})
+	for _, p := range []string{"elsewhere", "elsewhere/f00", "elsewhere/f01", "elsewhere/f04"} {
+		if !grant.Allow(e.p(p)) {
+			t.Fatalf("warn mode should allow %s", p)
+		}
+	}
+	out := logs.String()
+	if n := strings.Count(out, "WARN"); n != 1 {
+		t.Fatalf("logged %d warnings for one call; want 1:\n%s", n, out)
 	}
 }

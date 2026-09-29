@@ -56,8 +56,8 @@ may read, write or execute, from scope.yaml in foo's config directory
 A path a deny rule matches, or that no allow rule covers, is handled by
 the mode: strict denies the call, prompt asks once per call (showing
 each path, operation and reason; with no terminal the call is denied),
-and warn logs a warning and runs it. Walks such as grep's skip those
-entries in strict and prompt modes.
+and warn logs one warning per call and runs it. Walks such as grep's
+skip those entries in strict and prompt modes.
 
 check and test print what a tool call would do with a path (allowed,
 denied, prompt or warn) and exit with a code per verdict; see
