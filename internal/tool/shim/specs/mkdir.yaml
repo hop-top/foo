@@ -1,0 +1,28 @@
+# mkdir: create directories. Path-gated write; no mode option.
+spec: 1
+name: mkdir
+description: >-
+  Create directories. Fails on an existing path unless parents=true,
+  which also creates missing parent directories.
+command:
+  bin: [/bin/mkdir, /usr/bin/mkdir]
+side_effect: write
+network: none
+timeout: 30s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: path
+    type: path
+    description: Directories to create.
+    op: [write]
+    target: dirent
+    repeated: true
+    max_items: 64
+    parents_when: {parents: true}
+  - name: parents
+    type: bool
+    description: Create missing parent directories too; an existing directory is not an error.
+    default: false
+    argv: {true: ["-p"]}
+argv: ["{parents}", "--", "{path}"]

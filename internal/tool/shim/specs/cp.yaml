@@ -1,0 +1,50 @@
+# cp: copy files or directories. Path-gated; never replaces an existing
+# destination unless overwrite=true (then destructive).
+spec: 1
+name: cp
+description: >-
+  Copy files or directories. With several sources, dst must be an
+  existing directory; an existing directory dst receives each source
+  under its own name. Never replaces an existing file unless
+  overwrite=true, and never an existing directory. Directories need
+  recursive=true; links inside a copied tree are copied as links.
+command:
+  bin: [/bin/cp, /usr/bin/cp]
+side_effect: write
+side_effect_if:
+  - when: {overwrite: true}
+    side_effect: destructive
+network: none
+timeout: 60s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: src
+    type: path
+    description: Files or directories to copy.
+    op: [read]
+    repeated: true
+    max_items: 64
+    must_exist: true
+    recursive_when: {recursive: true}
+    recursion: all_or_nothing
+  - name: dst
+    type: path
+    description: Destination path, or an existing directory to copy into.
+    op: [write]
+    target: dirent
+    into_dir: true
+    recursive_when: {recursive: true}
+    recursion: all_or_nothing
+    clobber_when: {overwrite: true}
+  - name: recursive
+    type: bool
+    description: Copy directories and everything under them.
+    default: false
+    argv: {true: ["-R", "-P"]}
+  - name: overwrite
+    type: bool
+    description: Replace an existing destination file.
+    default: false
+    argv: {false: ["-n"]}
+argv: ["{recursive}", "{overwrite}", "--", "{src}", "{dst}"]

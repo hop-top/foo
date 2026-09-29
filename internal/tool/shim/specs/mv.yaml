@@ -1,0 +1,47 @@
+# mv: move or rename. The source entry is removed from its directory,
+# so it needs write, not read. Never replaces an existing destination
+# unless overwrite=true (then destructive).
+spec: 1
+name: mv
+description: >-
+  Move or rename files or directories. With several sources, dst must
+  be an existing directory; an existing directory dst receives each
+  source under its own name. Never replaces an existing file unless
+  overwrite=true, and never an existing directory. A link is moved as
+  the link itself.
+command:
+  bin: [/bin/mv, /usr/bin/mv]
+side_effect: write
+side_effect_if:
+  - when: {overwrite: true}
+    side_effect: destructive
+network: none
+timeout: 60s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: src
+    type: path
+    description: Files or directories to move.
+    op: [write]
+    target: dirent
+    repeated: true
+    max_items: 64
+    must_exist: true
+    recursive: true
+    recursion: all_or_nothing
+  - name: dst
+    type: path
+    description: New path, or an existing directory to move into.
+    op: [write]
+    target: dirent
+    into_dir: true
+    recursive: true
+    recursion: all_or_nothing
+    clobber_when: {overwrite: true}
+  - name: overwrite
+    type: bool
+    description: Replace an existing destination file.
+    default: false
+    argv: {false: ["-n"]}
+argv: ["{overwrite}", "--", "{src}", "{dst}"]
