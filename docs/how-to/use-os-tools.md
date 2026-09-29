@@ -208,7 +208,7 @@ prints nothing.
 Outside the grant the model learns nothing about your files: a path
 the scope does not grant gets the same refusal whether it exists or
 not, and whatever it is (file, directory, link, or a path through
-one). `not_found`, "is a directory" and similar errors come only for
+one, even a link that points into the grant). `not_found`, "is a directory" and similar errors come only for
 paths the scope grants, or after you approve the path in
 `mode: prompt`.
 
@@ -284,9 +284,10 @@ A recursive `grep` or `find` never asks per file: in `strict` and
 |---------|-------|-----|
 | Every call `denied` with `no scope policy: … scope.yaml does not exist` | No `scope.yaml` where foo looks | Create the file the message names; `foo scope show` prints the path |
 | `denied` on a path you allowed | A symlink on the way resolves outside the rule, a `..` climbs through a directory outside it, or a relative path was taken from another directory | `foo scope check <path>` from the same directory shows the resolved path; grant that, or name the path without `..` |
+| `denied` on a path through a link into your grant (`foo scope check` says `allowed`) | The link sits in a directory the scope does not grant, and no rule names the path through it: `~/code` links to `/data/code`, the rule says `/data/code/**`, the call sends `~/code/x` | Write the rule the way paths are sent (`~/code/**`), or send the target path. `scope check` reports the resolved path only |
 | `declined … cannot be asked: no terminal` | A write or destructive call, or `mode: prompt`, with no terminal | Run on a terminal, or auto-allow with `tool-policy.yaml` |
 | `rm`/`mkdir` denied inside a write grant | The entry's parent directory is not writable in the scope | Grant `dir/**` rather than `dir/sub/**`, or accept that the grant root itself cannot be removed |
-| Output shows `/private/tmp/…` for `/tmp/…` (macOS) | foo reports canonical paths; `/tmp` links to `/private/tmp` | Nothing to fix; rules written as `/tmp/**` still match. Refusals name such paths as sent |
+| Output shows `/private/tmp/…` for `/tmp/…` (macOS) | foo reports canonical paths; `/tmp` links to `/private/tmp` | Nothing to fix; rules written as `/tmp/**` still match, for paths sent as `/tmp/…` too. Refusals name such paths as sent |
 | `invalid_args: is the home directory …` | `rm`, `mv` and `cp` never act on `/`, `~` or an entry directly under `/`, nor on a granted link to one (possibly after you approved the call) | Name a path below them |
 | `timeout` | The command outran its limit (a FIFO, a huge tree) | Narrow the path; `find maxdepth=`, `head` instead of `cat` |
 
@@ -308,7 +309,13 @@ For every call, before anything runs, foo:
    wrong with a path (missing, wrong kind, unresolvable). A `..` that
    climbs out of a directory the scope does not grant is refused, and
    a refusal names a path outside the grant as it was sent, not what
-   it resolves to.
+   it resolves to. So is a path that follows a symlink sitting in a
+   directory the scope does not grant, wherever it points, unless a
+   rule as you wrote it names the path through that link (`/tmp/**`
+   on macOS, `~/code/**` where `~/code` is a link). A link from
+   outside into the grant is no way in, as one from inside to outside
+   is no way out; otherwise what the link points to would be the
+   answer.
 4. Runs the pinned binary (`/bin/ls`, never a `$PATH` lookup) with
    the **checked** canonical paths, each after a literal `--`, so a
    path named `-R` is a file, never a flag.

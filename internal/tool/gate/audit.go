@@ -93,17 +93,19 @@ const (
 )
 
 // refuse records a value the scope cannot clear by its path alone (a
-// ".." out of an ungranted directory, or a path that does not resolve
-// there), as if no rule covered it. The model is told what it would be
-// told for a missing path in the same place: the first check a
-// resolved value gets, on the lexical path; or, when the scope allows
-// the lexical path, why that is not enough.
+// ".." out of an ungranted directory, a path that does not resolve
+// there, or one that resolves through a symlink there), as if no rule
+// covered it. The model is told what it would be told for a missing
+// path in the same place: the first check a resolved value gets, on
+// the lexical path; or, when the rules as written allow the lexical
+// path, why that is not enough. The rules are matched as written: a
+// resolving check would follow the very links in question.
 func (a *audit) refuse(v *value, arg PathArg, path, why string) {
 	mode := a.g.scope.Policy.Mode()
 	show, op := v.lexical, opBits(arg.Op)[0]
 	public := ""
 	switch {
-	case a.allowed(v.lexical, arg.Op):
+	case a.g.scope.grantsAsWritten(v.lexical, arg.Op):
 		show, public = v.abs, outsideReason
 		if slices.Contains(strings.Split(v.abs, "/"), "..") {
 			public = climbReason
@@ -119,16 +121,6 @@ func (a *audit) refuse(v *value, arg PathArg, path, why string) {
 	}
 	a.add(byMode(mode), finding{param: arg.Param, path: path, op: op, reason: why,
 		id: v.id, show: show, showOp: op, public: public})
-}
-
-// allowed reports whether an allow rule covers every bit of op on path.
-func (a *audit) allowed(path string, op scope.Op) bool {
-	for _, bit := range opBits(op) {
-		if v, _, _ := a.g.scope.classify(path, bit); v != VerdictAllow {
-			return false
-		}
-	}
-	return true
 }
 
 // passes reports whether every bit of op is allowed on path without
@@ -166,6 +158,11 @@ func (a *audit) checkArg(st argState) {
 				a.refuse(v, arg, v.entry.path, v.err.Message)
 			}
 			continue
+		}
+		if v.linked && !v.climb && !a.g.scope.grantsAsWritten(v.lexical, arg.Op) {
+			// Checked on as well: approving it must not skip a deny
+			// rule on where it resolves.
+			a.refuse(v, arg, v.entry.path, "it resolves through a symlink in a directory no scope rule grants")
 		}
 		if arg.Target == Dirent {
 			a.check(v, arg.Param, v.parent.path, filepath.Dir(v.lexical), scope.Write)

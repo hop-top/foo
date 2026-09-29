@@ -411,7 +411,10 @@ call is denied, and `foo scope` prints the path it looked for. Writing one:
 `check` and `test` resolve each path as the gate resolves a tool's
 path argument (relative to the working directory, symlinks and `..`
 physically) and report the gate's verdict under the policy's mode, not
-the raw rule match. Columns: `path`, `op`, `decision`, `reason` (the
+the raw rule match. They judge the resolved path alone: a tool call
+is also refused for a `..` that climbs out of an ungranted directory,
+and for a path through a symlink in an ungranted directory that no
+rule names as written. Columns: `path`, `op`, `decision`, `reason` (the
 rule, or missing rule, behind a verdict other than `allowed`).
 
 | `decision` | Meaning | Exit |

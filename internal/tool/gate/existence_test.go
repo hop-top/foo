@@ -31,6 +31,12 @@ func existenceTree(t *testing.T, mode string) *fsEnv {
 	e.link(t, e.p("elsewhere/f"), "out/l")
 	e.link(t, e.p("elsewhere"), "out/ld")
 	e.link(t, "loop", "out/loop")
+	// Links outside the grant into it: what they point to is read in a
+	// directory the scope does not grant, so they must answer like a
+	// missing sibling, not reach the grant.
+	e.link(t, e.p("p"), "out/lp")
+	e.link(t, e.p("p/a"), "out/lpa")
+	e.link(t, e.p("p/d"), "out/lpd")
 	// Aliases of places the shim root guard protects: $HOME, /, an entry
 	// directly under / and a top-level link's target (macOS /tmp ->
 	// /private/tmp). Outside the grant they must answer like the rest.
@@ -53,12 +59,15 @@ func existenceTree(t *testing.T, mode string) *fsEnv {
 // existing file and directory (a tree too large to walk), missing
 // paths, links (dangling, to elsewhere, looping, to $HOME, /, /usr and
 // a top-level link's target), a path under a file (ENOTDIR), an
-// unsearchable directory (EACCES when walked) and a path under it.
+// unsearchable directory (EACCES when walked) and a path under it, and
+// links into the grant (to its root, a file, a directory, and paths
+// under the root link, existing or not).
 var outsideProbes = []string{
 	"out/f", "out/d", "out/m", "out/md/x",
 	"out/dl", "out/l", "out/ld/x", "out/loop",
 	"out/hl", "out/rl", "out/ul", "out/tl",
 	"out/f/x", "out/locked", "out/locked/x", "out/dl/x",
+	"out/lp", "out/lpa", "out/lpd", "out/lp/x", "out/lp/a", "out/lp/../p/a",
 }
 
 // topLinkTarget is what a top-level link points to when the target is
