@@ -144,29 +144,96 @@ during `foo -T <name> "..."` execution.
 | Discovery scanner | `dispatch.Register` (cobra) | `tool.Registry` (LLM dispatcher) |
 | User invocation | `foo <name> [argv]` | `foo -T <name> "<prompt>"` (model invokes) |
 | Output | markdown on stdout | JSON on stdout (function-call result shape) |
-| `--ext-info` JSON | Same shape; `capabilities: ["discover"]` | Same shape |
+| `--ext-info` JSON | Same shape; `capabilities: ["discover"]` | Same shape, plus optional `parameters` |
 
 Tool plugins are usually short, single-purpose, side-effect-free
-(or at least clearly scoped). The two built-in tools `foo_time`
-and `foo_version` are the canonical templates — they live in
-`internal/tool/builtin/` and show the minimal contract.
+(or at least clearly scoped). The built-in tools `foo_time` and
+`foo_version` in `internal/tool/builtin/` are the in-process
+version of the same contract.
 
-For a third-party tool plugin, follow the same `--ext-info`
-contract but match the `foo-tool-` prefix:
+### Example: a weather tool the model passes arguments to
+
+The plugin declares `city` and `days` in `parameters`; the model
+fills them in from the prompt. The script uses `jq` to read its
+input.
 
 ```sh
-# foo-tool-weather emits a forecast JSON blob for a given city
-foo -T weather "What should I pack for a 3-day business trip to Toronto?"
-# Model invokes foo-tool-weather(city=Toronto, days=3),
-# gets back the forecast, then composes a packing list grounded
-# in the actual high/low and precipitation.
+cat > foo-tool-weather <<'SH'
+#!/bin/sh
+if [ "$1" = "--ext-info" ]; then
+  cat <<'JSON'
+{
+  "name": "weather",
+  "version": "0.1.0",
+  "description": "Daily forecast for a city",
+  "capabilities": ["discover"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "city": {"type": "string", "description": "City name, e.g. Toronto"},
+      "days": {"type": "integer", "description": "Days to forecast, 1-7"}
+    },
+    "required": ["city"]
+  }
+}
+JSON
+  exit 0
+fi
+# stdin: {"name":"weather","arguments":{"city":"Toronto","days":3}}
+req=$(cat)
+city=$(printf '%s' "$req" | jq -r '.arguments.city')
+days=$(printf '%s' "$req" | jq -r '.arguments.days // 1')
+# ...look up the real forecast here...
+printf '{"result":{"city":"%s","days":%s,"high_c":[21,19,17]}}\n' "$city" "$days"
+SH
+chmod +x foo-tool-weather
+mv foo-tool-weather "$(go env GOPATH)/bin/"
+
+foo tool list    # weather appears with PARAMS true
+foo -T weather --tools-debug "What should I pack for a 3-day trip to Toronto?"
+# [tool] call: weather (id=...) args={"city":"Toronto","days":3}
 ```
 
-The model decides whether to invoke `weather` based on the
-prompt; on call, foo execs `foo-tool-weather` with structured
-args derived from the prompt. The tool returns JSON; the model
-folds it into its response. Pass `--tools-debug` to see the call
-and result on stderr.
+foo offers the model a `weather` tool whose arguments are the
+`parameters` schema. When the model calls it, foo runs
+`foo-tool-weather` with no argv and writes the call to its stdin;
+the model folds the result into its answer. `--tools-debug` prints
+each call and result on stderr.
+
+### `--ext-info` for tool plugins
+
+The subcommand fields apply, with two differences:
+
+| Field | Notes |
+|-------|-------|
+| `name` | The value `-T` takes. Empty or missing falls back to the filename after `foo-tool-`. |
+| `parameters` | Optional. JSON Schema for the tool's arguments, passed to the model as-is. Must be a JSON object with `"type": "object"`; describe each argument under `properties` and list mandatory ones in `required`. Missing or `null` means the tool takes no arguments. |
+
+If `parameters` is not a JSON object, lacks `"type": "object"`, or
+has a `properties` that is not an object, foo skips the plugin. It
+does not appear in `foo tool list` or `-T`, and foo prints why on
+stderr, from `foo tool list` and from any `-T` run that names it:
+
+```
+[foo] warning: skipping tool plugin /usr/local/bin/foo-tool-weather: --ext-info "parameters" must declare "type": "object"
+```
+
+foo skips the plugin instead of offering it with no arguments,
+because the model would then call it without the inputs it said
+it needs. A binary whose `--ext-info` fails outright still
+registers, under its filename-derived name and with no arguments.
+
+### Call protocol
+
+| Direction | Payload |
+|-----------|---------|
+| stdin, from foo | `{"name": "<tool name>", "arguments": <object the model sent>}` |
+| stdout, success | `{"result": <any JSON>}` |
+| stdout, failure | `{"error": "<message>"}` |
+
+foo passes `arguments` through as the model sent them; validate
+them in the plugin. Each call has a 30-second deadline. A non-zero
+exit or non-JSON stdout reaches the model as a tool error.
 
 ## Common issues
 
@@ -179,6 +246,8 @@ and result on stderr.
 | Tool plugin missing from `foo tool list` | Wrong PATH, wrong filename, or not executable | `which foo-tool-<name>`; check the `foo-tool-` prefix and `chmod +x` |
 | `unknown tool "<name>"` | `-T` value differs from the listed name (`--ext-info` `name` overrides the filename) | Use the NAME column of `foo tool list` |
 | Tool plugin never invoked | Did you pass `-T <name>`? Model declines to call | Confirm `--tools-debug` shows the tool offered to the model |
+| `[foo] warning: skipping tool plugin ...` | `parameters` in `--ext-info` is not a JSON Schema object of type `object` | Fix the schema; check it with `foo-tool-<name> --ext-info \| jq .parameters` |
+| Model calls the tool with `{}` | No `parameters` declared (`PARAMS` is false in `foo tool list`) | Add a `parameters` schema to `--ext-info` |
 
 ## How it works
 
@@ -192,8 +261,10 @@ validator requires on the rest. Each remaining plugin's
 and assigned to `cmd.Short` and `cmd.Long`.
 
 Tool-plugin discovery happens separately in `buildRegistry`
-(`cmd/foo/commands/root.go`), which scans for `foo-tool-*` and
-adds each as an `ExternalTool` in the LLM dispatcher's registry.
+(`cmd/foo/commands/root.go`), which scans for `foo-tool-*`, runs
+each binary's `--ext-info` once, and adds it to the LLM
+dispatcher's registry as an `ExternalTool`
+(`internal/tool/external.go`) carrying its `parameters` schema.
 A tool plugin is invoked only when (a) the user passed
 `-T <name>`, AND (b) the model decides to call it.
 
@@ -202,7 +273,8 @@ A tool plugin is invoked only when (a) the user passed
 | Topic | Where |
 |-------|-------|
 | Subcommand plugin example | `cmd/foo-youtube/main.go`, `cmd/foo-scrape/main.go` |
-| Tool plugin example | `internal/tool/builtin/time.go`, `internal/tool/builtin/version.go` |
+| Tool plugin example | [The weather example](#example-a-weather-tool-the-model-passes-arguments-to); built-ins in `internal/tool/builtin/` |
+| Tool plugin loader | `internal/tool/external.go` |
 | Dispatcher source | `hop.top/kit/go/ai/ext/dispatch` |
 | Discovery source | `hop.top/kit/go/ai/ext/discover` |
 

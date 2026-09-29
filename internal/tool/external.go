@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
+
+	"hop.top/kit/go/ai/ext/discover"
 )
 
 const externalTimeout = 30 * time.Second
@@ -36,7 +39,7 @@ func NewExternalTool(
 	name, description, path string, parameters json.RawMessage,
 ) *ExternalTool {
 	if parameters == nil {
-		parameters = json.RawMessage(`{"type":"object","properties":{}}`)
+		parameters = json.RawMessage(emptyParameters)
 	}
 	return &ExternalTool{
 		name:        name,
@@ -97,32 +100,98 @@ func (t *ExternalTool) Execute(
 	return resp.Result, nil
 }
 
-// DiscoverExternalTools scans PATH for foo-tool-* binaries and wraps
-// them as ExternalTool. Interrogation errors are logged and skipped.
-func DiscoverExternalTools() ([]*ExternalTool, error) {
-	// Use kit/ext/discover with prefix "foo-tool-".
-	// For now we scan PATH manually with a simple approach
-	// matching the kit discover pattern.
-	scanner := pathScanner{prefix: "foo-tool-"}
-	return scanner.scan()
+// emptyParameters is the schema of a tool that takes no arguments.
+const emptyParameters = `{"type":"object","properties":{}}`
+
+// ExternalToolFromFound builds the registry entry for a discovered
+// foo-tool-* binary. It runs the binary with --ext-info once (Enrich)
+// and reads, beyond kit's metadata, the foo-defined top-level
+// "parameters" field: the JSON Schema object the model sees as the
+// tool's arguments.
+//
+// A binary whose --ext-info fails still registers under its
+// filename-derived name with no parameters. A blank --ext-info name
+// also falls back to the filename. Absent or null "parameters" means
+// the tool takes no arguments. Any other "parameters" that is not a
+// JSON object with "type": "object" returns *InvalidParametersError:
+// offered with no schema instead, the model would call the plugin
+// without the arguments it declared.
+func ExternalToolFromFound(f *discover.Found) (*ExternalTool, error) {
+	if err := f.Enrich(); err != nil {
+		return NewExternalTool(f.Name, f.Name, f.Path, nil), nil
+	}
+	info := f.Info()
+	name := strings.TrimSpace(info.Metadata.Name)
+	if name == "" {
+		name = f.Name
+	}
+
+	var fields extInfoFields
+	if err := info.Decode(&fields); err != nil {
+		return nil, &InvalidParametersError{Name: name, Path: f.Path, Reason: err.Error()}
+	}
+	params, reason := validParameters(fields.Parameters)
+	if reason != "" {
+		return nil, &InvalidParametersError{Name: name, Path: f.Path, Reason: reason}
+	}
+	return NewExternalTool(name, info.Metadata.Description, f.Path, params), nil
 }
 
-// extInfoResponse matches the --ext-info JSON output from external tools.
-type extInfoResponse struct {
-	Name        string          `json:"name"`
-	Version     string          `json:"version"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
+// extInfoFields holds the --ext-info fields foo defines on top of the
+// kit discovery protocol.
+type extInfoFields struct {
+	Parameters json.RawMessage `json:"parameters"`
 }
 
-type pathScanner struct {
-	prefix string
+// validParameters returns the schema to offer the model, nil for "no
+// arguments", or a reason the declared value is unusable. It checks
+// the shape every provider requires of function parameters; it is not
+// a full JSON Schema validator.
+func validParameters(raw json.RawMessage) (json.RawMessage, string) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, ""
+	}
+	var schema map[string]json.RawMessage
+	if trimmed[0] != '{' || json.Unmarshal(trimmed, &schema) != nil {
+		return nil, "must be a JSON Schema object"
+	}
+	var typ string
+	if json.Unmarshal(schema["type"], &typ) != nil || typ != "object" {
+		return nil, `must declare "type": "object"`
+	}
+	if props, ok := schema["properties"]; ok {
+		var m map[string]json.RawMessage
+		if bytes.TrimSpace(props)[0] != '{' || json.Unmarshal(props, &m) != nil {
+			return nil, `"properties" must be a JSON object`
+		}
+	}
+	return json.RawMessage(trimmed), ""
 }
 
-func (s *pathScanner) scan() ([]*ExternalTool, error) {
-	// Import and delegate to kit/ext/discover.Scanner
-	// For the actual scan, we replicate the minimal logic since
-	// kit/ext/discover.Found doesn't carry parameters.
-	// The real integration interrogates each binary.
-	return nil, nil // No external tools discovered yet; placeholder.
+// InvalidParametersError reports a foo-tool-* binary whose --ext-info
+// "parameters" field cannot be offered to the model.
+type InvalidParametersError struct {
+	// Name is the tool name the binary would have registered under.
+	Name string
+	// Path is the binary's absolute path.
+	Path string
+	// Reason says what is wrong with the field.
+	Reason string
+}
+
+func (e *InvalidParametersError) Error() string {
+	return fmt.Sprintf("%s: --ext-info \"parameters\" %s", e.Path, e.Reason)
+}
+
+// DeclaresParameters reports whether t's schema names at least one
+// argument.
+func DeclaresParameters(t Tool) bool {
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if json.Unmarshal(t.Parameters(), &schema) != nil {
+		return false
+	}
+	return len(schema.Properties) > 0
 }
