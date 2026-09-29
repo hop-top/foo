@@ -112,6 +112,14 @@ allow:
   `secrets.yaml`, and `find` or `grep -r` never show what is inside.
   Names match from their start, so `mysecrets.txt` is not on the
   list. `foo scope show` prints every pattern.
+- Credential stores are denied wherever they sit, not only in your
+  home: a `.ssh/`, `.aws/`, `.azure/`, `.gnupg/`, `.kube/`, `.pki/`
+  or `.config/gcloud/` directory at any depth of a granted tree (on
+  macOS also `Library/Keychains/` and `Library/Cookies/`), and any
+  `.netrc`, `.pgpass`, `.pypirc` or `.my.cnf` file. Whole names only:
+  `.sshx/`, `my.ssh/` and a bare `gcloud/` stay readable. A project
+  `.npmrc` stays readable too (registry config); `~/.npmrc` does not.
+  Add a `deny:` rule for anything else your tree keeps secret.
 
 What each tool needs: reading tools need `read`; `mkdir`, `rm` and a
 `cp`/`mv` destination need `write` on the path **and on its parent

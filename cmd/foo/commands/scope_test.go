@@ -346,3 +346,67 @@ func TestScopeShow_ListsSecretDescendants(t *testing.T) {
 		}
 	}
 }
+
+// A credential dir inside a granted tree is denied like the one under
+// home, at any depth; lookalike names stay allowed.
+func TestScopeCheck_CredentialDirsAnywhere(t *testing.T) {
+	root := scopeEnv(t)
+	for _, f := range []string{
+		"p/.ssh/id", "p/sub/.aws/config", "p/.config/gcloud/adc.json", "p/.kube/config",
+		"p/.netrc", "p/.sshx/f", "p/gcloud/f", "p/.npmrc",
+	} {
+		path := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeScopeYAML(t, "allow:\n  - \""+root+"/p/**\"\n")
+	env := toolTestEnv{}
+
+	for _, tc := range []struct {
+		rel, op, decision string
+		exit              int
+	}{
+		{"p/.ssh", "read", "denied", 1},
+		{"p/.ssh/id", "read", "denied", 1},
+		{"p/.ssh/id", "write", "denied", 1},
+		{"p/.ssh/id", "exec", "denied", 1},
+		{"p/.ssh/new", "write", "denied", 1},
+		{"p/sub/.aws/config", "read", "denied", 1},
+		{"p/.config/gcloud/adc.json", "read", "denied", 1},
+		{"p/.kube/config", "read", "denied", 1},
+		{"p/.netrc", "read", "denied", 1},
+		{"p/.sshx/f", "read", "allowed", 0},
+		{"p/gcloud/f", "read", "allowed", 0},
+		{"p/.npmrc", "read", "allowed", 0},
+	} {
+		stdout, _, _, err := runFooArgs(t, env, "scope", "check", filepath.Join(root, tc.rel), "--op", tc.op, "--format=json")
+		if got := exitCodeOf(err); got != tc.exit {
+			t.Fatalf("check %s %s: exit %d (%v); want %d", tc.rel, tc.op, got, err, tc.exit)
+		}
+		var row scopeCheckRow
+		if err := json.Unmarshal([]byte(stdout), &row); err != nil {
+			t.Fatalf("stdout not JSON (%v): %q", err, stdout)
+		}
+		if row.Decision != tc.decision {
+			t.Errorf("check %s %s = %+v; want %s", tc.rel, tc.op, row, tc.decision)
+		}
+	}
+}
+
+// show lists the anywhere forms of the credential dirs and files.
+func TestScopeShow_ListsCredentialAnywhereForms(t *testing.T) {
+	scopeEnv(t)
+	stdout, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "show")
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	for _, want := range []string{"**/.ssh\n", "**/.ssh/**", "**/.aws/**", "**/.config/gcloud/**", "**/.netrc\n"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("show output lacks %q:\n%s", want, stdout)
+		}
+	}
+}

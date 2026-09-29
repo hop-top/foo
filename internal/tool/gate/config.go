@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"hop.top/kit/go/ai/toolspec/policy"
@@ -61,7 +62,9 @@ func LoadScope(tool string) (Scope, error) {
 }
 
 // SecretPatterns is the secret deny list foo enforces: kit's
-// SecretPaths, each followed by its descendant form "<pattern>/**".
+// SecretPaths, then the anywhere forms of kit's home credential dirs
+// (anywhereDirs) and of anywhereFiles, each followed by its descendant
+// form "<pattern>/**".
 //
 // kit's patterns name an entry (**/secrets*, **/credentials*, **/.env,
 // **/*.pem, ...) and match that entry alone, so a directory with such a
@@ -69,10 +72,53 @@ func LoadScope(tool string) (Scope, error) {
 // form covers them. It is added to every pattern that does not already
 // end in "/**", file-like names included: where the name is a file it
 // matches nothing more, and where a directory takes the name its
-// contents are as secret as the file would be. Duplicates are dropped,
-// so a kit that returns descendant forms itself yields the same list.
+// contents are as secret as the file would be.
+//
+// kit anchors credential stores to home (~/.ssh/**, ~/.aws/**, ~/.netrc,
+// ...), so a copy inside a granted tree (a project's .ssh/, a checked-out
+// dotfiles repo, a home backup) was readable. The anywhere forms deny
+// the same dir or file at any depth. Duplicates are dropped, so a kit
+// that returns descendant or anywhere forms itself yields the same set.
 func SecretPatterns() []scope.Pattern {
-	return withDescendants(scope.SecretPaths())
+	return secretPatterns(scope.SecretPaths())
+}
+
+// anywhereFiles are home credential files foo denies at any depth: each
+// holds a password or token wherever it sits. .npmrc is left out: a
+// project .npmrc is registry and install config tools need to read, and
+// a token in it is usually an ${ENV} reference.
+var anywhereFiles = []scope.Pattern{"**/.netrc", "**/.pgpass", "**/.pypirc", "**/.my.cnf"}
+
+func secretPatterns(kit []scope.Pattern) []scope.Pattern {
+	all := slices.Concat(kit, anywhereDirs(kit), anywhereFiles)
+	return withDescendants(all)
+}
+
+// anywhereDirs returns "**/<rel>" for each kit pattern "~/<rel>/**"
+// naming a whole directory under home, in order, without duplicates.
+// rel is kept whole (.config/gcloud, not gcloud) so the form names the
+// same store rather than any dir sharing its last name. Patterns with
+// globs in rel, and a rel that is one segment without a leading dot
+// (~/Documents/**), are skipped: they name no specific store.
+func anywhereDirs(pats []scope.Pattern) []scope.Pattern {
+	var out []scope.Pattern
+	for _, p := range pats {
+		s := string(p)
+		if !strings.HasPrefix(s, "~/") || !strings.HasSuffix(s, "/**") {
+			continue
+		}
+		rel := strings.TrimSuffix(strings.TrimPrefix(s, "~/"), "/**")
+		if rel == "" || strings.ContainsAny(rel, `*?[]{}\`) {
+			continue
+		}
+		if !strings.Contains(rel, "/") && !strings.HasPrefix(rel, ".") {
+			continue
+		}
+		if a := scope.Pattern("**/" + rel); !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // withDescendants returns pats with "<p>/**" after each p that does not

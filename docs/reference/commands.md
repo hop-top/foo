@@ -392,7 +392,13 @@ Linux `~/.config/foo/`, or `$XDG_CONFIG_HOME/foo/`) and
 every op: each of kit's secret patterns (`**/.env`, `**/secrets*`,
 `**/credentials*`, `~/.ssh/**`, ...) and its descendant form
 (`**/secrets*/**`), so a directory with a secret name hides its
-contents as well as its own entry. With no `scope.yaml` every tool
+contents as well as its own entry. Each credential directory kit
+anchors to home is also denied at any depth, under its full
+home-relative name (`**/.ssh`, `**/.aws`, `**/.azure`, `**/.gnupg`,
+`**/.kube`, `**/.pki`, `**/.config/gcloud`; on macOS
+`**/Library/Keychains`, `**/Library/Cookies`), as are the credential
+files `**/.netrc`, `**/.pgpass`, `**/.pypirc` and `**/.my.cnf`, each
+with its descendant form. `.npmrc` is denied only in home. With no `scope.yaml` every tool
 call is denied, and `foo scope` prints the path it looked for. Writing one:
 [Let the model use OS commands safely](../how-to/use-os-tools.md#2-write-scopeyaml).
 
