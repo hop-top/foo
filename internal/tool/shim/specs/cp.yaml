@@ -1,5 +1,7 @@
 # cp: copy files or directories. Path-gated; never replaces an existing
-# destination unless overwrite=true (then destructive).
+# destination unless overwrite=true (then destructive). /, $HOME and
+# entries directly under / are refused as where dst lands, whatever
+# the scope (protect_roots).
 spec: 1
 name: cp
 description: >-
@@ -8,6 +10,8 @@ description: >-
   under its own name. Never replaces an existing file unless
   overwrite=true, and never an existing directory. Directories need
   recursive=true; links inside a copied tree are copied as links.
+  Never puts anything at /, the home directory or an entry directly
+  under /.
 command:
   bin: [/bin/cp, /usr/bin/cp]
 side_effect: write
@@ -37,6 +41,7 @@ params:
     recursive_when: {recursive: true}
     recursion: all_or_nothing
     clobber_when: {overwrite: true}
+    protect_roots: true
   - name: recursive
     type: bool
     description: Copy directories and everything under them.

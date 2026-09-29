@@ -98,6 +98,16 @@ func TestRealGate_RMRefusesRootHomeAndGrantRoot(t *testing.T) {
 	if len(ask.asked) != 1 {
 		t.Errorf("prompts %q; want one, for mv into ~", ask.asked)
 	}
+
+	// cp into ~ lands below it and runs too (one more write prompt).
+	cp := wWithBin(wTool(t, "cp"), wArgvRecorder(t, b.p("out"), "cp", "cp: illegal option -- -"))
+	res = mustCall(t, b.eng, cp, `{"src":["into"],"dst":"~"}`)
+	if got := stdout(res); got != "[-n][--]["+b.p("w/into")+"]["+b.p("home")+"]" {
+		t.Errorf("cp into ~: argv %s", got)
+	}
+	if len(ask.asked) != 2 {
+		t.Errorf("prompts %q; want two, for mv and cp into ~", ask.asked)
+	}
 }
 
 func TestRealGate_WriteSpecsEndToEnd(t *testing.T) {
