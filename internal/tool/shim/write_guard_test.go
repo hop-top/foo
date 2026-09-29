@@ -2,6 +2,7 @@ package shim
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -14,12 +15,13 @@ import (
 
 // guardBox is a writeBox whose authorizer grants every path (fakeAuth:
 // canonicalizes, never walks a tree), HOME is a throwaway directory,
-// and rm/mv/cp are argv recorders: the guard must refuse on its own, and
-// even a guard bug runs nothing but a printf.
+// and rm/mv/cp are argv recorders that log each run: the guard must
+// refuse on its own, and even a guard bug runs nothing but a printf.
 type guardBox struct {
 	*writeBox
 	auth       *fakeAuth
 	home       string
+	runs       string // the recorders' run log
 	rm, mv, cp *Loaded
 }
 
@@ -31,30 +33,69 @@ func newGuardBox(t *testing.T) *guardBox {
 	home := b.dir(t, "home")
 	b.dir(t, "home/sub")
 	t.Setenv("HOME", home)
+	runs := b.p("runs")
 	return &guardBox{
 		writeBox: b,
 		auth:     auth,
 		home:     home,
-		rm:       wWithBin(wTool(t, "rm"), wArgvRecorder(t, b.p("out"), "rm", "rm: illegal option -- -")),
-		mv:       wWithBin(wTool(t, "mv"), wArgvRecorder(t, b.p("out"), "mv", "mv: illegal option -- -")),
-		cp:       wWithBin(wTool(t, "cp"), wArgvRecorder(t, b.p("out"), "cp", "cp: illegal option -- -")),
+		runs:     runs,
+		rm:       wWithBin(wTool(t, "rm"), wRunRecorder(t, b.p("out"), "rm", "rm: illegal option -- -", runs)),
+		mv:       wWithBin(wTool(t, "mv"), wRunRecorder(t, b.p("out"), "mv", "mv: illegal option -- -", runs)),
+		cp:       wWithBin(wTool(t, "cp"), wRunRecorder(t, b.p("out"), "cp", "cp: illegal option -- -", runs)),
 	}
 }
 
-// protectedSpellings are ways to name /, $HOME or an entry directly
-// under / (or what one links to), lexically, through .. and through
-// links.
-func (g *guardBox) protectedSpellings(t *testing.T) []string {
+// wRunRecorder is wArgvRecorder that also appends a line to log each
+// time it runs (not for --version), so a test can prove it never ran.
+func wRunRecorder(t *testing.T, dir, name, version, log string) string {
+	t.Helper()
+	return writeScript(t, dir, name, `if [ "$1" = --version ]; then echo "`+version+`"; exit 0; fi
+echo "$0" >> '`+log+`'
+for a in "$@"; do printf '[%s]' "$a"; done`)
+}
+
+// ran is how many times a recorder ran.
+func (g *guardBox) ran() int {
+	data, _ := os.ReadFile(g.runs)
+	return strings.Count(string(data), "\n")
+}
+
+// lexicalSpellings name /, $HOME or an entry directly under / as
+// written: "~" expanded, anchored at the working directory and cleaned,
+// with no lookup at all.
+func (g *guardBox) lexicalSpellings() []string {
+	return []string{
+		"/", "//", "/.", "/usr/..", "/tmp/..", "w/../../../../../../../../../../..",
+		"~", "~/", "~/.", "~/sub/..", g.home, g.home + "/", g.home + "/sub/..",
+		"/usr", "/usr/", "/tmp", "/etc", "/no-such-top-entry-foo-guard",
+	}
+}
+
+// topLinkTarget is what a top-level link points to when the target is
+// not itself directly under / (macOS /tmp -> /private/tmp); "" when no
+// such link exists.
+func topLinkTarget() string {
+	for _, top := range []string{"/tmp", "/var", "/etc", "/bin", "/lib", "/sbin"} {
+		fi, err := os.Lstat(top)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if target, err := filepath.EvalSymlinks(top); err == nil && filepath.Dir(target) != "/" {
+			return target
+		}
+	}
+	return ""
+}
+
+// resolvedSpellings reach /, $HOME or an entry directly under / (or
+// what one links to) only once the filesystem is consulted: through
+// links, a top-level link's target, another case of $HOME.
+func (g *guardBox) resolvedSpellings(t *testing.T) []string {
 	t.Helper()
 	g.link(t, "/", "w/rootln")
 	g.link(t, g.home, "w/homeln")
 	g.link(t, "/usr", "w/usrln")
-	list := []string{
-		"/", "//", "/.", "/usr/..", "/tmp/..", "w/../../../../../../../../../../..",
-		"~", "~/", "~/.", "~/sub/..", g.home, g.home + "/", g.home + "/sub/..",
-		"rootln", "rootln/.", "homeln", "usrln",
-		"/usr", "/usr/", "/tmp", "/etc", "/no-such-top-entry-foo-guard",
-	}
+	list := []string{"rootln", "rootln/.", "homeln", "homeln/", "usrln"}
 	// macOS: /tmp, /var and /etc are links to /private/*; their
 	// targets are guarded like the links.
 	for _, top := range []string{"/tmp", "/var", "/etc", "/bin", "/lib", "/sbin"} {
@@ -82,9 +123,11 @@ func wantGuard(t *testing.T, err error, param string) {
 	}
 }
 
-func TestRootGuard_RMRefusesBeforeAuthorizing(t *testing.T) {
+// A value that names a protected place as written is refused before
+// authorization: no scope check, no prompt, no lookup.
+func TestRootGuard_RMLexicalRefusedBeforeAuthorizing(t *testing.T) {
 	g := newGuardBox(t)
-	for _, p := range g.protectedSpellings(t) {
+	for _, p := range g.lexicalSpellings() {
 		for _, recursive := range []bool{false, true} {
 			args, _ := json.Marshal(map[string]any{"path": []string{"w/f", p}, "recursive": recursive})
 			calls := g.auth.calls
@@ -100,14 +143,101 @@ func TestRootGuard_RMRefusesBeforeAuthorizing(t *testing.T) {
 	}
 	// The home directory as the working directory: "." is $HOME.
 	e := &Engine{Authorizer: g.auth, Cwd: g.home, Flavors: &Flavors{}}
+	calls := g.auth.calls
 	_, err := call(t, e, g.rm, `{"path":["."],"recursive":true}`)
 	wantGuard(t, err, "path")
+	if g.auth.calls != calls {
+		t.Error("rm . in $HOME reached the authorizer")
+	}
+	if n := g.ran(); n != 0 {
+		t.Errorf("rm ran %d times", n)
+	}
 }
 
-func TestRootGuard_MVSourceRefusedBeforeAuthorizing(t *testing.T) {
+// A value that reaches a protected place only through the filesystem
+// is refused once the scope granted it, before anything runs: before
+// authorization, the refusal would tell the model what an ungranted
+// link points to.
+func TestRootGuard_RMResolvedRefusedBeforeExec(t *testing.T) {
+	g := newGuardBox(t)
+	for _, p := range g.resolvedSpellings(t) {
+		for _, recursive := range []bool{false, true} {
+			args, _ := json.Marshal(map[string]any{"path": []string{"w/f", p}, "recursive": recursive})
+			calls := g.auth.calls
+			res, err := call(t, g.eng, g.rm, string(args))
+			if res != nil {
+				t.Fatalf("rm %s ran: argv %q", p, res.Argv)
+			}
+			wantGuard(t, err, "path")
+			if g.auth.calls != calls+1 {
+				t.Errorf("rm %s: authorizer calls %d; want the guard after authorization", p, g.auth.calls-calls)
+			}
+		}
+	}
+	if n := g.ran(); n != 0 {
+		t.Errorf("rm ran %d times", n)
+	}
+}
+
+// Where the scope does not grant a path, a link to $HOME, to / or to a
+// top-level link's target gets the authorizer's answer, like a missing
+// sibling: the guard never looks at it.
+func TestRootGuard_OutOfScopeAliasesGetTheScopeAnswer(t *testing.T) {
+	g := newGuardBox(t)
+	deny := &denyAll{}
+	g.eng.Authorizer = deny
+	g.link(t, g.home, "out/homeln")
+	g.link(t, "/", "out/rootln")
+	g.link(t, "/usr", "out/usrln")
+	probes := []string{"homeln", "homeln/", "rootln", "rootln/.", "usrln", "missing"}
+	if tl := topLinkTarget(); tl != "" {
+		g.link(t, tl, "out/tln")
+		probes = append(probes, "tln")
+	}
+	g.dir(t, "w/d")
+	for _, rel := range probes {
+		p := g.p("out") + "/" + rel
+		for _, tc := range []struct {
+			l     *Loaded
+			args  map[string]any
+			param string
+		}{
+			{g.rm, map[string]any{"path": []string{p}}, "path"},
+			{g.rm, map[string]any{"path": []string{p}, "recursive": true}, "path"},
+			{g.mv, map[string]any{"src": []string{p}, "dst": "d"}, "src"},
+		} {
+			args, _ := json.Marshal(tc.args)
+			res, err := call(t, g.eng, tc.l, string(args))
+			if res != nil {
+				t.Fatalf("%s %s ran: argv %q", tc.l.Spec.Name, rel, res.Argv)
+			}
+			if ge := wantKind(t, err, gate.KindDenied); ge.Param != tc.param {
+				t.Errorf("%s %s: denied %+v; want param %s", tc.l.Spec.Name, rel, ge, tc.param)
+			}
+		}
+	}
+	if want := 3 * len(probes); deny.calls != want {
+		t.Errorf("authorizer asked %d times; want %d", deny.calls, want)
+	}
+	if n := g.ran(); n != 0 {
+		t.Errorf("recorders ran %d times", n)
+	}
+}
+
+// denyAll refuses every call, as a scope granting none of its paths.
+type denyAll struct{ calls int }
+
+func (d *denyAll) Authorize(_ context.Context, req gate.Request) (gate.Grant, error) {
+	d.calls++
+	pa := req.Paths[0]
+	return gate.Grant{}, &gate.Error{Kind: gate.KindDenied, Param: pa.Param, Path: pa.Values[0], Op: pa.Op, Message: "no scope rule covers this path"}
+}
+
+func TestRootGuard_MVSourceRefused(t *testing.T) {
 	g := newGuardBox(t)
 	g.dir(t, "w/d")
-	for _, p := range g.protectedSpellings(t) {
+	check := func(p string, wantCalls int) {
+		t.Helper()
 		args, _ := json.Marshal(map[string]any{"src": []string{p}, "dst": "d"})
 		calls := g.auth.calls
 		res, err := call(t, g.eng, g.mv, string(args))
@@ -115,9 +245,18 @@ func TestRootGuard_MVSourceRefusedBeforeAuthorizing(t *testing.T) {
 			t.Fatalf("mv %s ran: argv %q", p, res.Argv)
 		}
 		wantGuard(t, err, "src")
-		if g.auth.calls != calls {
-			t.Errorf("mv %s reached the authorizer", p)
+		if g.auth.calls != calls+wantCalls {
+			t.Errorf("mv %s: authorizer calls %d; want %d", p, g.auth.calls-calls, wantCalls)
 		}
+	}
+	for _, p := range g.lexicalSpellings() {
+		check(p, 0)
+	}
+	for _, p := range g.resolvedSpellings(t) {
+		check(p, 1)
+	}
+	if n := g.ran(); n != 0 {
+		t.Errorf("mv ran %d times", n)
 	}
 }
 

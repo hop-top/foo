@@ -31,6 +31,14 @@ func existenceTree(t *testing.T, mode string) *fsEnv {
 	e.link(t, e.p("elsewhere/f"), "out/l")
 	e.link(t, e.p("elsewhere"), "out/ld")
 	e.link(t, "loop", "out/loop")
+	// Aliases of places the shim root guard protects: $HOME, /, an entry
+	// directly under / and a top-level link's target (macOS /tmp ->
+	// /private/tmp). Outside the grant they must answer like the rest.
+	t.Setenv("HOME", e.mkdir(t, "home"))
+	e.link(t, e.p("home"), "out/hl")
+	e.link(t, "/", "out/rl")
+	e.link(t, "/usr", "out/ul")
+	e.link(t, topLinkTarget(), "out/tl")
 	e.file(t, "out/locked/x", "x")
 	locked := e.p("out/locked")
 	if err := os.Chmod(locked, 0); err != nil {
@@ -43,13 +51,30 @@ func existenceTree(t *testing.T, mode string) *fsEnv {
 
 // outsideProbes are paths outside the grant, relative to the root: an
 // existing file and directory (a tree too large to walk), missing
-// paths, links (dangling, to elsewhere, looping), a path under a file
-// (ENOTDIR), an unsearchable directory (EACCES when walked) and a
-// path under it.
+// paths, links (dangling, to elsewhere, looping, to $HOME, /, /usr and
+// a top-level link's target), a path under a file (ENOTDIR), an
+// unsearchable directory (EACCES when walked) and a path under it.
 var outsideProbes = []string{
 	"out/f", "out/d", "out/m", "out/md/x",
 	"out/dl", "out/l", "out/ld/x", "out/loop",
+	"out/hl", "out/rl", "out/ul", "out/tl",
 	"out/f/x", "out/locked", "out/locked/x", "out/dl/x",
+}
+
+// topLinkTarget is what a top-level link points to when the target is
+// not itself directly under / (macOS /tmp -> /private/tmp); "/" when
+// no such link exists.
+func topLinkTarget() string {
+	for _, top := range []string{"/tmp", "/var", "/etc", "/bin", "/lib", "/sbin"} {
+		fi, err := os.Lstat(top)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if target, err := filepath.EvalSymlinks(top); err == nil && filepath.Dir(target) != "/" {
+			return target
+		}
+	}
+	return "/"
 }
 
 // climbProbes leave a directory outside the grant with ".." and come

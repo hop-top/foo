@@ -106,7 +106,7 @@ func (e *Engine) Call(ctx context.Context, l *Loaded, raw json.RawMessage) (*Res
 	if err != nil {
 		return nil, err
 	}
-	if err := e.guardValues(s, vals); err != nil {
+	if err := e.guardLexical(s, vals); err != nil {
 		return nil, err
 	}
 	req, pathArgs := e.request(l, v, vals)
@@ -120,7 +120,7 @@ func (e *Engine) Call(ctx context.Context, l *Loaded, raw json.RawMessage) (*Res
 			return nil, denied(pa.Param, "authorizer granted no path")
 		}
 	}
-	if err := e.guardGrant(s, grant.Canonical); err != nil {
+	if err := e.guardGranted(s, vals, grant.Canonical); err != nil {
 		return nil, err
 	}
 	paths, err := s.destinations(grant.Canonical)
