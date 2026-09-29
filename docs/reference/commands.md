@@ -62,7 +62,7 @@ foo < /dev/null
 | `--tool` | `-T` | (none) | Enable specific tools by name (repeatable) |
 | `--chain-limit` | | `5` | Max tool-call iterations |
 | `--tools-debug` | | `false` | Log tool calls + results to stderr |
-| `--tools-approve` | | `false` | Confirm before each tool execution |
+| `--tools-approve` | | `false` | Confirm before each tool execution. Answers come from the terminal, never stdin; with no terminal the call is denied |
 | `--fragment` | `-f` | (none) | Attach fragment(s) to the user prompt |
 | `--system-fragment` | | (none) | Attach fragment(s) to the system prompt |
 | `--schema` | | (none) | Structured JSON output (schema name or DSL) |

@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -823,23 +822,16 @@ func buildRegistry(names []string) (*tool.Registry, error) {
 	return registry, nil
 }
 
+// openApprovalTerminal is where --tools-approve reads answers from:
+// the controlling terminal, never stdin, which carries prompt data.
+// Tests swap it for an in-memory terminal.
+var openApprovalTerminal = tool.OpenTTY
+
 func approvalFunc(cmd *cobra.Command) tool.ApproveFunc {
 	if !toolsApprove {
 		return nil
 	}
-	return approveFromStdin(cmd.InOrStdin(), cmd.ErrOrStderr())
-}
-
-func approveFromStdin(r io.Reader, w io.Writer) tool.ApproveFunc {
-	return func(name string, args json.RawMessage) bool {
-		_, _ = fmt.Fprintf(w, "[tool] execute %s with %s? [y/N] ", name, string(args))
-		scanner := bufio.NewScanner(r)
-		if scanner.Scan() {
-			answer := strings.TrimSpace(scanner.Text())
-			return answer == "y" || answer == "Y"
-		}
-		return false
-	}
+	return tool.NewPrompter(openApprovalTerminal, cmd.ErrOrStderr()).Approve
 }
 
 func assembleSystemPrompt(ctx context.Context) (string, error) {
