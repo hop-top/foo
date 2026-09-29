@@ -2,12 +2,13 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	kitscope "hop.top/kit/go/console/cli/scope"
+	"hop.top/kit/go/console/output"
 )
 
 // scopeEnv isolates a run and returns a canonical tree root holding
@@ -46,36 +47,144 @@ type scopeCheckRow struct {
 	Path     string `json:"path"`
 	Op       string `json:"op"`
 	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
 }
 
+// exitCodeOf is the process exit status main would pick for err.
+func exitCodeOf(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ce interface{ AsCLIError() *output.Error }
+	if errors.As(err, &ce) {
+		if e := ce.AsCLIError(); e != nil && e.ExitCode != 0 {
+			return e.ExitCode
+		}
+	}
+	return 1
+}
+
+// check reports what a tool call would do with the path: the gate's
+// verdict, not kit's raw decision, so an uncovered path in strict mode
+// is denied rather than "unknown".
 func TestScopeCheck_UsesFooPolicy(t *testing.T) {
 	root := scopeEnv(t)
 	writeScopeYAML(t, "allow:\n  - path: \""+root+"/p/**\"\n    ops: [read]\n")
 	env := toolTestEnv{}
 
 	for _, tc := range []struct {
-		path, op, decision string
-		denied             bool
+		path, op, decision, reason string
+		exit                       int
 	}{
-		{root + "/p/sub", "read", "allowed", false},
-		{root + "/p/sub", "write", "unknown", true},
-		{root + "/p/.env", "read", "denied", true}, // secret deny list
-		{root + "/outside", "read", "unknown", true},
+		{root + "/p/sub", "read", "allowed", "", 0},
+		{root + "/p/sub", "write", "denied", "no scope allow rule covers write", 1},
+		{root + "/p/.env", "read", "denied", "deny rule", 1}, // secret deny list
+		{root + "/outside", "read", "denied", "no scope allow rule covers read", 1},
 	} {
 		stdout, _, _, err := runFooArgs(t, env, "scope", "check", tc.path, "--op", tc.op, "--format=json")
-		if kitscope.IsDeniedExit(err) != tc.denied {
-			t.Fatalf("check %s %s: err = %v; want denied=%v", tc.path, tc.op, err, tc.denied)
-		}
-		if !tc.denied && err != nil {
-			t.Fatalf("check %s: %v", tc.path, err)
+		if got := exitCodeOf(err); got != tc.exit {
+			t.Fatalf("check %s %s: exit %d (%v); want %d", tc.path, tc.op, got, err, tc.exit)
 		}
 		var row scopeCheckRow
 		if err := json.Unmarshal([]byte(stdout), &row); err != nil {
 			t.Fatalf("stdout not JSON (%v): %q", err, stdout)
 		}
-		if row.Decision != tc.decision || row.Op != tc.op {
-			t.Errorf("check %s %s = %+v; want %s", tc.path, tc.op, row, tc.decision)
+		if row.Decision != tc.decision || row.Op != tc.op || !strings.Contains(row.Reason, tc.reason) {
+			t.Errorf("check %s %s = %+v; want %s (%s)", tc.path, tc.op, row, tc.decision, tc.reason)
 		}
+	}
+}
+
+// In prompt and warn modes, a path a deny rule matches or no rule
+// covers does not read as allowed: check reports what the gate does
+// with it, and exits with a code of its own.
+func TestScopeCheck_ModesMatchTheGate(t *testing.T) {
+	for _, tc := range []struct {
+		mode                   string
+		covered, secret, other string
+		exit                   int // for secret and other
+	}{
+		{"strict", "allowed", "denied", "denied", 1},
+		{"prompt", "allowed", "prompt", "prompt", 8},
+		{"warn", "allowed", "warn", "warn", 9},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			root := scopeEnv(t)
+			writeScopeYAML(t, "mode: "+tc.mode+"\nallow:\n  - \""+root+"/p/**\"\n")
+			for _, c := range []struct {
+				path, decision string
+				exit           int
+			}{
+				{root + "/p/sub", tc.covered, 0},
+				{root + "/p/.env", tc.secret, tc.exit},
+				{root + "/outside", tc.other, tc.exit},
+			} {
+				stdout, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "check", c.path, "--format=json")
+				if got := exitCodeOf(err); got != c.exit {
+					t.Fatalf("check %s: exit %d (%v); want %d", c.path, got, err, c.exit)
+				}
+				var row scopeCheckRow
+				if err := json.Unmarshal([]byte(stdout), &row); err != nil {
+					t.Fatalf("stdout not JSON (%v): %q", err, stdout)
+				}
+				if row.Decision != c.decision {
+					t.Errorf("check %s = %q; want %q", c.path, row.Decision, c.decision)
+				}
+			}
+		})
+	}
+}
+
+// test exits with the most restrictive verdict among its paths:
+// denied, then prompt, then warn.
+func TestScopeTest_ExitIsMostRestrictiveVerdict(t *testing.T) {
+	root := scopeEnv(t)
+	for _, tc := range []struct {
+		mode  string
+		paths []string
+		exit  int
+	}{
+		{"warn", []string{root + "/p/sub", root + "/outside"}, 9},
+		{"prompt", []string{root + "/p/sub", root + "/outside"}, 8},
+		{"prompt", []string{root + "/p/sub"}, 0},
+	} {
+		writeScopeYAML(t, "mode: "+tc.mode+"\nallow:\n  - \""+root+"/p/**\"\n")
+		stdout, _, _, err := runFooArgs(t, toolTestEnv{}, append([]string{"scope", "test", "--format=json"}, tc.paths...)...)
+		if got := exitCodeOf(err); got != tc.exit {
+			t.Fatalf("%s test %q: exit %d (%v); want %d", tc.mode, tc.paths, got, err, tc.exit)
+		}
+		var rows []scopeCheckRow
+		if err := json.Unmarshal([]byte(stdout), &rows); err != nil || len(rows) != len(tc.paths) {
+			t.Fatalf("stdout not %d JSON rows (%v): %q", len(tc.paths), err, stdout)
+		}
+	}
+}
+
+// A scope.yaml that does not load is a config error, not a denial:
+// scripts must be able to tell the two apart.
+func TestScopeCheck_BrokenConfigIsNotDenied(t *testing.T) {
+	root := scopeEnv(t)
+	writeScopeYAML(t, "mode: sometimes\nallow:\n  - \""+root+"/p/**\"\n")
+	for _, args := range [][]string{
+		{"scope", "check", root + "/p/sub"},
+		{"scope", "test", root + "/p/sub"},
+	} {
+		_, _, _, err := runFooArgs(t, toolTestEnv{}, args...)
+		if got := exitCodeOf(err); got != 2 {
+			t.Fatalf("%q: exit %d (%v); want 2", args, got, err)
+		}
+		if !strings.Contains(err.Error(), "scope.yaml") && !strings.Contains(err.Error(), "sometimes") {
+			t.Errorf("%q: error %q should explain the config problem", args, err)
+		}
+	}
+}
+
+func TestScopeCheck_BadOpIsUsage(t *testing.T) {
+	root := scopeEnv(t)
+	writeScopeYAML(t, "allow:\n  - \""+root+"/p/**\"\n")
+	_, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "check", root+"/p/sub", "--op", "fly")
+	if got := exitCodeOf(err); got != 2 {
+		t.Fatalf("exit %d (%v); want 2", got, err)
 	}
 }
 
@@ -91,7 +200,7 @@ func TestScopeCheck_ResolvesLikeTheGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "check", root+"/p/link/..", "--format=json")
-	if !kitscope.IsDeniedExit(err) {
+	if exitCodeOf(err) != 1 {
 		t.Fatalf("err = %v; want denied", err)
 	}
 	var row scopeCheckRow
@@ -137,7 +246,7 @@ func TestScopeTest_AnyDeniedExits1(t *testing.T) {
 	root := scopeEnv(t)
 	writeScopeYAML(t, "allow:\n  - \""+root+"/p/**\"\n")
 	_, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "test", root+"/p/sub", root+"/outside")
-	if !kitscope.IsDeniedExit(err) {
+	if exitCodeOf(err) != 1 {
 		t.Fatalf("err = %v; want denied exit", err)
 	}
 	if _, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "test", root+"/p/sub"); err != nil {

@@ -336,6 +336,46 @@ call asks for confirmation before it runs.
 | `rm` | `path[]`, `recursive`, `dir` | `path` write | destructive | Removes a link, never its target. Removing an entry needs write on its directory, so `/` and the root of a scope grant cannot be removed unless their parent is writable too. `recursive=true` refuses the whole call if any entry under the tree is out of scope. No `-f`. `dir` is not offered with busybox `rm` |
 | `sed` | `path[]`, `find`, `replace`, `global`, `ignore_case`, `occurrence`, `extended`, `dry_run` | `path` read + write | destructive; `dry_run=true` → read | One substitution per call: foo builds the `s` command from `find` and `replace`, so a sed script (`w`, `e`, `r`, addresses) can never be passed. Newlines and `\x01` are rejected. `dry_run=true` prints the result and changes nothing, but still needs write scope on the path. GNU sed runs with `--sandbox` |
 
+## `scope`
+
+Inspect the path policy tool calls are checked against: `scope.yaml`
+in foo's config directory (and `/etc/xdg/foo/scope.yaml`), plus a
+built-in deny list for secrets. With no `scope.yaml` every tool call
+is denied.
+
+| Subcommand | Synopsis | Description |
+|------------|----------|-------------|
+| `show` | `foo scope show` | Print the mode and every allow and deny rule |
+| `check` | `foo scope check <path> [--op read\|write\|exec]` | Show what a tool call would do with one path |
+| `test` | `foo scope test <path>... [--op read\|write\|exec]` | Show what tool calls would do with several paths |
+
+`check` and `test` resolve each path as the gate resolves a tool's
+path argument (relative to the working directory, symlinks and `..`
+physically) and report the gate's verdict under the policy's mode, not
+the raw rule match. Columns: `path`, `op`, `decision`, `reason` (the
+rule, or missing rule, behind a verdict other than `allowed`).
+
+| `decision` | Meaning | Exit |
+|------------|---------|------|
+| `allowed` | An allow rule covers the path; the call runs | 0 |
+| `denied` | `mode: strict` and a deny rule matches or no allow rule covers the path; also every path when no `scope.yaml` exists | 1 |
+| `prompt` | `mode: prompt` and the same kind of path: the call asks for approval first, and is denied with no terminal | 8 |
+| `warn` | `mode: warn` and the same kind of path: the call runs and logs a warning | 9 |
+
+`test` exits with the most restrictive verdict among its paths
+(`denied`, then `prompt`, then `warn`). A `scope.yaml` that does not
+load, a bad `--op` or an unresolvable path exits 2, so a broken config
+never reads as a denial:
+
+```
+$ foo scope check ./notes.txt
+PATH                     OP    DECISION  REASON
+/home/me/proj/notes.txt  read  prompt    no scope rule covers this path
+SCOPE_PROMPT: path would prompt: a tool call would ask for approval first, and is denied without a terminal
+$ echo $?
+8
+```
+
 ## Kit conformance annotations
 
 Each leaf carries side-effect, idempotency, and verb annotations
