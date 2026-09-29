@@ -284,3 +284,65 @@ func TestScopeShow_JSON(t *testing.T) {
 		t.Fatalf("show json = %+v", out)
 	}
 }
+
+// A secret-named directory hides its contents from check and test, not
+// only its own entry; lookalike names stay allowed.
+func TestScopeCheck_SecretDirContentsDenied(t *testing.T) {
+	root := scopeEnv(t)
+	for _, f := range []string{"p/secrets/key.txt", "p/secrets/nested/deep.txt", "p/credentials/c", "p/mysecrets.txt"} {
+		path := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeScopeYAML(t, "allow:\n  - \""+root+"/p/**\"\n")
+	env := toolTestEnv{}
+
+	for _, tc := range []struct {
+		rel, op, decision string
+		exit              int
+	}{
+		{"p/secrets", "read", "denied", 1},
+		{"p/secrets/key.txt", "read", "denied", 1},
+		{"p/secrets/key.txt", "write", "denied", 1},
+		{"p/secrets/key.txt", "exec", "denied", 1},
+		{"p/secrets/nested/deep.txt", "read", "denied", 1},
+		{"p/secrets/new.txt", "write", "denied", 1},
+		{"p/credentials/c", "read", "denied", 1},
+		{"p/mysecrets.txt", "read", "allowed", 0},
+	} {
+		stdout, _, _, err := runFooArgs(t, env, "scope", "check", filepath.Join(root, tc.rel), "--op", tc.op, "--format=json")
+		if got := exitCodeOf(err); got != tc.exit {
+			t.Fatalf("check %s %s: exit %d (%v); want %d", tc.rel, tc.op, got, err, tc.exit)
+		}
+		var row scopeCheckRow
+		if err := json.Unmarshal([]byte(stdout), &row); err != nil {
+			t.Fatalf("stdout not JSON (%v): %q", err, stdout)
+		}
+		if row.Decision != tc.decision {
+			t.Errorf("check %s %s = %+v; want %s", tc.rel, tc.op, row, tc.decision)
+		}
+	}
+
+	_, _, _, err := runFooArgs(t, env, "scope", "test", filepath.Join(root, "p/mysecrets.txt"), filepath.Join(root, "p/secrets/key.txt"))
+	if exitCodeOf(err) != 1 {
+		t.Fatalf("test with a file under secrets/: err = %v; want denied exit", err)
+	}
+}
+
+// show lists the effective secret patterns, descendant forms included.
+func TestScopeShow_ListsSecretDescendants(t *testing.T) {
+	scopeEnv(t)
+	stdout, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "show")
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	for _, want := range []string{"**/secrets*\n", "**/secrets*/**", "**/credentials*/**", "**/.env/**"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("show output lacks %q:\n%s", want, stdout)
+		}
+	}
+}

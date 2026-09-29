@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"hop.top/kit/go/ai/toolspec/policy"
 	"hop.top/kit/go/core/scope"
@@ -36,7 +37,7 @@ func (s Scope) Configured() bool { return len(s.Files) > 0 }
 
 // LoadScope builds the scope policy for tool: kit's FromConfig (system
 // /etc/xdg/<tool>/scope.yaml, then the per-user file) plus a deny rule
-// for kit's secret paths on every op, which FromConfig does not add.
+// for SecretPatterns on every op, which FromConfig does not add.
 // Everything that reports on the policy (the gate, `foo scope`) loads
 // it here so they agree.
 func LoadScope(tool string) (Scope, error) {
@@ -44,7 +45,7 @@ func LoadScope(tool string) (Scope, error) {
 	if err != nil {
 		return Scope{}, err
 	}
-	pol.DenyOp(scope.Read|scope.Write|scope.Exec, scope.SecretPaths()...)
+	pol.DenyOp(scope.Read|scope.Write|scope.Exec, SecretPatterns()...)
 
 	dir, err := xdg.RawConfigDir(tool)
 	if err != nil {
@@ -57,6 +58,41 @@ func LoadScope(tool string) (Scope, error) {
 		}
 	}
 	return s, nil
+}
+
+// SecretPatterns is the secret deny list foo enforces: kit's
+// SecretPaths, each followed by its descendant form "<pattern>/**".
+//
+// kit's patterns name an entry (**/secrets*, **/credentials*, **/.env,
+// **/*.pem, ...) and match that entry alone, so a directory with such a
+// name was denied while the files under it were not. The descendant
+// form covers them. It is added to every pattern that does not already
+// end in "/**", file-like names included: where the name is a file it
+// matches nothing more, and where a directory takes the name its
+// contents are as secret as the file would be. Duplicates are dropped,
+// so a kit that returns descendant forms itself yields the same list.
+func SecretPatterns() []scope.Pattern {
+	return withDescendants(scope.SecretPaths())
+}
+
+// withDescendants returns pats with "<p>/**" after each p that does not
+// already end in "/**", in order, without duplicates.
+func withDescendants(pats []scope.Pattern) []scope.Pattern {
+	out := make([]scope.Pattern, 0, 2*len(pats))
+	seen := make(map[scope.Pattern]bool, 2*len(pats))
+	add := func(p scope.Pattern) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, p := range pats {
+		add(p)
+		if !strings.HasSuffix(string(p), "/**") {
+			add(p + "/**")
+		}
+	}
+	return out
 }
 
 // NoScopeMessage explains why every call is denied when no scope.yaml
