@@ -213,21 +213,37 @@ foo`
 	return root
 }
 
+// toolPluginSubcommandPrefix is the subcommand name kit's `foo-` scan
+// gives a `foo-tool-<name>` binary. Those are LLM tools (see
+// buildRegistry), never verbs; the trailing dash keeps `foo-toolbox`
+// a subcommand plugin.
+const toolPluginSubcommandPrefix = "tool-"
+
 // registerExtPlugins discovers `foo-*` binaries on $PATH, registers each
 // as a passthrough subcommand via kit's ext/dispatch helper, and stamps
 // the cobra metadata the strict validator demands (Long, side-effect,
 // idempotency). Long is sourced from each plugin's --ext-info
 // description; on failure we synthesize a non-empty placeholder so the
 // validator gate stays armed.
+//
+// kit's scan matches every `foo-*` binary, `foo-tool-*` included, so
+// tool plugins are dropped before annotation: they never reach help
+// and are never exec'd here.
 func registerExtPlugins(rootCmd *cobra.Command) {
 	before := commandSet(rootCmd)
 	extdispatch.Register(rootCmd, "foo", "")
+	var toolPlugins []*cobra.Command
 	for _, sub := range rootCmd.Commands() {
 		if _, existed := before[sub.Name()]; existed {
 			continue
 		}
+		if strings.HasPrefix(sub.Name(), toolPluginSubcommandPrefix) {
+			toolPlugins = append(toolPlugins, sub)
+			continue
+		}
 		annotateExtPlugin(sub)
 	}
+	rootCmd.RemoveCommand(toolPlugins...)
 }
 
 func commandSet(c *cobra.Command) map[string]struct{} {

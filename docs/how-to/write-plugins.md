@@ -71,10 +71,13 @@ foo hello "stranger" | foo -p summarize
 ## Subcommand plugin — full contract
 
 A subcommand plugin is any executable on `$PATH` whose filename
-starts with `foo-`. foo discovers it on every `foo` invocation
-via `hop.top/kit/go/ai/ext/dispatch`, registers it as a hidden
-cobra subcommand under the PLUGINS group, and forwards argv with
-`DisableFlagParsing: true` (you handle flags yourself).
+starts with `foo-` but not `foo-tool-` (that prefix is reserved
+for [LLM tool plugins](#llm-tool-plugin--foo-tool-name); a name
+like `foo-toolbox` is still a subcommand). foo discovers it on
+every `foo` invocation via `hop.top/kit/go/ai/ext/dispatch`,
+registers it as a cobra subcommand under the PLUGINS group, and
+forwards argv with `DisableFlagParsing: true` (you handle flags
+yourself).
 
 ### Required: `--ext-info`
 
@@ -99,8 +102,9 @@ Fields:
 | `description` | yes | Becomes both `Short` and `Long` in `foo --help`. Foo strict-validates the presence of `Long`, so an empty description means a generic placeholder. |
 | `capabilities` | yes | Always include `"discover"` for subcommand plugins. |
 
-Foo invokes `--ext-info` lazily at help-render time, so plugins
-shouldn't do any heavy work in this path. Plain JSON, exit 0.
+Foo runs `--ext-info` once per `foo` invocation, at startup, to
+fill in the help text, so plugins shouldn't do any heavy work in
+this path. Plain JSON, exit 0.
 
 ### Argv passthrough
 
@@ -128,9 +132,11 @@ armed even when arbitrary plugins are present.
 
 ## LLM tool plugin — `foo-tool-<name>`
 
-Tool plugins are NOT cobra subcommands. They register with foo's
-internal tool registry instead, and the model decides when to
-call them during `foo -T <name> "..."` execution.
+Tool plugins are NOT cobra subcommands: subcommand discovery
+skips every `foo-tool-*` binary, so none appears in `foo --help`
+and none is run at startup. They register with foo's internal
+tool registry instead, and the model decides when to call them
+during `foo -T <name> "..."` execution.
 
 | Aspect | Subcommand plugin | LLM tool plugin |
 |--------|-------------------|-----------------|
@@ -179,10 +185,11 @@ and result on stderr.
 At foo startup, `commands.New` calls
 `registerExtPlugins(rootCmd)`. That helper scans `$PATH` for
 `foo-*` executables via kit's `discover.Scanner`, registers each
-discovered binary as a passthrough cobra subcommand, and stamps
-the kit annotations the strict validator requires. The plugin's
-`--ext-info` description is read once (lazily, at help render)
-and assigned to `cmd.Long`.
+discovered binary as a passthrough cobra subcommand, drops the
+`foo-tool-*` ones, and stamps the kit annotations the strict
+validator requires on the rest. Each remaining plugin's
+`--ext-info` description is read once, right there at startup,
+and assigned to `cmd.Short` and `cmd.Long`.
 
 Tool-plugin discovery happens separately in `buildRegistry`
 (`cmd/foo/commands/root.go`), which scans for `foo-tool-*` and

@@ -51,7 +51,9 @@ external dependencies.
 
 Third-party plugins follow the same `foo-<name>` naming. Any
 binary on `$PATH` whose name starts with `foo-` (and which
-implements `--ext-info`) will be discovered.
+implements `--ext-info`) will be discovered, except `foo-tool-*`
+binaries: those are LLM tools, listed by `foo tool list` rather
+than in `foo --help`.
 
 ### 2. Verify discovery
 
@@ -114,12 +116,14 @@ rules — pattern scope is the most common pipeline failure cause.
 
 Foo calls `dispatch.Register` from `hop.top/kit/go/ai/ext/dispatch`
 at startup. The registrar scans `$PATH` for executables named
-`foo-*`, registers each as a hidden cobra subcommand with
-`DisableFlagParsing: true`, and forwards argv straight to the
-binary via `exec.Command`.
+`foo-*`, registers each as a cobra subcommand in the PLUGINS
+group with `DisableFlagParsing: true`, and forwards argv straight
+to the binary via `exec.Command`. Foo then drops the `foo-tool-*`
+matches, which are LLM tools rather than subcommands.
 
-Plugin binaries are interrogated for `--ext-info` once at help
-render time to populate the description shown in `foo --help`.
+Each plugin binary is interrogated for `--ext-info` once per `foo`
+invocation, at startup, to populate the description shown in
+`foo --help`.
 Foo also stamps the discovered subcommands with kit annotations
 (side-effect: interactive, idempotency: no, passthrough) so the
 strict-validation gate stays armed even with arbitrary plugins
