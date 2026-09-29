@@ -97,17 +97,39 @@ provider beyond the embedding API call itself.
 foo supports function calling via `-T <name>`. With `-T` set, foo
 runs an agentic dispatch loop: the model can request a tool call,
 foo runs the tool, and the result is fed back. The loop bounds at
-`--chain-limit` iterations (default 5).
+`--chain-limit` iterations (default 5). `foo tool list` shows every
+name `-T` accepts and where each one comes from; an unknown name is
+an error, never silently dropped.
 
-Two built-in tools ship with foo (`foo_time`, `foo_version`).
-Additional tools are discovered as external binaries on `$PATH`
-matching `foo-tool-<name>`. They speak the same `--ext-info`
+Tools come from three places, and a name has one owner, in this
+order:
+
+| Kind | Examples | Runs | Paths checked |
+|------|----------|------|---------------|
+| Go built-ins | `foo_time`, `foo_version` | In foo | No paths |
+| OS tools from specs | `ls`, `cat`, `grep`, `rm`, `sed`, … and your own | The pinned OS binary, started by foo | Yes, against `scope.yaml` |
+| Plugins | `foo-tool-<name>` on `$PATH` | The plugin binary | No: the plugin opens what it likes |
+
+**OS tools.** Thirteen ship with foo (read: `ls`, `cat`, `head`,
+`tail`, `wc`, `find`, `grep`, `stat`; write: `cp`, `mv`, `mkdir`,
+`rm`, `sed`). Each is a YAML spec: typed parameters, a fixed argument
+template, and which parameters are paths and what the command does to
+them. The model fills in parameters; it never writes a command line.
+Before the command starts, foo resolves every path, checks it against
+your scope for that operation, and asks you when the call writes or
+deletes. No `scope.yaml` means every call is denied. Walkthrough:
+[Let the model use OS commands safely](how-to/use-os-tools.md). You
+can add or replace specs
+([Add or change an OS tool](how-to/write-tool-specs.md)) and expose
+them to other hosts as `foo-tool-<name>` links
+([Share foo's OS tools](how-to/share-os-tools.md)).
+
+**Plugins.** `foo-tool-<name>` binaries speak the same `--ext-info`
 metadata protocol as plugin commands, plus an optional `parameters`
 JSON Schema that tells the model which arguments to pass
 ([Write plugins](how-to/write-plugins.md#--ext-info-for-tool-plugins)).
-`foo tool list` shows every name
-`-T` accepts and where each one comes from; an unknown name is an
-error, never silently dropped.
+foo cannot see what a plugin does with its arguments, so it applies
+no path scope to it; `--tools-approve` is the only gate.
 
 ## Plugins via PATH discovery
 
@@ -159,6 +181,10 @@ foo follows the XDG base-directory spec:
 | Embeddings DB | `$XDG_STATE_HOME/foo/embeddings.db` |
 | Schemas DB | `$XDG_STATE_HOME/foo/schemas.db` |
 | Workspace events (fragments included) | WSM workspace store under `$XDG_STATE_HOME` |
+| Tool path scope | `scope.yaml` in foo's config dir (macOS `~/Library/Application Support/foo/`, Linux `~/.config/foo/`) |
+| Tool approval overrides | `tool-policy.yaml` beside `scope.yaml` |
+| Your tool specs | `tools/<name>.yaml` beside `scope.yaml` |
+| `foo tool install` link manifest | `tool-shims.json` in foo's state dir |
 
 Project-local overrides live next to the project root: `.foo.yaml`
 for config, `.foo/patterns/` for patterns.

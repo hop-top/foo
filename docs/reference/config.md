@@ -174,8 +174,8 @@ applies when the variable is unset.
 
 | Variable | Default | Holds |
 |----------|---------|-------|
-| `XDG_CONFIG_HOME` | `~/.config` | `foo/config.yaml`, `foo/patterns/` |
-| `XDG_STATE_HOME` | `~/.local/state` | `foo/embeddings.db`, `foo/schemas.db`, upgrade state |
+| `XDG_CONFIG_HOME` | `~/.config` | `foo/config.yaml`, `foo/patterns/`, tool files `foo/scope.yaml`, `foo/tool-policy.yaml`, `foo/tools/` (macOS default: `~/Library/Application Support/foo/`; see [Use OS tools](../how-to/use-os-tools.md#2-write-scopeyaml)) |
+| `XDG_STATE_HOME` | `~/.local/state` | `foo/embeddings.db`, `foo/schemas.db`, upgrade state, `foo/tool-shims.json` (`foo tool install` links), `foo/tool-flavors.json` (detected BSD/GNU/busybox flavor per binary) |
 | `XDG_DATA_HOME` | `~/.local/share` | WSM workspace store (fragments) |
 | `XDG_CACHE_HOME` | `~/.cache` | `foo/model-endpoint-cache.db`, `hop/aim/` (models.dev catalog) |
 

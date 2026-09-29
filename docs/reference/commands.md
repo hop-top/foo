@@ -265,21 +265,35 @@ requirement, or the first alternative when none did.
 
 ## `tool`
 
-Inspect the tools `-T` / `--tool` can enable.
+Inspect the tools `-T` / `--tool` can enable, and link foo's OS tools
+for other hosts.
 
 | Subcommand | Synopsis | Description | How-to |
 |------------|----------|-------------|--------|
-| `list` | `foo tool list` | List tools available to -T | [Write plugins](../how-to/write-plugins.md#llm-tool-plugin--foo-tool-name) |
+| `list` | `foo tool list` | List tools available to -T | [Use OS tools](../how-to/use-os-tools.md#1-find-the-tools) |
+| `install` | `foo tool install [--dir <dir>]` | Link foo-tool-<name> plugins to foo for other hosts | [Share OS tools](../how-to/share-os-tools.md) |
+| `uninstall` | `foo tool uninstall [--dir <dir>]` | Remove the foo-tool-<name> links install created | [Share OS tools](../how-to/share-os-tools.md#4-remove-the-links) |
 
-Columns: `name` (the value `-T` takes), `source` (`builtin`, or the
-absolute path of the `foo-tool-<name>` binary on `$PATH`),
-`description` (what the model sees), and `params` (`true` when the
-tool declares arguments for the model to fill in). A binary's name,
-description and parameter schema come from its `--ext-info` output;
-listing runs each `foo-tool-*` binary once to read it. A binary whose
-`parameters` is not a JSON Schema object of type `object` is left out
-of the listing and of `-T`, with a warning on stderr from the listing
-and from any `-T` run that names it (see
+`foo tool list` columns:
+
+| Column | Values |
+|--------|--------|
+| `name` | The value `-T` takes |
+| `source` | `builtin` (compiled into foo: `foo_time`, `foo_version` and the OS tools); `user:<path>` or `system:<path>` for a [tool spec](tool-spec.md) read from foo's config dir or `/etc/xdg/foo/tools`, with ` (overrides builtin)` when it replaces one; or the absolute path of a `foo-tool-<name>` binary on `$PATH` |
+| `description` | What the model sees |
+| `params` | `true` when the tool declares arguments for the model to fill in |
+| `side_effect` | `read`, `write` or `destructive` for foo's tools; `unknown` for a plugin |
+| `paths` | A spec tool's path arguments with the ops foo checks (`src:r dst:w`, `path:rw`); `ungated` for a plugin, whose paths foo does not check |
+| `status` | `active`, or `shadowed`: another tool owns the name (Go built-ins, then specs, then `$PATH` plugins) and this one never runs |
+
+A spec that fails to load is left out with a warning on stderr and
+still owns its name: `-T` with that name exits 3 with the spec's
+error. A plugin's name, description and parameter schema come from
+its `--ext-info` output; listing runs each `foo-tool-*` binary once to
+read it (links to foo itself and shadowed names are skipped). A binary
+whose `parameters` is not a JSON Schema object of type `object` is
+left out of the listing and of `-T`, with a warning on stderr from the
+listing and from any `-T` run that names it (see
 [Write plugins](../how-to/write-plugins.md#--ext-info-for-tool-plugins)).
 Every `--format` works:
 
@@ -287,13 +301,27 @@ Every `--format` works:
 foo tool list --format json
 ```
 
+`foo tool install` creates a `foo-tool-<name>` symlink to the foo
+binary for every valid spec tool in `--dir` (default
+`~/.local/bin/foo`, off `$PATH`; foo prints a note when the directory
+is not on `$PATH`). Columns: `name`, `link`, `action` (`created`,
+`unchanged`, `replaced`, `skipped`, `removed`, `kept`) and `reason`.
+Files and links that do not point at foo are never touched. Run
+through a link, foo applies the same scope and policy checks as `-T`
+and refuses any call that would ask for approval. `-T` never needs the
+links.
+
+Tool calls that write or delete ask first; `tool-policy.yaml` beside
+`scope.yaml` changes that per side effect
+([how-to](../how-to/use-os-tools.md#7-let-writes-run-without-asking-optional)).
+
 An unknown `-T` name fails before stdin is read or any model is
 called, names the bad tool, and lists the valid ones. The exit code is
 3 (not found), the same as an unknown `--pattern` or `--schema`:
 
 ```
 foo -T foo_tme "what time is it?"
-# NOT_FOUND: unknown tool "foo_tme"; did you mean "foo_time"? Available tools: foo_time, foo_version (run `foo tool list` for details)
+# NOT_FOUND: unknown tool "foo_tme"; did you mean "foo_time"? Available tools: cat, cp, find, foo_time, foo_version, grep, head, ls, mkdir, mv, rm, sed, stat, tail, wc (run `foo tool list` for details)
 ```
 
 ### Read tools
@@ -349,9 +377,12 @@ directory, so `overwrite=true` cannot replace one either.
 ## `scope`
 
 Inspect the path policy tool calls are checked against: `scope.yaml`
-in foo's config directory (and `/etc/xdg/foo/scope.yaml`), plus a
-built-in deny list for secrets. With no `scope.yaml` every tool call
-is denied.
+in foo's config directory (macOS `~/Library/Application Support/foo/`,
+Linux `~/.config/foo/`, or `$XDG_CONFIG_HOME/foo/`) and
+`/etc/xdg/foo/scope.yaml`, plus a built-in deny list for secrets. With
+no `scope.yaml` every tool call is denied, and `foo scope` prints the
+path it looked for. Writing one:
+[Let the model use OS commands safely](../how-to/use-os-tools.md#2-write-scopeyaml).
 
 | Subcommand | Synopsis | Description |
 |------------|----------|-------------|

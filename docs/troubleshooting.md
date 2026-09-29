@@ -18,7 +18,13 @@ cause → fix; the longer sections below give the detail.
 | `model "..." not available (provider "openai")` for an id you never meant to send to OpenAI | Unrecognised model id; foo assumed an OpenAI-compatible provider | [Point foo at the right endpoint](#unknown-model-id-routed-to-openai) |
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
-| `unknown tool "..."` | `-T` name not a builtin or a `foo-tool-*` on `$PATH` | `foo tool list` |
+| `unknown tool "..."` | `-T` name is not a built-in, a tool spec or a `foo-tool-*` on `$PATH` | `foo tool list` |
+| `tool "..." is unavailable: tool spec ...` | Your tool spec with that name fails to load | [Fix the spec](how-to/write-tool-specs.md#common-issues) |
+| Tool call `denied: no scope policy: .../scope.yaml does not exist` | No `scope.yaml`, so no path is granted to tools | [Create it](#tool-calls-denied-or-declined) |
+| Tool call `denied: no scope allow rule covers read here` | The path is outside your scope, or resolves outside it | `foo scope check <path>`; [details](#tool-calls-denied-or-declined) |
+| Tool call `declined: approval required but cannot be asked: no terminal ...` | A write, delete or `mode: prompt` call with no terminal to ask on | [Run on a terminal or auto-allow](#tool-calls-denied-or-declined) |
+| Tool output shows `/private/tmp/...` or `/private/var/...` (macOS) | foo reports canonical paths; `/tmp` and `/var` link into `/private` | Nothing to fix; scope rules written as `/tmp/**` still match |
+| Tool call `timeout: ... did not finish within 30s` | The command outran its limit | [Narrow the call](#tool-calls-denied-or-declined) |
 | `[foo] warning: skipping tool plugin ...` | The plugin's `--ext-info` `parameters` is not a JSON Schema object of type `object` | [Fix the plugin's schema](how-to/write-plugins.md#--ext-info-for-tool-plugins) |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
 | `interactive REPL requires a terminal` | `foo repl` invoked without a TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
@@ -229,6 +235,38 @@ foo pattern delete old-pattern --confirm=yes
 Full background:
 [how-to/confirm-destructive-ops.md](how-to/confirm-destructive-ops.md).
 
+## Tool calls denied or declined
+
+With `-T`, foo checks every path an OS tool (`ls`, `cat`, `rm`, …)
+would touch before the command starts. The refusal goes back to the
+model; `--tools-debug` prints it on stderr too:
+
+```
+[tool] error: ls: denied: path /: no scope allow rule covers read here
+```
+
+- **`no scope policy: <path>/scope.yaml does not exist`**: every call
+  is denied until you create that file. The path is OS-specific
+  (macOS `~/Library/Application Support/foo/scope.yaml`, Linux
+  `~/.config/foo/scope.yaml`); `foo scope show` prints it.
+- **`no scope allow rule covers <op> here`** or **`matches a scope
+  deny rule`**: run `foo scope check <path> --op <op>` from the same
+  directory. It resolves the path the way the call did (relative to
+  where foo ran, symlinks and `..` followed) and shows which rule
+  decides. Secrets (`.env`, keys, `~/.ssh`, …) are always denied.
+- **`declined: approval required but cannot be asked: no terminal`**:
+  the call writes or deletes (or `mode: prompt` wants to ask) and foo
+  has no terminal to ask on (CI, cron, a `foo-tool-*` link run by
+  another host). Answers are never read from stdin. Run on a
+  terminal, or auto-allow that side effect in `tool-policy.yaml`.
+- **`declined: the user declined this call`**: you answered no.
+- **`timeout`**: OS tools stop after 30 seconds (60 for `find`, `grep`,
+  `cp`, `mv` and `rm`), plugins after 30; partial output is discarded.
+  A FIFO or a huge tree is the usual cause: narrow the path, set
+  `maxdepth`, or use `head` instead of `cat`.
+
+Walkthrough: [Let the model use OS commands safely](how-to/use-os-tools.md).
+
 ## `foo status` shows degraded health
 
 `foo status` is the kit-shipped health probe. It boots cleanly
@@ -297,5 +335,6 @@ Full walkthrough:
 - [How to: confirm destructive ops](how-to/confirm-destructive-ops.md)
 - [How to: configure models](how-to/configure-models.md)
 - [How to: use a local endpoint](how-to/use-a-local-endpoint.md)
+- [How to: let the model use OS commands safely](how-to/use-os-tools.md)
 - [Reference: schema DSL](reference/schema-dsl.md)
 - [Reference: config](reference/config.md)

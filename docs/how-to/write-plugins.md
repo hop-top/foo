@@ -151,6 +151,29 @@ Tool plugins are usually short, single-purpose, side-effect-free
 `foo_version` in `internal/tool/builtin/` are the in-process
 version of the same contract.
 
+### Plugin or tool spec?
+
+foo cannot see what a plugin does with its arguments, so it applies
+no path scope to a plugin: `foo tool list` shows its SIDE-EFFECT as
+`unknown` and its PATHS as `ungated`, and `--tools-approve` is the
+only gate between the model and the plugin. If your tool runs one OS
+command over paths, write a
+[tool spec](write-tool-specs.md) instead: foo then resolves and
+checks every path against the user's `scope.yaml` before the command
+starts, and asks before writes.
+
+| | Tool spec | Plugin |
+|--|-----------|--------|
+| What you write | YAML describing an existing binary | A program |
+| Path arguments | Checked against `scope.yaml` per op | Passed through unchecked |
+| Approval | By side effect (`write`/`destructive` ask) | Only with `--tools-approve` |
+| Name clash | Wins over a plugin | Listed as `shadowed` |
+
+The `foo_tool` object in the `--ext-info` of foo's own
+`foo-tool-<name>` links ([Share foo's OS tools](share-os-tools.md))
+describes foo's tools to other hosts. foo does not read `foo_tool`
+from third-party plugins, so declaring it does not gate anything.
+
 ### Example: a weather tool the model passes arguments to
 
 The plugin declares `city` and `days` in `parameters`; the model
@@ -248,6 +271,7 @@ exit or non-JSON stdout reaches the model as a tool error.
 | Tool plugin never invoked | Did you pass `-T <name>`? Model declines to call | Confirm `--tools-debug` shows the tool offered to the model |
 | `[foo] warning: skipping tool plugin ...` | `parameters` in `--ext-info` is not a JSON Schema object of type `object` | Fix the schema; check it with `foo-tool-<name> --ext-info \| jq .parameters` |
 | Model calls the tool with `{}` | No `parameters` declared (`PARAMS` is false in `foo tool list`) | Add a `parameters` schema to `--ext-info` |
+| Plugin listed as `shadowed` | A built-in tool or a tool spec owns the name (`ls`, `cat`, …) | Rename the plugin; `-T` runs the owner |
 
 ## How it works
 
@@ -260,13 +284,15 @@ validator requires on the rest. Each remaining plugin's
 `--ext-info` description is read once, right there at startup,
 and assigned to `cmd.Short` and `cmd.Long`.
 
-Tool-plugin discovery happens separately in `buildRegistry`
-(`cmd/foo/commands/root.go`), which scans for `foo-tool-*`, runs
-each binary's `--ext-info` once, and adds it to the LLM
-dispatcher's registry as an `ExternalTool`
-(`internal/tool/external.go`) carrying its `parameters` schema.
-A tool plugin is invoked only when (a) the user passed
-`-T <name>`, AND (b) the model decides to call it.
+Tool-plugin discovery happens separately in `discoverTools`
+(`cmd/foo/commands/shims.go`). It registers foo's Go built-ins, then
+its tool specs, then scans for `foo-tool-*`, runs each binary's
+`--ext-info` once, and adds it to the LLM dispatcher's registry as an
+`ExternalTool` (`internal/tool/external.go`) carrying its `parameters`
+schema. A name already taken is not registered again: the later
+binary is listed as `shadowed`. Links to foo itself are skipped. A
+tool plugin is invoked only when (a) the user passed `-T <name>`, AND
+(b) the model decides to call it.
 
 ## Reference
 
@@ -281,6 +307,8 @@ A tool plugin is invoked only when (a) the user passed
 ## Related docs
 
 - [Use plugins](use-plugins.md) — installing and running plugins.
+- [Add or change an OS tool](write-tool-specs.md) — path-checked tools
+  from a YAML spec.
 - [Concepts](../concepts.md#plugins-via-path-discovery) — the
   PATH-discovery model.
 - [Reference: commands](../reference/commands.md) — the full CLI

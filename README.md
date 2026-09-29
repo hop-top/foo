@@ -59,10 +59,14 @@ or `--budget premium` for the most capable. Full tour:
 | Run destructive commands in scripts | [docs/how-to/confirm-destructive-ops.md](docs/how-to/confirm-destructive-ops.md) |
 | Upgrade foo in place | [docs/how-to/upgrade-foo.md](docs/how-to/upgrade-foo.md) |
 | Install and use plugins (youtube, scrape, custom) | [docs/how-to/use-plugins.md](docs/how-to/use-plugins.md) |
+| Let the model run `ls`, `grep`, `rm`, … on paths I allow | [docs/how-to/use-os-tools.md](docs/how-to/use-os-tools.md) |
+| Add or change an OS tool the model can call | [docs/how-to/write-tool-specs.md](docs/how-to/write-tool-specs.md) |
+| Share foo's OS tools with another agent host | [docs/how-to/share-os-tools.md](docs/how-to/share-os-tools.md) |
 | Write a new plugin (subcommand or LLM tool) | [docs/how-to/write-plugins.md](docs/how-to/write-plugins.md) |
 | Look up the exact flag, command, or value | [docs/reference/commands.md](docs/reference/commands.md) |
 | Look up a config key or env var | [docs/reference/config.md](docs/reference/config.md) |
 | Look up the schema DSL grammar | [docs/reference/schema-dsl.md](docs/reference/schema-dsl.md) |
+| Look up a tool spec key | [docs/reference/tool-spec.md](docs/reference/tool-spec.md) |
 | Check compatibility + deprecations | [docs/reference/compatibility.md](docs/reference/compatibility.md) |
 | Something broke | [docs/troubleshooting.md](docs/troubleshooting.md) |
 
