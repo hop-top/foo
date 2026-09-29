@@ -379,9 +379,12 @@ directory, so `overwrite=true` cannot replace one either.
 Inspect the path policy tool calls are checked against: `scope.yaml`
 in foo's config directory (macOS `~/Library/Application Support/foo/`,
 Linux `~/.config/foo/`, or `$XDG_CONFIG_HOME/foo/`) and
-`/etc/xdg/foo/scope.yaml`, plus a built-in deny list for secrets. With
-no `scope.yaml` every tool call is denied, and `foo scope` prints the
-path it looked for. Writing one:
+`/etc/xdg/foo/scope.yaml`, plus a built-in deny list for secrets on
+every op: each of kit's secret patterns (`**/.env`, `**/secrets*`,
+`**/credentials*`, `~/.ssh/**`, ...) and its descendant form
+(`**/secrets*/**`), so a directory with a secret name hides its
+contents as well as its own entry. With no `scope.yaml` every tool
+call is denied, and `foo scope` prints the path it looked for. Writing one:
 [Let the model use OS commands safely](../how-to/use-os-tools.md#2-write-scopeyaml).
 
 | Subcommand | Synopsis | Description |

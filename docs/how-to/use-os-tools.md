@@ -106,8 +106,12 @@ allow:
   string (`- "~/proj/**"`) covers **every** op, write included.
 - `deny:` takes the same forms and always beats `allow:`.
 - foo adds a deny list for secrets on every op: `.env`, `*.pem`,
-  `*.key`, `id_rsa*`, `credentials*`, `~/.ssh/**`, `~/.aws/**`, browser
-  cookie stores and more. `foo scope show` prints all of it.
+  `*.key`, `id_rsa*`, `credentials*`, `secrets*`, `~/.ssh/**`,
+  `~/.aws/**`, browser cookie stores and more. A name on the list
+  covers everything under it too: `secrets/key.txt` is denied like
+  `secrets.yaml`, and `find` or `grep -r` never show what is inside.
+  Names match from their start, so `mysecrets.txt` is not on the
+  list. `foo scope show` prints every pattern.
 
 What each tool needs: reading tools need `read`; `mkdir`, `rm` and a
 `cp`/`mv` destination need `write` on the path **and on its parent

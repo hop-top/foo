@@ -43,6 +43,8 @@ func TestToolShims_Acceptance(t *testing.T) {
 	mkfile(t, filepath.Join(to, "x"), "keep me\n")
 	mkfile(t, filepath.Join(to, "-R"), "a file named -R\n")
 	mkfile(t, filepath.Join(to, ".env"), "needle secret\n")
+	mkfile(t, filepath.Join(to, "secrets", "key.txt"), "needle KEY\n")
+	mkfile(t, filepath.Join(to, "secrets", "nested", "deep.txt"), "needle DEEP\n")
 	mkfile(t, filepath.Join(to, "private", "p.txt"), "hidden\n")
 	mkfile(t, filepath.Join(to, "big"), strings.Repeat("0123456789abcdef", 10<<16)) // 10 MiB
 	mkfile(t, filepath.Join(to, "img.png"), "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
@@ -113,6 +115,14 @@ func TestToolShims_Acceptance(t *testing.T) {
 		{"cat .env denied by the secret list", e.root, "cat", map[string]any{"path": []string{to + "/.env"}}, func(t *testing.T, o outcome) {
 			wantRefused(t, o, "denied", "path", "deny rule")
 		}},
+		{"cat a file under secrets/ denied", e.root, "cat", map[string]any{"path": []string{to + "/secrets/key.txt"}}, func(t *testing.T, o outcome) {
+			wantRefused(t, o, "denied", "path", "deny rule")
+			require.NotContains(t, o.Raw, "KEY")
+		}},
+		{"cat a nested file under secrets/ denied", e.root, "cat", map[string]any{"path": []string{to + "/secrets/nested/deep.txt"}}, func(t *testing.T, o outcome) {
+			wantRefused(t, o, "denied", "path", "deny rule")
+			require.NotContains(t, o.Raw, "DEEP")
+		}},
 		{"mv source on a read-only grant denied", e.root, "mv", map[string]any{"src": []string{to + "/x"}, "dst": to + "/y"}, func(t *testing.T, o outcome) {
 			wantRefused(t, o, "denied", "", "write")
 			require.FileExists(t, filepath.Join(to, "x"))
@@ -130,6 +140,19 @@ func TestToolShims_Acceptance(t *testing.T) {
 			require.Contains(t, o.stdout(), to+"/a")
 			require.NotContains(t, o.stdout(), to+"/private")
 			require.GreaterOrEqual(t, res.Filtered, 1)
+		}},
+
+		{"find omits secrets/ and its contents", e.root, "find", map[string]any{"path": []string{to}}, func(t *testing.T, o outcome) {
+			res := wantRan(t, o)
+			require.Contains(t, o.stdout(), to+"/a")
+			require.NotContains(t, o.stdout(), to+"/secrets")
+			require.GreaterOrEqual(t, res.Filtered, 1)
+		}},
+		{"grep recursive skips secrets/", e.root, "grep", map[string]any{"pattern": "needle", "path": []string{to}, "recursive": true}, func(t *testing.T, o outcome) {
+			wantRan(t, o)
+			require.Contains(t, o.stdout(), "alpha needle")
+			require.NotContains(t, o.stdout(), "KEY")
+			require.NotContains(t, o.stdout(), "DEEP")
 		}},
 
 		// Additions: argument smuggling.

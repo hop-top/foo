@@ -51,7 +51,9 @@ func scopeCmd() *cobra.Command {
 	cmd.Long = `Inspect the path policy that gates tool calls: which paths a tool
 may read, write or execute, from scope.yaml in foo's config directory
 (and /etc/xdg/foo/scope.yaml), plus a built-in deny list for secrets
-(.env, keys, ~/.ssh, ...). With no scope.yaml every tool call is denied.
+(.env, keys, secrets*, ~/.ssh, ...) that also covers everything under a
+directory with such a name. With no scope.yaml every tool call is
+denied.
 
 A path a deny rule matches, or that no allow rule covers, is handled by
 the mode: strict denies the call, prompt asks once per call (showing
