@@ -42,8 +42,9 @@ func (v Verdict) String() string {
 const uncoveredReason = "no scope rule covers this path"
 
 // Classify returns the gate's verdict on one canonical path for one
-// operation, with the reason when it is not VerdictAllow. The gate and
-// `foo scope check` both decide here, so they cannot disagree.
+// operation, with the reason when it is not VerdictAllow. The gate
+// decides every resolved path here; CheckPath adds the refusals that
+// depend on how a value resolved.
 //
 // A deny rule wins, then an allow rule. A path no rule covers is
 // treated like a denied one: denied in strict mode, asked about in

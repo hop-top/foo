@@ -408,14 +408,18 @@ call is denied, and `foo scope` prints the path it looked for. Writing one:
 | `check` | `foo scope check <path> [--op read\|write\|exec]` | Show what a tool call would do with one path |
 | `test` | `foo scope test <path>... [--op read\|write\|exec]` | Show what tool calls would do with several paths |
 
-`check` and `test` resolve each path as the gate resolves a tool's
-path argument (relative to the working directory, symlinks and `..`
-physically) and report the gate's verdict under the policy's mode, not
-the raw rule match. They judge the resolved path alone: a tool call
-is also refused for a `..` that climbs out of an ungranted directory,
-and for a path through a symlink in an ungranted directory that no
-rule names as written. Columns: `path`, `op`, `decision`, `reason` (the
-rule, or missing rule, behind a verdict other than `allowed`).
+`check` and `test` run each path through the gate's own checks for a
+path argument a tool reads (`cat`, `ls`): resolved relative to the
+working directory, `~` to home, symlinks (the last one too) and `..`
+physically, and judged under the policy's mode, not by the raw rule
+match. A path is also refused, as a tool call refuses it, when a `..`
+in it climbs out of a directory no rule grants, or when it resolves
+through a symlink in such a directory and no allow rule names it as
+typed (`~/code/**` for a `~/code` link). `rm`, `mkdir` and a `cp`/`mv`
+destination also need write on the parent directory; check that with
+`--op write`. Columns: `path` (where the path resolves), `op`,
+`decision`, `reason` (the rule, missing rule or refusal behind a
+verdict other than `allowed`).
 
 | `decision` | Meaning | Exit |
 |------------|---------|------|
@@ -426,8 +430,10 @@ rule, or missing rule, behind a verdict other than `allowed`).
 
 `test` exits with the most restrictive verdict among its paths
 (`denied`, then `prompt`, then `warn`). A `scope.yaml` that does not
-load, a bad `--op` or an unresolvable path exits 2, so a broken config
-never reads as a denial:
+load, a bad `--op`, or a path that does not resolve where the scope
+grants it (a symlink loop, a `..` after a missing directory) exits 2,
+so a broken config never reads as a denial. One that does not resolve
+outside the grant is refused like any path there:
 
 ```
 $ foo scope check ./notes.txt

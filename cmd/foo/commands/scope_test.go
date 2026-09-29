@@ -410,3 +410,114 @@ func TestScopeShow_ListsCredentialAnywhereForms(t *testing.T) {
 		}
 	}
 }
+
+// checkRow runs `foo scope check` on path and returns its row and exit
+// code.
+func checkRow(t *testing.T, path string, extra ...string) (scopeCheckRow, int) {
+	t.Helper()
+	stdout, _, _, err := runFooArgs(t, toolTestEnv{}, append([]string{"scope", "check", path, "--format=json"}, extra...)...)
+	var row scopeCheckRow
+	if jerr := json.Unmarshal([]byte(stdout), &row); jerr != nil {
+		t.Fatalf("check %s: stdout not JSON (%v; err %v): %q", path, jerr, err, stdout)
+	}
+	return row, exitCodeOf(err)
+}
+
+// check and test apply the gate's refusals on the value, not only its
+// verdict on the resolved path: a `..` out of an ungranted directory,
+// and a path through a link in an ungranted directory into the grant,
+// are refused by a tool call, so check does not call them allowed. The
+// mode decides the verdict, as for any path outside the grant.
+func TestScopeCheck_GateRefusalsOnTheValue(t *testing.T) {
+	for _, tc := range []struct {
+		mode, decision string
+		exit           int
+	}{
+		{"strict", "denied", 1},
+		{"prompt", "prompt", 8},
+		{"warn", "warn", 9},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			root := scopeEnv(t)
+			if err := os.Symlink(filepath.Join(root, "p"), filepath.Join(root, "outside/link")); err != nil {
+				t.Fatal(err)
+			}
+			writeScopeYAML(t, "mode: "+tc.mode+"\nallow:\n  - \""+root+"/p/**\"\n")
+
+			for _, c := range []struct{ path, reason string }{
+				{root + "/outside/../p/sub", `".."`},
+				{root + "/outside/link/sub", "symlink"},
+			} {
+				row, exit := checkRow(t, c.path)
+				if exit != tc.exit || row.Decision != tc.decision {
+					t.Errorf("check %s = %s, exit %d; want %s, exit %d", c.path, row.Decision, exit, tc.decision, tc.exit)
+				}
+				if !strings.Contains(row.Reason, c.reason) {
+					t.Errorf("check %s reason %q should mention %s", c.path, row.Reason, c.reason)
+				}
+				// The user's own terminal may see where the path lands.
+				if row.Path != filepath.Join(root, "p/sub") {
+					t.Errorf("check %s path %q; want %q", c.path, row.Path, filepath.Join(root, "p/sub"))
+				}
+			}
+
+			// The same path named without the detour stays allowed.
+			if row, exit := checkRow(t, root+"/p/sub"); exit != 0 || row.Decision != "allowed" {
+				t.Errorf("check p/sub = %s, exit %d; want allowed", row.Decision, exit)
+			}
+
+			// test takes the most restrictive verdict of its paths.
+			_, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "test", root+"/p/sub", root+"/outside/link/sub")
+			if got := exitCodeOf(err); got != tc.exit {
+				t.Errorf("test with a linked path: exit %d (%v); want %d", got, err, tc.exit)
+			}
+		})
+	}
+}
+
+// A path through a link in an ungranted directory is allowed when an
+// allow rule names it as written, through the link, as a tool call
+// allows it.
+func TestScopeCheck_RuleWrittenThroughLink(t *testing.T) {
+	root := scopeEnv(t)
+	if err := os.Symlink(filepath.Join(root, "p"), filepath.Join(root, "outside/link")); err != nil {
+		t.Fatal(err)
+	}
+	home := os.Getenv("HOME")
+	if err := os.Symlink(filepath.Join(root, "p"), filepath.Join(home, "code")); err != nil {
+		t.Fatal(err)
+	}
+	writeScopeYAML(t, "allow:\n  - \""+root+"/outside/link/**\"\n  - \"~/code/**\"\n")
+
+	for _, path := range []string{root + "/outside/link/sub", "~/code/sub", home + "/code/sub"} {
+		row, exit := checkRow(t, path)
+		if exit != 0 || row.Decision != "allowed" {
+			t.Errorf("check %s = %+v, exit %d; want allowed", path, row, exit)
+		}
+	}
+
+	// Rules as written still yield to deny rules on the target.
+	if row, exit := checkRow(t, root+"/outside/link/.env"); exit != 1 || row.Decision != "denied" {
+		t.Errorf("check link/.env = %+v, exit %d; want denied", row, exit)
+	}
+}
+
+// A path that does not resolve is a usage error where the scope grants
+// it, as a tool call fails on it there; outside the grant it is refused
+// like any other path, whatever is there.
+func TestScopeCheck_UnresolvableByPlace(t *testing.T) {
+	root := scopeEnv(t)
+	for _, l := range []string{"p/loop", "outside/loop"} {
+		if err := os.Symlink("loop", filepath.Join(root, l)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeScopeYAML(t, "allow:\n  - \""+root+"/p/**\"\n")
+	_, _, _, err := runFooArgs(t, toolTestEnv{}, "scope", "check", root+"/p/loop")
+	if got := exitCodeOf(err); got != 2 || !strings.Contains(err.Error(), "cannot resolve") {
+		t.Errorf("check p/loop: exit %d (%v); want 2, cannot resolve", got, err)
+	}
+	if row, exit := checkRow(t, root+"/outside/loop"); exit != 1 || row.Decision != "denied" {
+		t.Errorf("check outside/loop = %+v, exit %d; want denied", row, exit)
+	}
+}

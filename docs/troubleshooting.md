@@ -251,9 +251,11 @@ model; `--tools-debug` prints it on stderr too:
   `~/.config/foo/scope.yaml`); `foo scope show` prints it.
 - **`no scope allow rule covers <op> here`** or **`matches a scope
   deny rule`**: run `foo scope check <path> --op <op>` from the same
-  directory. It resolves the path the way the call did (relative to
-  where foo ran, symlinks and `..` followed) and shows which rule
-  decides. Secrets (`.env`, keys, `~/.ssh`, …) are always denied.
+  directory. It checks the path the way the call did (relative to
+  where foo ran, symlinks and `..` followed, a `..` or link through a
+  directory outside the scope refused) and shows where it resolves and
+  which rule or refusal decides. Secrets (`.env`, keys, `~/.ssh`, …)
+  are always denied.
 - **`declined: approval required but cannot be asked: no terminal`**:
   the call writes or deletes (or `mode: prompt` wants to ask) and foo
   has no terminal to ask on (CI, cron, a `foo-tool-*` link run by
