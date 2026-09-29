@@ -16,7 +16,7 @@ const grepSpec = `
 spec: 1
 name: grepx
 description: Fixture grep with foo-side recursion.
-command: {bin: [/usr/bin/grep]}
+command: {bin: [/usr/bin/grep, /bin/grep]}
 side_effect: read
 ok_exit_codes: [0, 1]
 params:
@@ -93,7 +93,7 @@ const findSpec = `
 spec: 1
 name: findx
 description: Fixture find with per-entry output filtering.
-command: {bin: [/usr/bin/find]}
+command: {bin: [/usr/bin/find, /bin/find]}
 side_effect: read
 output: paths0
 expression_after_paths: true
