@@ -82,12 +82,14 @@ with a warning on stderr; -T warns only when it names that tool.`,
 // or nil when -T was not given. It is the single discovery pass for a
 // prompt run: validation and dispatch share its result, because every
 // pass execs each foo-tool-* binary.
-// Plugins skipped during discovery are reported on warn.
-func selectedTools(warn io.Writer) (*tool.Registry, error) {
+// Plugins skipped during discovery are reported on warn. Shim tools
+// ask their approval questions through p, as do other tools under
+// --tools-approve.
+func selectedTools(warn io.Writer, p *tool.Prompter) (*tool.Registry, error) {
 	if len(toolNames) == 0 {
 		return nil, nil
 	}
-	return buildRegistry(toolNames, warn)
+	return buildRegistry(toolNames, warn, shimAccess{confirm: p, approveAll: toolsApprove})
 }
 
 // warnSkippedTool reports a foo-tool-* binary left out of the

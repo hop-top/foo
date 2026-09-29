@@ -452,7 +452,7 @@ func TestSelectedTool_ArgumentsReachPlugin(t *testing.T) {
 	env.addToolScript(t, "weather", weatherToolInfo)
 
 	var warn bytes.Buffer
-	reg, err := buildRegistry([]string{"weather"}, &warn)
+	reg, err := buildRegistry([]string{"weather"}, &warn, shimAccess{})
 	if err != nil {
 		t.Fatalf("buildRegistry: %v", err)
 	}

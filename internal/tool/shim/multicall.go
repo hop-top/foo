@@ -26,8 +26,8 @@ func MultiCallName(argv0 string) (string, bool) {
 	return name, true
 }
 
-// DenyAll refuses every call. It is the authorizer until path scope is
-// wired, so shims fail closed.
+// DenyAll refuses every call with Message: a fail-closed authorizer
+// for tests and for engines that must never run a command.
 type DenyAll struct{ Message string }
 
 func (d DenyAll) Authorize(context.Context, gate.Request) (gate.Grant, error) {
@@ -104,9 +104,14 @@ type MultiCall struct {
 	Version string
 	Catalog *Catalog
 	Engine  *Engine
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
+	// Authorizer, when set, builds Engine's authorizer for a request.
+	// It runs only once the name and arguments check out, so
+	// --ext-info never reads the user's policy files. Its error is a
+	// broken setup, not a refusal of the call.
+	Authorizer func() (gate.Authorizer, error)
+	Stdin      io.Reader
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // maxRequest bounds the stdin request.
@@ -114,7 +119,9 @@ const maxRequest = 1 << 20
 
 // Run serves one invocation and returns the process exit code: 0 when a
 // protocol response was written (including refusals, which are
-// responses), 2 for usage errors, 3 when no spec has this name.
+// responses), 1 when the authorizer cannot be built (reported on
+// Stderr, no response), 2 for usage errors, 3 when no spec has this
+// name.
 func (m *MultiCall) Run(ctx context.Context, args []string) int {
 	l, inv := m.Catalog.Lookup(m.Name)
 	if l == nil {
@@ -133,6 +140,15 @@ func (m *MultiCall) Run(ctx context.Context, args []string) int {
 	case len(args) > 0:
 		_, _ = fmt.Fprintf(m.Stderr, "usage: %s%s [--ext-info] < request.json\n", LinkPrefix, m.Name)
 		return 2
+	}
+
+	if m.Authorizer != nil {
+		auth, err := m.Authorizer()
+		if err != nil {
+			_, _ = fmt.Fprintf(m.Stderr, "%s%s: %v\n", LinkPrefix, m.Name, err)
+			return 1
+		}
+		m.Engine.Authorizer = auth
 	}
 
 	data, err := io.ReadAll(io.LimitReader(m.Stdin, maxRequest+1))

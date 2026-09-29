@@ -42,6 +42,12 @@ func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessa
 	return json.Marshal(res)
 }
 
+// ApprovesItself reports that the engine's authorizer asks for any
+// approval a call needs (scope prompt, side-effect policy,
+// --tools-approve) in one question, so the dispatcher must not ask
+// first.
+func (t *Tool) ApprovesItself() bool { return true }
+
 // Source reports where the spec came from, for `foo tool list`.
 func (t *Tool) Source() string { return t.loaded.SourceLabel() }
 

@@ -21,7 +21,8 @@ type DispatchConfig struct {
 	ChainLimit int
 	// Debug enables logging of tool calls and results.
 	Debug bool
-	// Approve is called before each tool execution when non-nil.
+	// Approve is called before each tool execution when non-nil,
+	// except for tools that approve their own calls (SelfApproving).
 	Approve ApproveFunc
 	// DebugWriter receives debug output. Defaults to io.Discard.
 	DebugWriter io.Writer
@@ -152,12 +153,17 @@ func (d *Dispatcher) executeTool(
 		return nil, fmt.Errorf("unknown tool %q", tc.Name)
 	}
 
-	// Approval gate.
-	if d.cfg.Approve != nil {
+	// Approval gate, unless the tool asks on its own.
+	if d.cfg.Approve != nil && !approvesItself(t) {
 		if !d.cfg.Approve(tc.Name, tc.Arguments) {
 			return json.RawMessage(`{"skipped": true}`), nil
 		}
 	}
 
 	return t.Execute(ctx, tc.Arguments)
+}
+
+func approvesItself(t Tool) bool {
+	s, ok := t.(SelfApproving)
+	return ok && s.ApprovesItself()
 }

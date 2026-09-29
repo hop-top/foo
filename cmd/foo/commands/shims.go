@@ -20,24 +20,54 @@ import (
 	"hop.top/kit/go/core/xdg"
 )
 
-// newShimAuthorizer is the one place shim calls get their authorizer,
-// for in-process -T runs (interactive: prompts may be asked) and for
-// foo-tool-<name> links run by other hosts (not interactive: a prompt
-// counts as a denial).
-//
-// Path scope is not wired to the engine yet, so every call is refused:
-// shims fail closed until the gate lands here.
-func newShimAuthorizer(interactive bool) gate.Authorizer {
-	_ = interactive
-	return shim.DenyAll{Message: "path scope not configured yet"}
+// shimAccess is how a run's shim calls may reach the user.
+type shimAccess struct {
+	// confirm asks approval questions; nil when nobody can be asked
+	// (foo-tool-<name> run by another host), so any call that needs
+	// approval is refused.
+	confirm gate.Confirmer
+	// approveAll asks before every call (--tools-approve).
+	approveAll bool
 }
 
-// newShimEngine builds the engine for this run. The working directory
-// is captured once: it is the base for every relative path the model
-// sends.
-func newShimEngine(interactive bool) *shim.Engine {
+// newShimAuthorizer is the one place shim calls get their authorizer,
+// for in-process -T runs and for foo-tool-<name> links run by other
+// hosts: the path gate over foo's scope.yaml and side-effect policy
+// (kit's table, foo's overlay, the user's tool-policy.yaml), with
+// relative paths resolved against cwd, the directory captured when
+// the run started.
+//
+// A scope.yaml or tool-policy.yaml that cannot be loaded is an error,
+// never a silent deny-all or allow-all: the caller fails the run with
+// it, the way foo fails on a broken config file.
+func newShimAuthorizer(cwd string, access shimAccess) (gate.Authorizer, error) {
+	sc, err := gate.LoadScope(scopeTool)
+	if err != nil {
+		return nil, fmt.Errorf("load tool scope policy: %w", err)
+	}
+	tbl, err := gate.LoadPolicy(scopeTool)
+	if err != nil {
+		return nil, fmt.Errorf("load tool side-effect policy: %w", err)
+	}
+	opts := []gate.Option{
+		gate.WithScope(sc),
+		gate.WithCwd(cwd),
+		gate.WithPolicy(tbl),
+		gate.WithApproveAll(access.approveAll),
+	}
+	if access.confirm != nil {
+		opts = append(opts, gate.WithConfirmer(access.confirm))
+	}
+	return gate.New(opts...)
+}
+
+// newShimEngine builds the engine for this run, without an authorizer
+// (every call denied) until one is attached. The working directory is
+// captured once: it is the base for every relative path the model
+// sends and where commands run.
+func newShimEngine() *shim.Engine {
 	cwd, _ := os.Getwd()
-	e := &shim.Engine{Authorizer: newShimAuthorizer(interactive), Cwd: cwd}
+	e := &shim.Engine{Cwd: cwd}
 	if dir, err := xdg.StateDir("foo"); err == nil {
 		e.Flavors = shim.NewFlavors(filepath.Join(dir, "tool-flavors.json"))
 	}
@@ -46,16 +76,22 @@ func newShimEngine(interactive bool) *shim.Engine {
 
 // RunToolShim serves foo started as foo-tool-<name>: the external plugin
 // protocol, run through the same spec validation and authorization as
-// in-process calls. main calls it before building the command tree.
+// in-process calls. Nobody can be asked for approval here, so a call
+// that needs it is denied. main calls it before building the command
+// tree.
 func RunToolShim(ctx context.Context, name, v string, args []string) int {
+	engine := newShimEngine()
 	m := &shim.MultiCall{
 		Name:    name,
 		Version: v,
 		Catalog: shim.Load(shim.DefaultLoadOptions()),
-		Engine:  newShimEngine(false),
-		Stdin:   os.Stdin,
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		Engine:  engine,
+		Authorizer: func() (gate.Authorizer, error) {
+			return newShimAuthorizer(engine.Cwd, shimAccess{})
+		},
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
 	}
 	return m.Run(ctx, args)
 }
@@ -69,6 +105,9 @@ type toolSet struct {
 	shadowed []toolRow
 	// invalid are specs that won their name but failed to load.
 	invalid map[string]*shim.Invalid
+	// engine runs every shim tool of the set; its authorizer is
+	// attached once a run selects a shim tool.
+	engine *shim.Engine
 }
 
 // discoverTools assembles, in precedence order: foo's Go built-ins,
@@ -92,14 +131,14 @@ func discoverTools(names []string, warn io.Writer) (*toolSet, error) {
 			_, _ = fmt.Fprintf(warn, "[foo] warning: skipping %v\n", inv)
 		}
 	}
-	engine := newShimEngine(true)
+	ts.engine = newShimEngine()
 	for _, l := range cat.Specs {
 		if listing {
 			for _, w := range l.Warnings {
 				_, _ = fmt.Fprintf(warn, "[foo] warning: tool spec %s (%s): %s\n", l.Spec.Name, l.Source, w)
 			}
 		}
-		t := shim.NewTool(engine, l)
+		t := shim.NewTool(ts.engine, l)
 		if ts.registry.Register(t) != nil {
 			ts.shadow(t, "a built-in tool")
 		}

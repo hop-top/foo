@@ -24,6 +24,7 @@ import (
 	"hop.top/foo/internal/suggest"
 	"hop.top/foo/internal/tool"
 	"hop.top/foo/internal/tool/builtin"
+	"hop.top/foo/internal/tool/shim"
 	"hop.top/foo/internal/ui"
 	"hop.top/foo/internal/workspace"
 	extdiscover "hop.top/kit/go/ai/ext/discover"
@@ -392,7 +393,8 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 	// Resolve -T first so an unknown tool name fails before stdin is
 	// read or any client is built. The dispatcher below reuses this
 	// registry rather than scanning $PATH again.
-	registry, err := selectedTools(cmd.ErrOrStderr())
+	prompter := newToolPrompter(cmd)
+	registry, err := selectedTools(cmd.ErrOrStderr(), prompter)
 	if err != nil {
 		return err
 	}
@@ -447,12 +449,7 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 	recordMessage(cmd.Context(), "user", prompt)
 
 	if len(toolNames) > 0 {
-		dispatcher := tool.NewDispatcher(client, registry, tool.DispatchConfig{
-			ChainLimit:  chainLimit,
-			Debug:       toolsDebug,
-			DebugWriter: cmd.ErrOrStderr(),
-			Approve:     approvalFunc(cmd),
-		})
+		dispatcher := tool.NewDispatcher(client, registry, toolDispatchConfig(cmd, prompter))
 		resp, err := dispatcher.Run(cmd.Context(), fullPrompt)
 		if err != nil {
 			return err
@@ -826,31 +823,65 @@ the upgrade in-place when one is available. Local binary mutation.`,
 // without the arguments it declared. The skip is reported on warn when
 // listing everything, or when names asks for that tool; an unselected
 // broken plugin stays quiet.
-func buildRegistry(names []string, warn io.Writer) (*tool.Registry, error) {
+//
+// When names select a shim tool, its path gate is built here, once per
+// run, with access: a broken scope.yaml or tool-policy.yaml fails the
+// run before any prompt is read or model called.
+func buildRegistry(names []string, warn io.Writer, access shimAccess) (*tool.Registry, error) {
 	ts, err := discoverTools(names, warn)
 	if err != nil {
 		return nil, err
 	}
-	if len(names) > 0 {
-		selected, err := ts.registry.Select(names)
-		if err != nil {
-			return nil, enrichUnknownTools(err, ts.invalid)
-		}
-		return selected, nil
+	if len(names) == 0 {
+		return ts.registry, nil
 	}
-	return ts.registry, nil
+	selected, err := ts.registry.Select(names)
+	if err != nil {
+		return nil, enrichUnknownTools(err, ts.invalid)
+	}
+	for _, t := range selected.List() {
+		if _, ok := t.(*shim.Tool); ok {
+			auth, err := newShimAuthorizer(ts.engine.Cwd, access)
+			if err != nil {
+				return nil, err
+			}
+			ts.engine.Authorizer = auth
+			break
+		}
+	}
+	return selected, nil
 }
 
-// openApprovalTerminal is where --tools-approve reads answers from:
+// openApprovalTerminal is where tool approval answers are read from:
 // the controlling terminal, never stdin, which carries prompt data.
 // Tests swap it for an in-memory terminal.
 var openApprovalTerminal = tool.OpenTTY
 
-func approvalFunc(cmd *cobra.Command) tool.ApproveFunc {
+// newToolPrompter is the one approval prompter of a run. Shim tools
+// ask through it from their gate, other tools through the dispatcher
+// (--tools-approve); sharing it keeps answers typed ahead in one
+// reader.
+func newToolPrompter(cmd *cobra.Command) *tool.Prompter {
+	return tool.NewPrompter(openApprovalTerminal, cmd.ErrOrStderr())
+}
+
+// approvalFunc is the dispatcher's --tools-approve question, nil when
+// the flag is off.
+func approvalFunc(p *tool.Prompter) tool.ApproveFunc {
 	if !toolsApprove {
 		return nil
 	}
-	return tool.NewPrompter(openApprovalTerminal, cmd.ErrOrStderr()).Approve
+	return p.Approve
+}
+
+// toolDispatchConfig is the -T loop's configuration for a run.
+func toolDispatchConfig(cmd *cobra.Command, p *tool.Prompter) tool.DispatchConfig {
+	return tool.DispatchConfig{
+		ChainLimit:  chainLimit,
+		Debug:       toolsDebug,
+		DebugWriter: cmd.ErrOrStderr(),
+		Approve:     approvalFunc(p),
+	}
 }
 
 func assembleSystemPrompt(ctx context.Context) (string, error) {

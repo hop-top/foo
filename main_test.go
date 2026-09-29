@@ -64,7 +64,7 @@ func run(t *testing.T, env []string, stdin string, bin string, args ...string) (
 // TestMultiCall_LinkDispatchesOnArgv0 drives foo through a
 // foo-tool-wc symlink, the way another host would: --ext-info returns
 // the spec payload, and a request gets the protocol envelope — here the
-// fail-closed denial, since path scope is not wired to shims yet.
+// denial for a missing scope.yaml, which grants no path.
 func TestMultiCall_LinkDispatchesOnArgv0(t *testing.T) {
 	foo := buildFoo(t)
 	linkDir := t.TempDir()
@@ -113,8 +113,8 @@ func TestMultiCall_LinkDispatchesOnArgv0(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("response is not JSON (%v): %q", err, out)
 	}
-	if resp.Result != nil || resp.Detail.Kind != "denied" || !strings.Contains(resp.Error, "path scope not configured yet") {
-		t.Errorf("response = %s; want the fail-closed denial", out)
+	if resp.Result != nil || resp.Detail.Kind != "denied" || !strings.Contains(resp.Error, "scope.yaml does not exist") {
+		t.Errorf("response = %s; want the no-scope denial", out)
 	}
 
 	// A link naming no spec is not foo's CLI either.

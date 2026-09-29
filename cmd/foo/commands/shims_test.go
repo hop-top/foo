@@ -2,7 +2,6 @@ package commands
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"testing"
 
 	"hop.top/foo/internal/tool"
-	"hop.top/kit/go/ai/llm"
 	"hop.top/kit/go/console/output"
 )
 
@@ -79,7 +77,7 @@ func TestToolList_PathRivalShadowed(t *testing.T) {
 		t.Errorf("--ext-info ran %d times; want 1 (demo only, never the shadowed rival)", got)
 	}
 
-	reg, err := buildRegistry([]string{"wc"}, &bytes.Buffer{})
+	reg, err := buildRegistry([]string{"wc"}, &bytes.Buffer{}, shimAccess{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,47 +151,6 @@ func TestSelectedTool_InvalidUserSpecNotFound(t *testing.T) {
 	}
 	if _, listed := toolRowsByName(t, stdout)["wc"]; listed || !strings.Contains(stderr, "wc") {
 		t.Errorf("list: wc listed=%v stderr=%q; want skipped with warning", listed, stderr)
-	}
-}
-
-// shimClient calls wc once and records the tool message it gets back.
-type shimClient struct {
-	calls int
-	reply string
-}
-
-func (c *shimClient) CallWithTools(_ context.Context, msgs []llm.Message, _ []llm.ToolDef) (llm.ToolResponse, error) {
-	c.calls++
-	if c.calls == 1 {
-		return llm.ToolResponse{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "wc", Arguments: json.RawMessage(`{"path":["/etc/hosts"]}`)}}}, nil
-	}
-	c.reply = msgs[len(msgs)-1].Content
-	return llm.ToolResponse{Content: "done"}, nil
-}
-
-// Until path scope is wired, the in-process engine fails closed and
-// the model gets a structured denial, not a flattened string.
-func TestShimTool_FailsClosedInProcess(t *testing.T) {
-	newToolTestEnv(t)
-	reg, err := buildRegistry([]string{"wc"}, &bytes.Buffer{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &shimClient{}
-	if _, err := tool.NewDispatcher(client, reg, tool.DispatchConfig{}).Run(context.Background(), "count"); err != nil {
-		t.Fatal(err)
-	}
-	var msg struct {
-		Error struct {
-			Kind    string `json:"kind"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(client.reply), &msg); err != nil {
-		t.Fatalf("tool message %q is not the structured error: %v", client.reply, err)
-	}
-	if msg.Error.Kind != "denied" || msg.Error.Message != "path scope not configured yet" {
-		t.Errorf("tool message = %s", client.reply)
 	}
 }
 

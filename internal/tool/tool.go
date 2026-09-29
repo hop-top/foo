@@ -19,3 +19,13 @@ type Tool interface {
 	// Execute receives validated args and returns a JSON result.
 	Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error)
 }
+
+// SelfApproving is implemented by tools that ask for approval inside
+// their own Execute, as part of deciding whether a call may run (shim
+// tools: the path gate merges scope, side-effect policy and
+// --tools-approve into one question). The dispatcher does not ask
+// again for a tool whose ApprovesItself reports true, so the user gets
+// one question per call.
+type SelfApproving interface {
+	ApprovesItself() bool
+}
