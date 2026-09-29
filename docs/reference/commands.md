@@ -296,6 +296,31 @@ foo -T foo_tme "what time is it?"
 # NOT_FOUND: unknown tool "foo_tme"; did you mean "foo_time"? Available tools: foo_time, foo_version (run `foo tool list` for details)
 ```
 
+### Read tools
+
+Built-in shim tools over the OS commands. Every path argument is
+resolved to its canonical physical path, checked for `read` against
+the path scope, and passed after a literal `--`; there is no globbing
+or `$VAR` expansion. Flags that recurse where foo cannot filter,
+follow links out of the checked tree, execute, write, take a path in
+an option value, or never terminate cannot be expressed. BSD, GNU and
+busybox binaries are all supported; the flavor is detected from the
+pinned binary.
+
+| Tool | Parameters | Recursion | Not offered |
+|------|------------|-----------|-------------|
+| `ls` | `path` (default `.`), `long`, `all`, `sort` (`name`/`time`/`size`), `reverse`, `directory` | none; walk trees with `find` | `-R`, `-L`, `-H`, color |
+| `cat` | `path` (files, max 16), `number` | none | stdin (`-` is a file name) |
+| `head` | `path` (files), `lines` (1..100000, default 10) or `bytes` (1..1 MiB) | none | — |
+| `tail` | `path` (files), `lines` (1..100000, default 10) or `bytes` (1..1 MiB) | none | `-f`, `-F` (never terminate) |
+| `wc` | `path` (files), `lines`, `words`, `bytes`, `chars` | none | `--files0-from` |
+| `stat` | `path` | none | a format string: the output format is fixed per flavor; `-L` (paths already resolved) |
+| `find` | `path` (default `.`), `maxdepth`/`mindepth` (0..64), `type` (`f`/`d`/`l`), `name`/`iname` (globs), `mtime_days` (-3650..3650) | `find -P` walks; foo drops every output path outside the scope and reports the count as `filtered` | `-exec`, `-execdir`, `-ok`, `-delete`, `-fprint*`, `-fls`, `-printf`, `-ls`, `-L`, `-H`, `-follow`, `-newer`, `-regex` |
+| `grep` | `pattern` (always the argument of `-e`), `path`, `recursive`, `ignore_case`, `fixed`, `extended`, `word`, `invert`, `count`, `files_only`, `line_number` (default true), `max_count` (1..10000), `context` (0..20) | with `recursive=true` foo walks the tree without following links and passes grep only the permitted regular files; the rest are counted as `filtered`. Exit 1 (no match) is ok | `-r`, `-R`, `-f`, `--include`, `--exclude-from`, `-P` |
+
+`ls` lists the names of every entry in a permitted directory, even
+entries the scope denies reading; `find` leaves them out.
+
 ## Kit conformance annotations
 
 Each leaf carries side-effect, idempotency, and verb annotations
