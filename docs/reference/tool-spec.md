@@ -85,8 +85,8 @@ takes no `argv`; place it with `{name}` after `--`.
 | `op_when` | | `{when: {…}, op: […]}`: use a narrower op when `when` matches. Dropping `write` needs a `read` side effect under the same condition (sed `dry_run`) |
 | `repeated` | `false` | The model passes a JSON array of paths |
 | `max_items` | `64` | With `repeated`: 1..256 |
-| `must_exist` | `false` | Missing path → `not_found` |
-| `kind` | `any` | `file` or `dir`: on a non-recursive call, an existing path of the other kind is refused |
+| `must_exist` | `false` | Missing path → `not_found`, only once the scope grants the path (or the user approved it); outside the grant it is `denied` like any other path |
+| `kind` | `any` | `file` or `dir`: on a non-recursive call, an existing path of the other kind is refused, after the scope check |
 | `target` | `follow` | `follow`: act on what a final symlink points to. `dirent`: act on the entry itself (the link, never its target); the parent directory is checked for `write` too, and a symlink's target for `op` |
 | `into_dir` | `false` | An existing directory value receives each source (the path params declared before it) as `dir/<base>`, checked there. Several sources need an existing directory |
 | `recursive` / `recursive_when` | | The path is a tree: always (`recursive: true`) or when `{param: value}` matches. Exclusive |
