@@ -6,12 +6,18 @@ import (
 	"os"
 
 	"hop.top/foo/cmd/foo/commands"
+	"hop.top/foo/internal/tool/shim"
 	"hop.top/kit/go/console/output"
 )
 
 var version = "dev"
 
 func main() {
+	// Started through a foo-tool-<name> link: serve that tool over the
+	// plugin protocol, before any command tree or plugin scan exists.
+	if name, ok := shim.MultiCallName(os.Args[0]); ok {
+		os.Exit(commands.RunToolShim(context.Background(), name, version, os.Args[1:]))
+	}
 	root := commands.New(version)
 	if err := root.Execute(context.Background()); err != nil {
 		os.Exit(exitCode(err))
