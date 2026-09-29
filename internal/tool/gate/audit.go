@@ -13,19 +13,6 @@ import (
 	"hop.top/kit/go/core/scope"
 )
 
-// verdict is a scope decision after the policy mode is applied.
-type verdict int
-
-const (
-	allow verdict = iota
-	warn          // denied or uncovered, but warn mode lets it run
-	ask           // denied or uncovered, prompt mode asks
-	deny
-)
-
-// uncoveredReason explains a path no scope rule covers.
-const uncoveredReason = "no scope rule covers this path"
-
 // maxOffenders is how many denied tree entries an error lists.
 const maxOffenders = 5
 
@@ -49,44 +36,9 @@ type audit struct {
 	denyErr *Error
 }
 
-// verdictOf classifies (path, op): a deny rule wins, then an allow
-// rule. A path no rule covers is treated like a denied one: denied in
-// strict mode, asked about in prompt mode, logged in warn mode. kit
-// allows such paths outside strict mode; foo does not let a gap in the
-// rules run silently.
-func (a *audit) verdictOf(path string, op scope.Op) (verdict, string) {
-	pol := a.g.scope.Policy
-	mode := pol.Mode()
-	dec, err := pol.Check(scope.Path(path), op)
-	if err != nil {
-		if mode == scope.Strict {
-			return deny, "cannot be checked: " + err.Error()
-		}
-		return warn, "cannot be checked: " + err.Error()
-	}
-	switch dec {
-	case scope.Allowed:
-		return allow, ""
-	case scope.Denied:
-		reason := fmt.Sprintf("matches a scope deny rule for %s", opName(op))
-		switch mode {
-		case scope.Warn:
-			return warn, reason
-		case scope.Prompt:
-			return ask, reason
-		default:
-			return deny, reason
-		}
-	default:
-		switch mode {
-		case scope.Warn:
-			return warn, uncoveredReason
-		case scope.Prompt:
-			return ask, uncoveredReason
-		default:
-			return deny, fmt.Sprintf("no scope allow rule covers %s here", opName(op))
-		}
-	}
+// verdictOf classifies (path, op) the way Scope.Classify does.
+func (a *audit) verdictOf(path string, op scope.Op) (Verdict, string) {
+	return a.g.scope.Classify(path, op)
 }
 
 // check records the verdict of every op bit of (path, op).
@@ -95,11 +47,11 @@ func (a *audit) check(param, path string, op scope.Op) {
 		v, reason := a.verdictOf(path, bit)
 		f := finding{param: param, path: path, op: bit, reason: reason}
 		switch v {
-		case deny:
+		case VerdictDeny:
 			a.denys = append(a.denys, f)
-		case ask:
+		case VerdictPrompt:
 			a.asks = append(a.asks, f)
-		case warn:
+		case VerdictWarn:
 			a.warns = append(a.warns, f)
 		}
 	}
@@ -113,8 +65,8 @@ func (a *audit) passes(param, path string, op scope.Op) bool {
 	for _, bit := range opBits(op) {
 		v, reason := a.verdictOf(path, bit)
 		switch v {
-		case allow:
-		case warn:
+		case VerdictAllow:
+		case VerdictWarn:
 			warns = append(warns, finding{param: param, path: path, op: bit, reason: reason})
 		default:
 			return false
@@ -305,11 +257,11 @@ func (a *audit) allOrNothing(st argState) error {
 		record := func(path string) {
 			for _, bit := range opBits(arg.Op) {
 				switch verdict, reason := a.verdictOf(path, bit); verdict {
-				case deny:
+				case VerdictDeny:
 					offenders = append(offenders, finding{param: arg.Param, path: path, op: bit, reason: reason})
-				case ask:
+				case VerdictPrompt:
 					a.asks = append(a.asks, finding{param: arg.Param, path: path, op: bit, reason: reason})
-				case warn:
+				case VerdictWarn:
 					a.warns = append(a.warns, finding{param: arg.Param, path: path, op: bit, reason: reason})
 				}
 			}
