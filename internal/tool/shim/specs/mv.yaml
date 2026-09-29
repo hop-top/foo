@@ -1,5 +1,6 @@
 # mv: move or rename. The source entry is removed from its directory,
-# so it needs write, not read. Never replaces an existing destination
+# so it needs write; it needs read too, since a move across filesystems
+# copies the content first. Never replaces an existing destination
 # unless overwrite=true (then destructive).
 spec: 1
 name: mv
@@ -23,7 +24,7 @@ params:
   - name: src
     type: path
     description: Files or directories to move.
-    op: [write]
+    op: [read, write]
     target: dirent
     repeated: true
     max_items: 64

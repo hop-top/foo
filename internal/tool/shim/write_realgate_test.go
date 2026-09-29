@@ -39,6 +39,8 @@ allow:
   - "{root}/home/**"
   - path: "{root}/r/**"
     ops: [read]
+  - path: "{root}/wo/**"
+    ops: [write]
 `, "{root}", b.root))
 	sc, err := gate.LoadScope("foo")
 	if err != nil {
@@ -93,6 +95,16 @@ func TestRealGate_WriteSpecsEndToEnd(t *testing.T) {
 	_, err := call(t, b.eng, wTool(t, "mv"), `{"src":["`+b.p("r/ro")+`"],"dst":"ro"}`)
 	if ge := wantKind(t, err, gate.KindDenied); ge.Param != "src" || ge.Op != scope.Write {
 		t.Errorf("mv refusal %+v", ge)
+	}
+
+	// mv from a write-only grant: denied on src read.
+	b.file(t, "wo/a", "W")
+	_, err = call(t, b.eng, wTool(t, "mv"), `{"src":["`+b.p("wo/a")+`"],"dst":"wa"}`)
+	if ge := wantKind(t, err, gate.KindDenied); ge.Param != "src" || ge.Op != scope.Read {
+		t.Errorf("mv write-only refusal %+v", ge)
+	}
+	if !wExists(b.p("wo/a")) || wExists(b.p("w/wa")) {
+		t.Fatal("denied mv changed the tree")
 	}
 
 	// cp -R of a tree holding a secret: all-or-nothing denies it.

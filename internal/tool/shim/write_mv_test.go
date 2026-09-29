@@ -2,6 +2,7 @@ package shim
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"hop.top/foo/internal/tool/gate"
@@ -25,8 +26,8 @@ func TestMV_MovesThroughCanonicalPaths(t *testing.T) {
 		t.Errorf("side effect %q; want write", req.SideEffect)
 	}
 	src, dst := req.Paths[0], req.Paths[1]
-	if src.Op != scope.Write || src.Target != gate.Dirent || !src.MustExist || src.Recursion != gate.AllOrNothing {
-		t.Errorf("src request %+v; want write dirent must-exist all-or-nothing", src)
+	if src.Op != scope.Read|scope.Write || src.Target != gate.Dirent || !src.MustExist || src.Recursion != gate.AllOrNothing {
+		t.Errorf("src request %+v; want read|write dirent must-exist all-or-nothing", src)
 	}
 	if dst.Op != scope.Write || dst.Target != gate.Dirent || !dst.IntoDir || dst.Recursion != gate.AllOrNothing {
 		t.Errorf("dst request %+v", dst)
@@ -61,6 +62,36 @@ func TestMV_SourceNeedsWrite(t *testing.T) {
 	}
 	if !wExists(b.p("w/locked")) || wExists(b.p("w/moved")) {
 		t.Fatal("mv moved an entry it may not write")
+	}
+}
+
+// mv reads the source too (across filesystems it copies the content
+// before removing it): a write-only grant on it is not enough.
+func TestMV_SourceNeedsRead(t *testing.T) {
+	b := newWriteBox(t)
+	b.file(t, "wo/a", "A")
+	b.dir(t, "wo/t")
+	b.file(t, "w/t/x", "X")
+	b.gate.allow = append(b.gate.allow, scopeRule{root: b.p("wo"), ops: scope.Write})
+	l := wTool(t, "mv")
+
+	_, err := call(t, b.eng, l, `{"src":["`+b.p("wo/a")+`"],"dst":"a"}`)
+	ge := wantKind(t, err, gate.KindDenied)
+	if ge.Param != "src" || ge.Path != b.p("wo/a") || ge.Op != scope.Read {
+		t.Errorf("denied %s %s op %v; want src wo/a read", ge.Param, ge.Path, ge.Op)
+	}
+	if !wExists(b.p("wo/a")) || wExists(b.p("w/a")) {
+		t.Fatal("denied move changed the tree")
+	}
+
+	// A tree with one write-only entry: nothing moves.
+	b.gate.deny = append(b.gate.deny, scopeRule{root: b.p("w/t/x"), ops: scope.Read})
+	_, err = call(t, b.eng, l, `{"src":["t"],"dst":"u"}`)
+	if ge := wantKind(t, err, gate.KindDenied); ge.Param != "src" || !strings.Contains(ge.Message, b.p("w/t/x")) {
+		t.Errorf("tree refusal %+v; want src naming w/t/x", ge)
+	}
+	if !wExists(b.p("w/t/x")) || wExists(b.p("w/u")) {
+		t.Fatal("denied tree move changed the tree")
 	}
 }
 
