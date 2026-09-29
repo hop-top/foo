@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -79,8 +80,17 @@ func TestBuiltinSpecs_AllLoad(t *testing.T) {
 			t.Errorf("%s source = %+v", l.Spec.Name, l.Source)
 		}
 	}
-	if strings.Join(names, ",") != "wc" {
-		t.Errorf("builtin specs = %v; want exactly [wc]", names)
+	// Only the commands the track ships (§9); the read set all present.
+	shipped := []string{"cat", "cp", "find", "grep", "head", "ls", "mkdir", "mv", "rm", "sed", "stat", "tail", "wc"}
+	for _, n := range names {
+		if !slices.Contains(shipped, n) {
+			t.Errorf("unexpected builtin spec %q", n)
+		}
+	}
+	for _, n := range []string{"cat", "find", "grep", "head", "ls", "stat", "tail", "wc"} {
+		if !slices.Contains(names, n) {
+			t.Errorf("builtin specs %v lack %s", names, n)
+		}
 	}
 }
 

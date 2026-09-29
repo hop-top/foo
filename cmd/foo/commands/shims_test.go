@@ -157,6 +157,7 @@ func TestSelectedTool_InvalidUserSpecNotFound(t *testing.T) {
 func TestToolInstall_LinksRoundTrip(t *testing.T) {
 	env := newToolTestEnv(t)
 	dir := filepath.Join(t.TempDir(), "links")
+	installed := 0
 	for _, args := range [][]string{
 		{"tool", "install", "--dir", dir, "--format=json"},
 		{"tool", "install", "--format=json", "--dir=" + dir},
@@ -169,9 +170,17 @@ func TestToolInstall_LinksRoundTrip(t *testing.T) {
 		if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
 			t.Fatalf("%v: %q", args, stdout)
 		}
-		if len(rows) != 1 || rows[0]["name"] != "wc" || (rows[0]["action"] != "created" && rows[0]["action"] != "unchanged") {
-			t.Errorf("%v rows = %v", args, rows)
+		names := map[string]bool{}
+		for _, r := range rows {
+			names[r["name"]] = true
+			if r["action"] != "created" && r["action"] != "unchanged" {
+				t.Errorf("%v row = %v", args, r)
+			}
 		}
+		if !names["wc"] || !names["grep"] {
+			t.Errorf("%v rows = %v; want every builtin spec, wc and grep among them", args, rows)
+		}
+		installed = len(rows)
 	}
 	self, _ := os.Executable()
 	if dest, err := os.Readlink(filepath.Join(dir, "foo-tool-wc")); err != nil || dest != self {
@@ -200,8 +209,13 @@ func TestToolInstall_LinksRoundTrip(t *testing.T) {
 
 	stdout, _, _, err = runFooArgs(t, env, "tool", "uninstall", "--dir", dir, "--format=json")
 	var removed []map[string]string
-	if err != nil || json.Unmarshal([]byte(stdout), &removed) != nil || len(removed) != 1 || removed[0]["action"] != "removed" {
-		t.Fatalf("uninstall: %v %s", err, stdout)
+	if err != nil || json.Unmarshal([]byte(stdout), &removed) != nil || len(removed) != installed {
+		t.Fatalf("uninstall: %v %s; want %d links removed", err, stdout, installed)
+	}
+	for _, r := range removed {
+		if r["action"] != "removed" {
+			t.Errorf("uninstall row %v", r)
+		}
 	}
 	if _, err := os.Lstat(filepath.Join(dir, "foo-tool-wc")); !os.IsNotExist(err) {
 		t.Error("link survived uninstall")

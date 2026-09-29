@@ -1,0 +1,34 @@
+# stat: file metadata. Read-only, path-gated. The format is fixed per
+# flavor (BSD -f and GNU/busybox -c take different directives); the
+# model never supplies one. Paths resolve through symlinks before the
+# call, so -L is moot and not offered.
+spec: 1
+name: stat
+description: >-
+  Show file metadata, one line per path: type, size in bytes, octal
+  mode, permissions, hard links, owner, group, modification time and
+  the path.
+command:
+  bin: [/usr/bin/stat, /bin/stat]
+  variants:
+    bsd:
+      prefix: ["-f", "type=%HT size=%z mode=%Mp%Lp perms=%Sp links=%l owner=%Su group=%Sg mtime=%Sm path=%N", "-t", "%Y-%m-%d %H:%M:%S %z"]
+    gnu:
+      prefix: ["-c", "type=%F size=%s mode=%a perms=%A links=%h owner=%U group=%G mtime=%y path=%n"]
+    busybox:
+      prefix: ["-c", "type=%F size=%s mode=%a perms=%A links=%h owner=%U group=%G mtime=%y path=%n"]
+side_effect: read
+network: none
+timeout: 30s
+ok_exit_codes: [0]
+output: text
+params:
+  - name: path
+    type: path
+    description: Files or directories to describe.
+    op: [read]
+    repeated: true
+    max_items: 64
+    must_exist: true
+    kind: any
+argv: ["--", "{path}"]
