@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"hop.top/foo/internal/tool/gate"
+	"hop.top/kit/go/core/scope"
 )
 
 // values holds a call's validated arguments by param name, defaults
@@ -269,6 +270,14 @@ func (s *Spec) effectiveSideEffect(vals values) string {
 		}
 	}
 	return s.SideEffect
+}
+
+// effectiveOp is p's op on this call: op_when's when it matches.
+func (s *Spec) effectiveOp(p *Param, vals values) scope.Op {
+	if p.OpWhen != nil && s.matches(p.OpWhen.When, vals) {
+		return p.OpWhen.op
+	}
+	return p.op
 }
 
 // recursive reports whether p recurses on this call.

@@ -134,6 +134,19 @@ func TestRealGate_WriteSpecsEndToEnd(t *testing.T) {
 		t.Errorf("sed result %q", wRead(t, f))
 	}
 
+	// sed dry_run only reads: it previews a read-only file, no prompt.
+	ask.asked = nil
+	ro := b.file(t, "r/s.txt", "R\n")
+	res = mustCall(t, b.eng, wTool(t, "sed"), `{"path":["`+ro+`"],"find":"R","replace":"&1","dry_run":true}`)
+	wWantOK(t, res)
+	if got := stdout(res); got != "&1\n" || len(ask.asked) != 0 {
+		t.Errorf("sed preview on read-only grant: stdout %q prompts %q", got, ask.asked)
+	}
+	_, err = call(t, b.eng, wTool(t, "sed"), `{"path":["`+ro+`"],"find":"R","replace":"x"}`)
+	if ge := wantKind(t, err, gate.KindDenied); ge.Op != scope.Write {
+		t.Errorf("sed in place on read-only grant: %+v", ge)
+	}
+
 	// rm of a link: the real dirent resolution removes the link only.
 	b.link(t, filepath.Join(b.p("w"), "a"), "w/ln")
 	res = mustCall(t, b.eng, wTool(t, "rm"), `{"path":["ln"]}`)

@@ -115,6 +115,16 @@ type Escalation struct {
 	SideEffect string         `yaml:"side_effect" json:"side_effect"`
 }
 
+// OpWhen replaces a path param's op on calls where every `when` value
+// matches. It may only narrow op, and dropping write needs a read side
+// effect under the same condition (sed dry_run only reads).
+type OpWhen struct {
+	When map[string]any `yaml:"when" json:"when"`
+	Op   []string       `yaml:"op" json:"op"`
+
+	op scope.Op
+}
+
 // Script declares an argument foo generates from typed params. The model
 // never supplies a script; it supplies the params, and foo's generator
 // for Kind renders them into one argv token under the {script}
@@ -149,6 +159,7 @@ type Param struct {
 
 	// path
 	Op            []string       `yaml:"op"`
+	OpWhen        *OpWhen        `yaml:"op_when"`
 	Repeated      bool           `yaml:"repeated"`
 	MaxItems      int            `yaml:"max_items"`
 	MustExist     bool           `yaml:"must_exist"`

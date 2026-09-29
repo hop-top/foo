@@ -59,6 +59,7 @@ type FooTool struct {
 // PathAnnots describes one path param to a host.
 type PathAnnots struct {
 	Op            []string       `json:"op"`
+	OpWhen        *OpWhen        `json:"op_when,omitempty"`
 	Target        string         `json:"target"`
 	IntoDir       bool           `json:"into_dir,omitempty"`
 	MustExist     bool           `json:"must_exist,omitempty"`
@@ -78,7 +79,7 @@ func NewExtInfo(l *Loaded, v *Variant, version string) ExtInfo {
 			continue
 		}
 		paths[p.Name] = PathAnnots{
-			Op: p.Op, Target: p.Target, IntoDir: p.IntoDir, MustExist: p.MustExist,
+			Op: p.Op, OpWhen: p.OpWhen, Target: p.Target, IntoDir: p.IntoDir, MustExist: p.MustExist,
 			Kind: p.Kind, Recursive: p.Recursive, RecursiveWhen: p.RecursiveWhen, Recursion: p.Recursion,
 			ClobberWhen: p.ClobberWhen,
 		}

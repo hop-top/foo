@@ -174,7 +174,7 @@ func (e *Engine) request(l *Loaded, v *Variant, vals values) (gate.Request, []ga
 		pa := gate.PathArg{
 			Param:     p.Name,
 			Values:    list,
-			Op:        p.op,
+			Op:        s.effectiveOp(p, vals),
 			IntoDir:   p.IntoDir,
 			MustExist: p.MustExist,
 			Parents:   s.parents(p, vals),
@@ -286,14 +286,15 @@ func (s *Spec) checkClobber(vals values, canonical map[string][]string) error {
 			continue
 		}
 		allowed := s.matches(p.ClobberWhen, vals)
+		op := s.effectiveOp(p, vals)
 		for _, c := range canonical[p.Name] {
 			fi, err := os.Lstat(c)
 			switch {
 			case err != nil:
 			case fi.IsDir():
-				return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: p.op, Message: "an existing directory is in the way"}
+				return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: op, Message: "an existing directory is in the way"}
 			case !allowed:
-				return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: p.op, Message: "exists; " + whenText(p.ClobberWhen) + " replaces it"}
+				return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: op, Message: "exists; " + whenText(p.ClobberWhen) + " replaces it"}
 			}
 		}
 	}
@@ -321,10 +322,10 @@ func checkKind(p *Param, pa gate.PathArg, canon []string) error {
 			continue
 		}
 		if p.Kind == "file" && fi.IsDir() {
-			return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: p.op, Message: "is a directory; want a file"}
+			return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: pa.Op, Message: "is a directory; want a file"}
 		}
 		if p.Kind == "dir" && !fi.IsDir() {
-			return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: p.op, Message: "is not a directory"}
+			return &gate.Error{Kind: gate.KindInvalidArgs, Param: p.Name, Path: c, Op: pa.Op, Message: "is not a directory"}
 		}
 	}
 	return nil
