@@ -34,6 +34,11 @@ func Canonical(cwd, raw string) (string, error) {
 	return r.path, nil
 }
 
+// Anchor makes raw absolute the way Canonical reads it ("~" and "~/..."
+// are the home directory, other relative paths are taken against cwd)
+// without resolving or cleaning it.
+func Anchor(cwd, raw string) (string, error) { return anchor(cwd, raw) }
+
 // resolved is a physically resolved path.
 type resolved struct {
 	path string

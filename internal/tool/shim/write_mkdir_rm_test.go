@@ -158,15 +158,24 @@ func TestRM_MissingAndOutOfScope(t *testing.T) {
 	}
 }
 
-// The root of the filesystem and the grant root itself are refused by
-// the parent-write rule. A recorder stands in for rm, so even a gate
-// bug could not remove anything outside the temp tree.
+// The root of the filesystem is refused by the root guard before the
+// gate is asked; the grant root itself by the parent-write rule. A
+// recorder stands in for rm, so even a gate bug could not remove
+// anything outside the temp tree.
 func TestRM_RootAndGrantRootRefused(t *testing.T) {
 	b := newWriteBox(t)
 	rec := wArgvRecorder(t, b.p("out"), "rm", "rm: illegal option -- -")
 	l := wWithBin(wTool(t, "rm"), rec)
 
-	for _, p := range []string{"/", ".", b.p("w"), b.p("w/."), "..", "/.."} {
+	for _, p := range []string{"/", "/.."} {
+		calls := b.gate.calls
+		_, err := call(t, b.eng, l, `{"path":["`+p+`"],"recursive":true}`)
+		wantKind(t, err, gate.KindInvalidArgs)
+		if b.gate.calls != calls {
+			t.Errorf("rm %s reached the gate", p)
+		}
+	}
+	for _, p := range []string{".", b.p("w"), b.p("w/."), ".."} {
 		_, err := call(t, b.eng, l, `{"path":["`+p+`"],"recursive":true}`)
 		wantKind(t, err, gate.KindDenied)
 	}

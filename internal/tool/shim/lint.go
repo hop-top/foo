@@ -195,7 +195,7 @@ func (s *Spec) lintWhen(l *linter, where string, when map[string]any) {
 func (p *Param) lintNotPath(l *linter) {
 	if len(p.Op) > 0 || p.OpWhen != nil || p.Repeated || p.MaxItems != 0 || p.MustExist || p.Kind != "" ||
 		p.Target != "" || p.IntoDir || p.Recursive != nil || p.RecursiveWhen != nil ||
-		p.Recursion != "" || p.Parents != nil || p.ParentsWhen != nil || p.ClobberWhen != nil {
+		p.Recursion != "" || p.Parents != nil || p.ParentsWhen != nil || p.ClobberWhen != nil || p.ProtectRoots {
 		l.addf("param %q: path keys on a %s param", p.Name, p.Type)
 	}
 	if p.Type != TypeEnum && p.Values != nil {
@@ -273,6 +273,9 @@ func (p *Param) lintPath(l *linter, s *Spec) {
 	}
 	if p.ParentsWhen != nil {
 		s.lintWhen(l, "param "+p.Name+" parents_when", p.ParentsWhen)
+	}
+	if p.ProtectRoots && p.op&scope.Write == 0 {
+		l.addf("param %q: protect_roots needs op write", p.Name)
 	}
 	if p.ClobberWhen != nil {
 		if p.op&scope.Write == 0 {

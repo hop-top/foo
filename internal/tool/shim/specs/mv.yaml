@@ -1,7 +1,9 @@
 # mv: move or rename. The source entry is removed from its directory,
 # so it needs write; it needs read too, since a move across filesystems
 # copies the content first. Never replaces an existing destination
-# unless overwrite=true (then destructive).
+# unless overwrite=true (then destructive). /, $HOME and entries
+# directly under / are refused as a source or as where dst lands,
+# whatever the scope (protect_roots).
 spec: 1
 name: mv
 description: >-
@@ -9,7 +11,8 @@ description: >-
   be an existing directory; an existing directory dst receives each
   source under its own name. Never replaces an existing file unless
   overwrite=true, and never an existing directory. A link is moved as
-  the link itself.
+  the link itself. Never moves /, the home directory or an entry
+  directly under /, nor puts anything there.
 command:
   bin: [/bin/mv, /usr/bin/mv]
 side_effect: write
@@ -31,6 +34,7 @@ params:
     must_exist: true
     recursive: true
     recursion: all_or_nothing
+    protect_roots: true
   - name: dst
     type: path
     description: New path, or an existing directory to move into.
@@ -40,6 +44,7 @@ params:
     recursive: true
     recursion: all_or_nothing
     clobber_when: {overwrite: true}
+    protect_roots: true
   - name: overwrite
     type: bool
     description: Replace an existing destination file.

@@ -1,13 +1,15 @@
 # rm: remove directory entries. Destructive; a link is removed, never
 # its target; recursive removal is refused whole if any entry under the
-# tree is not writable.
+# tree is not writable. /, $HOME and entries directly under / are
+# refused whatever the scope (protect_roots).
 spec: 1
 name: rm
 description: >-
   Remove files, links or directories. A link is removed itself; its
   target is never touched. Directories need recursive=true (or dir=true
   when empty). Recursive removal is all or nothing: if any entry under
-  the tree is out of scope, nothing is removed.
+  the tree is out of scope, nothing is removed. Never removes /, the
+  home directory or an entry directly under /.
 command:
   bin: [/bin/rm, /usr/bin/rm]
   variants:
@@ -29,6 +31,7 @@ params:
     must_exist: true
     recursive_when: {recursive: true}
     recursion: all_or_nothing
+    protect_roots: true
   - name: recursive
     type: bool
     description: Remove directories and everything under them.

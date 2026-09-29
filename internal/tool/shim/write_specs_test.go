@@ -82,6 +82,8 @@ func TestLint_WriteSpecKeys(t *testing.T) {
 		{"sed", "      op: [read]\n", "      op: [read, write]\n", `op_when may only narrow op`},
 		// Dropping write while the call still has a write side effect.
 		{"sed", "    op_when:\n      when: {dry_run: true}\n", "    op_when:\n      when: {global: true}\n", `op_when drops write but the side effect is "destructive"`},
+		{"cp", "    recursion: all_or_nothing\n  - name: dst\n", "    recursion: all_or_nothing\n    protect_roots: true\n  - name: dst\n", `protect_roots needs op write`},
+		{"rm", "  - name: recursive\n    type: bool\n", "  - name: recursive\n    protect_roots: true\n    type: bool\n", `path keys on a bool param`},
 		{"sed", "  - name: find\n    type: string\n", "  - name: find\n    op_when: {when: {dry_run: true}, op: [read]}\n    type: string\n", `path keys on a string param`},
 	} {
 		t.Run(tc.tool+" "+tc.want, func(t *testing.T) {
