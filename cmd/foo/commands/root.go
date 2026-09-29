@@ -819,39 +819,26 @@ the upgrade in-place when one is available. Local binary mutation.`,
 	return cmd
 }
 
-// buildRegistry assembles foo's builtins plus every foo-tool-* binary
-// on $PATH, then narrows it to names when given. A binary whose
-// --ext-info declares unusable parameters is skipped: offered to the
-// model, it would be called without the arguments it declared. The
-// skip is reported on warn when listing everything, or when names
-// asks for that tool; an unselected broken plugin stays quiet.
+// buildRegistry assembles foo's builtins, its spec tools and every
+// foo-tool-* binary on $PATH (see discoverTools), then narrows it to
+// names when given. A binary whose --ext-info declares unusable
+// parameters is skipped: offered to the model, it would be called
+// without the arguments it declared. The skip is reported on warn when
+// listing everything, or when names asks for that tool; an unselected
+// broken plugin stays quiet.
 func buildRegistry(names []string, warn io.Writer) (*tool.Registry, error) {
-	registry := tool.NewRegistry()
-	_ = registry.Register(builtin.TimeTool{})
-	_ = registry.Register(builtin.VersionTool{})
-
-	scanner := &extdiscover.Scanner{Prefix: "foo-tool-"}
-	found, err := scanner.Scan()
+	ts, err := discoverTools(names, warn)
 	if err != nil {
 		return nil, err
 	}
-	for i := range found {
-		toolDef, err := tool.ExternalToolFromFound(&found[i])
-		if err != nil {
-			warnSkippedTool(warn, names, err)
-			continue
-		}
-		_ = registry.Register(toolDef)
-	}
-
 	if len(names) > 0 {
-		selected, err := registry.Select(names)
+		selected, err := ts.registry.Select(names)
 		if err != nil {
-			return nil, enrichUnknownTools(err)
+			return nil, enrichUnknownTools(err, ts.invalid)
 		}
 		return selected, nil
 	}
-	return registry, nil
+	return ts.registry, nil
 }
 
 // openApprovalTerminal is where --tools-approve reads answers from:

@@ -143,9 +143,13 @@ func (e *UnknownToolError) Error() string {
 // SourceBuiltin is the SourceOf value for tools compiled into foo.
 const SourceBuiltin = "builtin"
 
-// SourceOf reports where a tool comes from: the binary path for a tool
-// backed by an external executable, SourceBuiltin otherwise.
+// SourceOf reports where a tool comes from: what the tool says when it
+// knows (a spec tool: "builtin", "user:<path>", …), the binary path for
+// a tool backed by an external executable, SourceBuiltin otherwise.
 func SourceOf(t Tool) string {
+	if s, ok := t.(interface{ Source() string }); ok {
+		return s.Source()
+	}
 	if p, ok := t.(interface{ Path() string }); ok {
 		return p.Path()
 	}

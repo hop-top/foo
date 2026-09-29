@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -111,9 +112,14 @@ func (d *Dispatcher) Run(ctx context.Context, prompt string) (string, error) {
 				}
 			}
 
-			// Build the tool result message.
+			// Build the tool result message. An error that renders its
+			// own message (a shim refusal: kind, param, path, op) is
+			// sent as is, so the model sees why and stops retrying.
 			var content string
-			if execErr != nil {
+			var rendered messageError
+			if execErr != nil && errors.As(execErr, &rendered) {
+				content = string(rendered.ToolMessage())
+			} else if execErr != nil {
 				content = fmt.Sprintf(`{"error": %q}`, execErr.Error())
 			} else {
 				content = string(result)
@@ -129,6 +135,12 @@ func (d *Dispatcher) Run(ctx context.Context, prompt string) (string, error) {
 	return "", fmt.Errorf(
 		"tool dispatch: chain limit (%d) reached", d.cfg.chainLimit(),
 	)
+}
+
+// messageError is an error that renders its own tool message.
+type messageError interface {
+	error
+	ToolMessage() json.RawMessage
 }
 
 // executeTool looks up and runs a single tool call.
