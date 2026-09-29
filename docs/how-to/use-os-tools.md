@@ -129,8 +129,8 @@ or only `read` with `dry_run=true`.
 
 ### 3. Check the grant
 
-`foo scope check` resolves a path exactly as a tool call would and
-prints the verdict:
+`foo scope check` runs a path through the same checks as a tool call
+that reads it and prints the verdict, with the path it resolves to:
 
 ```
 $ cd ~/proj
@@ -284,7 +284,7 @@ A recursive `grep` or `find` never asks per file: in `strict` and
 |---------|-------|-----|
 | Every call `denied` with `no scope policy: … scope.yaml does not exist` | No `scope.yaml` where foo looks | Create the file the message names; `foo scope show` prints the path |
 | `denied` on a path you allowed | A symlink on the way resolves outside the rule, a `..` climbs through a directory outside it, or a relative path was taken from another directory | `foo scope check <path>` from the same directory shows the resolved path; grant that, or name the path without `..` |
-| `denied` on a path through a link into your grant (`foo scope check` says `allowed`) | The link sits in a directory the scope does not grant, and no rule names the path through it: `~/code` links to `/data/code`, the rule says `/data/code/**`, the call sends `~/code/x` | Write the rule the way paths are sent (`~/code/**`), or send the target path. `scope check` reports the resolved path only |
+| `denied` on a path through a link into your grant | The link sits in a directory the scope does not grant, and no rule names the path through it: `~/code` links to `/data/code`, the rule says `/data/code/**`, the call sends `~/code/x` | Write the rule the way paths are sent (`~/code/**`), or send the target path. `foo scope check ~/code/x` shows the refusal and the target |
 | `declined … cannot be asked: no terminal` | A write or destructive call, or `mode: prompt`, with no terminal | Run on a terminal, or auto-allow with `tool-policy.yaml` |
 | `rm`/`mkdir` denied inside a write grant | The entry's parent directory is not writable in the scope | Grant `dir/**` rather than `dir/sub/**`, or accept that the grant root itself cannot be removed |
 | Output shows `/private/tmp/…` for `/tmp/…` (macOS) | foo reports canonical paths; `/tmp` links to `/private/tmp` | Nothing to fix; rules written as `/tmp/**` still match, for paths sent as `/tmp/…` too. Refusals name such paths as sent |

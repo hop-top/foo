@@ -3,16 +3,18 @@
 // The subcommands are kit's (console/cli/scope), mounted over foo's
 // policy: gate.LoadScope, the same scope.yaml rules plus secret deny
 // list the tool gate enforces. show runs kit's body. check and test
-// keep kit's flags but report the gate's own verdict (gate.Scope.Classify)
-// instead of kit's raw decision: kit calls a path no rule covers
-// "unknown" and lets it through outside strict mode, where the gate
-// denies, asks or warns. Paths given to check/test are resolved the
-// way the gate resolves a tool's path argument (relative to the working
-// directory, symlinks and ".." physically) before the decision.
+// keep kit's flags but report the gate's own verdict instead of kit's
+// raw decision: kit calls a path no rule covers "unknown" and lets it
+// through outside strict mode, where the gate denies, asks or warns.
+// Each path goes through gate.Scope.CheckPath, the gate's resolution
+// and checks for one path argument, so check/test also refuse what a
+// tool call refuses on the value as sent (a ".." out of an ungranted
+// directory, a link there into the grant).
 
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -91,9 +93,15 @@ var scopeLong = map[string]string{
 	"show": `Print foo's effective scope policy: the mode and every allow and deny
 rule, including the built-in secret deny list.`,
 	"check": `Check one path against foo's scope policy for an operation (--op
-read, write or exec; default read). The path is resolved as a tool's
-path argument is: relative to the working directory, "~" to the home
-directory, symlinks and ".." physically.
+read, write or exec; default read). The path is judged as a tool call
+judges a path argument it reads (cat, ls): resolved relative to the
+working directory, "~" to the home directory, symlinks (the last one
+too) and ".." physically, with the same refusals. A ".." that climbs
+out of a directory no rule grants, and a path through a symlink in
+such a directory, are refused like a path outside the grant unless an
+allow rule names the path as typed. PATH shows where the path
+resolves. rm, mkdir and a cp or mv destination also need write on the
+parent directory: check it with --op write.
 
 ` + scopeVerdicts,
 	"test": `Check several paths against foo's scope policy for one operation, one
@@ -159,7 +167,7 @@ type scopeRow struct {
 	Reason   string `table:"REASON"   json:"reason,omitempty" yaml:"reason,omitempty"`
 }
 
-// runScopeVerdicts classifies each path as the gate does, prints one
+// runScopeVerdicts judges each path as the gate does, prints one
 // row per path (a single object for check) and returns the exit error
 // of the most restrictive verdict.
 func runScopeVerdicts(c *cobra.Command, sc gate.Scope, args []string, single bool) error {
@@ -176,12 +184,18 @@ func runScopeVerdicts(c *cobra.Command, sc gate.Scope, args []string, single boo
 	rows := make([]scopeRow, 0, len(args))
 	worst, count := gate.VerdictAllow, 0
 	for _, a := range args {
-		p, err := gate.Canonical(cwd, a)
+		pv, err := sc.CheckPath(cwd, a, op)
 		if err != nil {
-			return output.UsageError(err.Error())
+			// The value's own error: the call would fail on it.
+			msg := err.Error()
+			var ge *gate.Error
+			if errors.As(err, &ge) {
+				msg = ge.Message
+			}
+			return output.UsageError(msg)
 		}
-		v, reason := sc.Classify(p, op)
-		rows = append(rows, scopeRow{Path: p, Op: opLabel(op), Decision: v.String(), Reason: reason})
+		v := pv.Verdict
+		rows = append(rows, scopeRow{Path: pv.Path, Op: opLabel(op), Decision: v.String(), Reason: pv.Reason})
 		switch {
 		case v > worst:
 			worst, count = v, 1
