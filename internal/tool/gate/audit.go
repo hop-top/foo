@@ -300,7 +300,7 @@ func (a *audit) approve(req Request, canonical map[string][]string, dec policy.D
 		fmt.Fprintf(&q, "  scope: %s %s (%s)\n", opName(f.op), f.path, f.reason)
 	}
 	if policyAsks {
-		fmt.Fprintf(&q, "  policy: %s side effect (%s)\n", sideEffectName(req.SideEffect), dec.Reason)
+		fmt.Fprintf(&q, "  policy: %s side effect%s (%s)\n", sideEffectName(req.SideEffect), networkNote(req), dec.Reason)
 	}
 	if a.g.approveAll {
 		q.WriteString("  --tools-approve: confirm every tool call\n")
@@ -326,6 +326,14 @@ func (a *audit) approve(req Request, canonical map[string][]string, dec policy.D
 		return Declined(nil)
 	}
 	return nil
+}
+
+// networkNote names a network other than none for the question.
+func networkNote(req Request) string {
+	if n := networkOf(req); n != policy.NetworkNone {
+		return ", network " + string(n)
+	}
+	return ""
 }
 
 func sideEffectName(se string) string {

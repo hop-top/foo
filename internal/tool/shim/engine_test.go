@@ -338,3 +338,26 @@ func TestToolAdapter(t *testing.T) {
 		t.Errorf("tool message = %s", ce.ToolMessage())
 	}
 }
+
+// The request carries the spec's network so the gate picks the policy
+// row for what the tool reaches, not always network none.
+func TestRequest_CarriesSpecNetwork(t *testing.T) {
+	for _, tc := range []struct{ decl, want string }{
+		{"", "none"},
+		{"network: egress\n", "egress"},
+		{"network: local-only\n", "local-only"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			dir := tempDir(t)
+			bin := writeScript(t, dir, "netbin", `exit 0`)
+			src := strings.ReplaceAll(argsSpec, "%BIN%", bin)
+			src = strings.Replace(src, "side_effect: read\n", "side_effect: read\n"+tc.decl, 1)
+			l := mustSpec(t, src)
+			auth := &fakeAuth{cwd: dir}
+			mustCall(t, &Engine{Authorizer: auth, Cwd: dir}, l, `{"pattern":"x"}`)
+			if auth.last.Network != tc.want {
+				t.Errorf("request network = %q; want %q", auth.last.Network, tc.want)
+			}
+		})
+	}
+}

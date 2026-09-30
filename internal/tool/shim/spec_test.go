@@ -48,6 +48,9 @@ func TestLint_RejectsUnsafeSpecs(t *testing.T) {
 		{"path argv", "op: [read]}", `op: [read], argv: ["-f"]}`, "path params take no argv"},
 		{"timeout too long", "side_effect: read", "side_effect: read\ntimeout: 5m", "timeout"},
 		{"side effect", "side_effect: read", "side_effect: sometimes", "side_effect"},
+		{"network unknown", "side_effect: read", "side_effect: read\nnetwork: internet", "network"},
+		// any is a wildcard in tool-policy.yaml rules, not a tool's reach.
+		{"network any", "side_effect: read", "side_effect: read\nnetwork: any", "network"},
 		{"recursion unset", "op: [read]}", "op: [read], recursive: true}", "recursion"},
 		{"unused path", `"--", "{path}"]`, `"--"]`, "never placed"},
 	} {
@@ -163,5 +166,26 @@ func TestLoad_MissingDirsAreEmpty(t *testing.T) {
 	}
 	if _, err := os.Stat("/nonexistent/u"); err == nil {
 		t.Fatal("Load created a spec dir")
+	}
+}
+
+// network is what the tool reaches beyond the local filesystem; the
+// gate picks the policy row by it. Unset means none.
+func TestLint_NetworkValues(t *testing.T) {
+	for _, tc := range []struct{ decl, want string }{
+		{"", "none"},
+		{"network: none", "none"},
+		{"network: local-only", "local-only"},
+		{"network: egress", "egress"},
+	} {
+		t.Run(tc.want+"/"+tc.decl, func(t *testing.T) {
+			s, err := Parse([]byte(strings.Replace(okSpec, "side_effect: read", "side_effect: read\n"+tc.decl, 1)))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if s.Network != tc.want {
+				t.Errorf("network = %q; want %q", s.Network, tc.want)
+			}
+		})
 	}
 }

@@ -31,7 +31,7 @@ Unknown keys are errors everywhere.
 | `command` | yes | | [Command](#command) |
 | `side_effect` | yes | | `read`, `write` or `destructive`. Picks the approval rule; see [side effects](#side-effects) |
 | `side_effect_if` | no | | Escalations: `[{when: {param: value, …}, side_effect: …}]`; the first entry whose `when` all match wins |
-| `network` | no | `none` | `none`, `local-only` or `egress`. Reported to hosts in `--ext-info`; foo's own policy lookup treats every spec call as `none` |
+| `network` | no | `none` | What the command reaches beyond local files: `none`, `local-only` (a local socket or daemon) or `egress` (a remote host). With `side_effect` it picks the [policy row](#side-effects); also reported in `--ext-info`. Any other value, `any` included, rejects the spec |
 | `timeout` | no | `30s` | Go duration, at most `120s`. The command's process group is killed when it runs out; the call returns `timeout` |
 | `ok_exit_codes` | no | `[0]` | Exit codes reported as `ok: true` (grep: `[0, 1]`) |
 | `output` | no | `text` | `text`, or `paths0`: the command prints NUL-separated paths, foo drops each one outside the scope and returns the rest one per line. Needs a `filter_after` path param |
@@ -170,13 +170,19 @@ Params that feed the script cannot appear in `argv`.
 
 ## Side effects
 
-| `side_effect` | Default action |
-|---------------|----------------|
-| `read` | Runs |
-| `write` | Asks first (foo's rule over kit's default) |
-| `destructive` | Asks first |
+The policy row is `(side_effect, network)`. Defaults:
 
-Change these in `tool-policy.yaml`
+| `side_effect` | `network: none` | `local-only` | `egress` |
+|---------------|-----------------|--------------|----------|
+| `read` | Runs | Runs | Asks first |
+| `write` | Asks first (foo's rule over kit's default) | Asks first | Asks first |
+| `destructive` | Asks first | Asks first | Refused (`policy`) |
+
+A write asks first on every network. The built-in tools all declare
+`network: none`.
+
+Change these in `$XDG_CONFIG_HOME/foo/tool-policy.yaml`, one rule per
+`(side_effect, network)`
 ([how-to](../how-to/use-os-tools.md#7-let-writes-run-without-asking-optional)).
 With no terminal, a call that would ask is refused (`declined`).
 
