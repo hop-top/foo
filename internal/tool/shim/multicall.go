@@ -147,8 +147,10 @@ func (m *MultiCall) Run(ctx context.Context, args []string) int {
 	if m.Authorizer != nil {
 		auth, err := m.Authorizer()
 		if err != nil {
+			// A policy file that does not load is a setup error the
+			// user fixes and reruns: exit 2, like foo's own commands.
 			_, _ = fmt.Fprintf(m.Stderr, "%s%s: %v\n", LinkPrefix, m.Name, err)
-			return 1
+			return 2
 		}
 		m.Engine.Authorizer = auth
 	}

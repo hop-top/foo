@@ -301,6 +301,7 @@ A recursive `grep` or `find` never asks per file: in `strict` and
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| `USAGE: load tool scope policy: …` or `… side-effect policy: …`, exit 2 | `scope.yaml` or `tool-policy.yaml` under `$XDG_CONFIG_HOME/foo` does not load; the message names the file and the problem. Runs that select no OS tool are unaffected; links (`foo-tool-*`) print the same on stderr and exit 2 | Fix the file; `foo scope show` reports the same error |
 | Every call `denied` with `no scope policy: … scope.yaml does not exist` | No `scope.yaml` where foo looks | Create the file the message names; `foo scope show` prints the path |
 | `denied` on a path you allowed | A symlink on the way resolves outside the rule, a `..` climbs through a directory outside it, or a relative path was taken from another directory | `foo scope check <path>` from the same directory shows the resolved path; grant that, or name the path without `..` |
 | `denied` on a path through a link into your grant | The link sits in a directory the scope does not grant, and no rule names the path through it: `~/code` links to `/data/code`, the rule says `/data/code/**`, the call sends `~/code/x` | Write the rule the way paths are sent (`~/code/**`), or send the target path. `foo scope check ~/code/x` shows the refusal and the target |
