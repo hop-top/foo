@@ -126,11 +126,29 @@ End-to-end walkthrough:
 
 ### Provider keys
 
-| Variable | Used by | Required for |
-|----------|---------|--------------|
-| `ANTHROPIC_API_KEY` | Anthropic provider | Claude models |
-| `OPENAI_API_KEY` | OpenAI provider + OpenAI-compatible fallback | GPT/o-series models, all embeddings, OpenAI-compatible endpoints |
-| `GOOGLE_API_KEY` | Google/Gemini provider | Gemini models (when scheme registered) |
+| Variable | Scheme | Required for |
+|----------|--------|--------------|
+| `ANTHROPIC_API_KEY` | `anthropic` | Claude models |
+| `OPENAI_API_KEY` | `openai` | GPT/o-series models, all embeddings, and bare model ids foo does not recognise (sent to the `openai` scheme, e.g. a [local endpoint](../how-to/use-a-local-endpoint.md)) |
+| `GOOGLE_API_KEY` | `google`, `gemini` | Gemini models |
+| `OPENROUTER_API_KEY` | `openrouter` | OpenRouter models (`openrouter://<vendor>/<model>`) |
+| `GROQ_API_KEY` | `groq` | Groq models |
+| `XAI_API_KEY` | `xai` | xAI (Grok) models |
+| `TOGETHER_API_KEY` | `together` | Together AI models |
+| `FIREWORKS_API_KEY` | `fireworks` | Fireworks AI models |
+| `DEEPSEEK_API_KEY` | `deepseek` | DeepSeek hosted models |
+| `MISTRAL_API_KEY` | `mistral` | Mistral hosted models |
+
+Each scheme reads only its own variable. An OpenRouter or Groq
+model never borrows `OPENAI_API_KEY`, so a real OpenAI key is
+never sent to another provider. `ollama`, `lmstudio` and
+`routellm` are local and take no key.
+
+The same key applies whether you pick the model by bare id, by
+pool, or as a URI: `-m 'openrouter://openai/gpt-4.1-nano'` gets
+`OPENROUTER_API_KEY` appended. A URI that already carries
+`?api_key=` is sent as written. A missing key fails before any
+request with `missing OPENROUTER_API_KEY for model "..."`.
 
 `foo provider show <scheme>` reports each scheme's expected key
 and whether foo can see it.

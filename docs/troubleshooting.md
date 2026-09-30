@@ -15,6 +15,7 @@ cause → fix; the longer sections below give the detail.
 |---------|--------------|-----|
 | `missing X_API_KEY for model "..."` | API key env var unset | [Set an API key](#api-key-missing-or-invalid) |
 | `auth error (provider "...")` | API key set but rejected by the provider | [Check your key + provider config](#api-key-missing-or-invalid) |
+| 401 `Missing Authentication header` from OpenRouter, Groq or another gateway | No key reached the provider; its key is in `OPENAI_API_KEY`, or the URI has an empty `?api_key=` | [Export the scheme's own key](#api-key-missing-or-invalid) |
 | `model "..." not available (provider "openai")` for an id you never meant to send to OpenAI | Unrecognised model id; foo assumed an OpenAI-compatible provider | [Point foo at the right endpoint](#unknown-model-id-routed-to-openai) |
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
@@ -46,6 +47,10 @@ Two distinct failure modes:
   key and reports `missing <ENV_VAR> for model "<model>" (provider
   <name>); export <ENV_VAR>=... and retry, or switch models with
   foo model default <model>`. The fix is named in the message.
+  Each scheme has its own variable — `OPENROUTER_API_KEY` for
+  `openrouter://`, `GROQ_API_KEY` for `groq://`, and so on
+  ([full list](reference/config.md#provider-keys)). A key in
+  `OPENAI_API_KEY` is used only for the `openai` scheme.
 - **Key set but rejected** — the provider returns an `auth error
   (provider "<name>")` with the upstream HTTP body. The key is
   malformed, expired, or scoped to a different org/project.
@@ -56,10 +61,16 @@ Fix:
 export ANTHROPIC_API_KEY=sk-ant-...
 # or
 export OPENAI_API_KEY=sk-...
+# or, for an OpenRouter model
+export OPENROUTER_API_KEY=sk-or-...
 
 foo provider show anthropic   # status should be "configured"
 foo "hello"
 ```
+
+A URI-form `--model` (`-m 'openrouter://openai/gpt-4.1-nano'`)
+gets its scheme's key the same way a bare id does; `?api_key=` on
+the URI overrides it.
 
 `foo provider list` shows registered schemes; `foo provider show
 <scheme>` shows whether the expected key is visible to foo. See

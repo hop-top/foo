@@ -141,6 +141,11 @@ explicitly:
 foo -m "openai://my-local-model?base_url=http://127.0.0.1:8000/v1" "hello"
 ```
 
+The `openai` scheme needs `OPENAI_API_KEY` in URI form too. The
+local schemes take no key:
+`lmstudio://<model>?base_url=http://127.0.0.1:1234/v1` and
+`ollama://<model>` are not prechecked.
+
 ## If the server requires a token cap
 
 Some servers reject requests that omit `max_tokens`. foo omits it by
