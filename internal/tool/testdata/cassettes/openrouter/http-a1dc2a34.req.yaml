@@ -1,0 +1,38 @@
+xrr: "1"
+adapter: http
+fingerprint: a1dc2a34
+recorded_at: "2026-09-30T14:45:14Z"
+payload:
+    method: POST
+    url: /api/v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else.",
+              "role": "user"
+            }
+          ],
+          "model": "openai/gpt-4.1-nano",
+          "tools": [
+            {
+              "function": {
+                "description": "Echo the given text back verbatim.",
+                "name": "echo",
+                "parameters": {
+                  "properties": {
+                    "text": {
+                      "description": "Text to echo",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

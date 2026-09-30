@@ -409,7 +409,7 @@ func CheckNoSecrets(dir string, secrets ...string) error {
 // CheckNoSecrets. Read it before a test overrides them.
 func RecordingKeys() []string {
 	var keys []string
-	for _, k := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "LLM_API_KEY"} {
+	for _, k := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "LLM_API_KEY"} {
 		if v := os.Getenv(k); v != "" {
 			keys = append(keys, v)
 		}

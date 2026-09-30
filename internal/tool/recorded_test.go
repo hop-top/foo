@@ -67,6 +67,10 @@ type provider struct {
 	linked func(t *testing.T, req map[string]any, id string)
 }
 
+// keyPlaceholder in a provider's model URI is replaced with the value of
+// its keyEnv at run time, so a key never sits in this file.
+const keyPlaceholder = "{key}"
+
 // ollamaBase is the Ollama server recorded against: set
 // FOO_RECORD_OLLAMA_BASE_URL to reach one elsewhere. Replay ignores the
 // host: cassettes store path and query.
@@ -92,6 +96,19 @@ var providers = []provider{
 		name:   "ollama",
 		model:  "openai://ornith:9b?api_key=ollama&base_url=" + ollamaBase(),
 		record: "FOO_RECORD_OLLAMA_BASE_URL=http://<ollama-host>:11434/v1 go test ./internal/tool -run 'TestRecordedToolRound/ollama' -update",
+		callID: openAICallID,
+		linked: openAILinked,
+	},
+	{
+		// OpenRouter speaks OpenAI's wire shape; kit reaches it through
+		// the openai adapter. foo adds no key to a URI-form model, so
+		// the key rides as the URI's api_key, filled in from keyEnv at
+		// run time (keyPlaceholder). It goes out as a header, which
+		// cassettes do not store.
+		name:   "openrouter",
+		model:  "openrouter://openai/gpt-4.1-nano?api_key=" + keyPlaceholder,
+		keyEnv: "OPENROUTER_API_KEY",
+		record: "OPENROUTER_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/openrouter' -update",
 		callID: openAICallID,
 		linked: openAILinked,
 	},
@@ -215,9 +232,10 @@ func TestRecordedToolRound(t *testing.T) {
 			http.DefaultTransport = tr
 			t.Cleanup(func() { http.DefaultTransport = prev })
 
-			client, err := llm.NewClient(context.Background(), llm.ClientOpts{Model: p.model})
+			model := strings.ReplaceAll(p.model, keyPlaceholder, os.Getenv(p.keyEnv))
+			client, err := llm.NewClient(context.Background(), llm.ClientOpts{Model: model})
 			if err != nil {
-				t.Fatalf("NewClient(%s): %v", p.model, err)
+				t.Fatalf("NewClient(%s): %v", strings.ReplaceAll(p.model, keyPlaceholder, "<key>"), err)
 			}
 			reg := tool.NewRegistry()
 			if err := reg.Register(echoTool{}); err != nil {
