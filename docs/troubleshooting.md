@@ -369,6 +369,13 @@ providers:
 `LLM_BASE_URL` overrides the file, and `?base_url=` on `--model`
 overrides both.
 
+**Only the fallback reaches the public API.** `LLM_BASE_URL`
+applies to fallbacks on the primary's scheme only; a fallback on
+another scheme uses its own `providers.<scheme>.base_url`, or its
+provider's public endpoint. Give that scheme a `base_url` in
+llm.yaml, or write `?base_url=` on the fallback entry
+([base URL precedence](reference/config.md#base-url-precedence)).
+
 **A context-length error that does not match your prompt**, e.g.
 "maximum context length is 8192 tokens, however your messages
 resulted in at least 19 tokens". The server is asking for an
