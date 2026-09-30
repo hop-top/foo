@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"hop.top/foo/internal/tool/shim"
 	"hop.top/kit/go/ai/ext/discover"
 )
 
@@ -27,11 +29,20 @@ type externalResponse struct {
 }
 
 // ExternalTool wraps a discovered foo-tool-* binary as a Tool.
+//
+// A binary whose --ext-info declares a foo_tool block is gated: each
+// call goes through the shim engine's authorizer before the binary
+// runs, and the binary receives the canonical paths. One that declares
+// nothing runs with the arguments as the model sent them.
 type ExternalTool struct {
 	name        string
 	description string
 	parameters  json.RawMessage
 	path        string
+	// plugin holds the foo_tool annotations; nil when undeclared.
+	plugin *shim.Plugin
+	// engine authorizes gated calls; nil denies them all.
+	engine *shim.Engine
 }
 
 // NewExternalTool creates a Tool backed by an external binary.
@@ -56,10 +67,54 @@ func (t *ExternalTool) Parameters() json.RawMessage { return t.parameters }
 // Path returns the absolute path of the backing binary.
 func (t *ExternalTool) Path() string { return t.path }
 
-// Execute runs the external binary with JSON stdin/stdout protocol.
+// Gated reports whether the binary declared foo_tool annotations, so
+// foo checks its declared paths and side effect before each call.
+func (t *ExternalTool) Gated() bool { return t.plugin != nil }
+
+// ApprovesItself reports that a gated plugin's authorizer asks any
+// approval question the call needs (scope, side-effect policy,
+// --tools-approve) as one, so the dispatcher must not ask first.
+func (t *ExternalTool) ApprovesItself() bool { return t.Gated() }
+
+// SideEffect is the declared side effect, "" when ungated.
+func (t *ExternalTool) SideEffect() string {
+	if t.plugin == nil {
+		return ""
+	}
+	return t.plugin.SideEffect()
+}
+
+// PathSummary lists the declared path params with their ops, e.g.
+// "src:r dst:w"; "" when ungated.
+func (t *ExternalTool) PathSummary() string {
+	if t.plugin == nil {
+		return ""
+	}
+	return t.plugin.PathSummary()
+}
+
+// SetEngine sets the engine whose authorizer gates this plugin's
+// calls. Until it is set, and while the engine has no authorizer,
+// every call of a gated plugin is denied.
+func (t *ExternalTool) SetEngine(e *shim.Engine) { t.engine = e }
+
+// Execute runs the external binary with JSON stdin/stdout protocol. A
+// gated plugin's call is authorized first; a refusal returns a
+// *shim.CallError and the binary never runs.
 func (t *ExternalTool) Execute(
 	ctx context.Context, args json.RawMessage,
 ) (json.RawMessage, error) {
+	if t.plugin != nil {
+		engine := t.engine
+		if engine == nil {
+			engine = &shim.Engine{}
+		}
+		sent, err := engine.AuthorizePlugin(ctx, t.plugin, t.path, args)
+		if err != nil {
+			return nil, &shim.CallError{Err: err}
+		}
+		args = sent
+	}
 	ctx, cancel := context.WithTimeout(ctx, externalTimeout)
 	defer cancel()
 
@@ -107,7 +162,8 @@ const emptyParameters = `{"type":"object","properties":{}}`
 // foo-tool-* binary. It runs the binary with --ext-info once (Enrich)
 // and reads, beyond kit's metadata, the foo-defined top-level
 // "parameters" field: the JSON Schema object the model sees as the
-// tool's arguments.
+// tool's arguments; and "foo_tool", the annotations that make foo gate
+// the plugin's declared paths and side effect (shim.ParsePlugin).
 //
 // A binary whose --ext-info fails still registers under its
 // filename-derived name with no parameters. A blank --ext-info name
@@ -115,7 +171,9 @@ const emptyParameters = `{"type":"object","properties":{}}`
 // the tool takes no arguments. Any other "parameters" that is not a
 // JSON object with "type": "object" returns *InvalidParametersError:
 // offered with no schema instead, the model would call the plugin
-// without the arguments it declared.
+// without the arguments it declared. Invalid foo_tool annotations also
+// return *InvalidParametersError (Field "foo_tool"): offered ungated
+// instead, the plugin would run without the checks it asked for.
 func ExternalToolFromFound(f *discover.Found) (*ExternalTool, error) {
 	if err := f.Enrich(); err != nil {
 		return NewExternalTool(f.Name, f.Name, f.Path, nil), nil
@@ -134,13 +192,25 @@ func ExternalToolFromFound(f *discover.Found) (*ExternalTool, error) {
 	if reason != "" {
 		return nil, &InvalidParametersError{Name: name, Path: f.Path, Reason: reason}
 	}
-	return NewExternalTool(name, info.Metadata.Description, f.Path, params), nil
+	plugin, err := shim.ParsePlugin(name, params, fields.FooTool)
+	if err != nil {
+		reason := err.Error()
+		var lint *shim.LintError
+		if errors.As(err, &lint) {
+			reason = strings.Join(lint.Problems, "; ")
+		}
+		return nil, &InvalidParametersError{Name: name, Path: f.Path, Field: "foo_tool", Reason: "is invalid: " + reason}
+	}
+	t := NewExternalTool(name, info.Metadata.Description, f.Path, params)
+	t.plugin = plugin
+	return t, nil
 }
 
 // extInfoFields holds the --ext-info fields foo defines on top of the
 // kit discovery protocol.
 type extInfoFields struct {
 	Parameters json.RawMessage `json:"parameters"`
+	FooTool    json.RawMessage `json:"foo_tool"`
 }
 
 // validParameters returns the schema to offer the model, nil for "no
@@ -170,18 +240,25 @@ func validParameters(raw json.RawMessage) (json.RawMessage, string) {
 }
 
 // InvalidParametersError reports a foo-tool-* binary whose --ext-info
-// "parameters" field cannot be offered to the model.
+// "parameters" field cannot be offered to the model, or whose
+// "foo_tool" annotations cannot be enforced.
 type InvalidParametersError struct {
 	// Name is the tool name the binary would have registered under.
 	Name string
 	// Path is the binary's absolute path.
 	Path string
+	// Field is the --ext-info field at fault; "" means "parameters".
+	Field string
 	// Reason says what is wrong with the field.
 	Reason string
 }
 
 func (e *InvalidParametersError) Error() string {
-	return fmt.Sprintf("%s: --ext-info \"parameters\" %s", e.Path, e.Reason)
+	field := e.Field
+	if field == "" {
+		field = "parameters"
+	}
+	return fmt.Sprintf("%s: --ext-info %q %s", e.Path, field, e.Reason)
 }
 
 // DeclaresParameters reports whether t's schema names at least one

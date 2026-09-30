@@ -24,7 +24,6 @@ import (
 	"hop.top/foo/internal/suggest"
 	"hop.top/foo/internal/tool"
 	"hop.top/foo/internal/tool/builtin"
-	"hop.top/foo/internal/tool/shim"
 	"hop.top/foo/internal/ui"
 	"hop.top/foo/internal/workspace"
 	extdiscover "hop.top/kit/go/ai/ext/discover"
@@ -871,7 +870,7 @@ func buildRegistry(names []string, warn io.Writer, access shimAccess) (*tool.Reg
 		return nil, enrichUnknownTools(err, ts.invalid)
 	}
 	for _, t := range selected.List() {
-		if _, ok := t.(*shim.Tool); ok {
+		if gatedTool(t) {
 			auth, err := newShimAuthorizer(ts.engine.Cwd, access)
 			if err != nil {
 				return nil, err

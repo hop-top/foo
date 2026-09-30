@@ -314,8 +314,8 @@ for other hosts.
 | `source` | `builtin` (compiled into foo: `foo_time`, `foo_version` and the OS tools); `user:<path>` or `system:<path>` for a [tool spec](tool-spec.md) read from foo's config dir or `/etc/xdg/foo/tools`, with ` (overrides builtin)` when it replaces one; or the absolute path of a `foo-tool-<name>` binary on `$PATH` |
 | `description` | What the model sees |
 | `params` | `true` when the tool declares arguments for the model to fill in |
-| `side_effect` | `read`, `write` or `destructive` for foo's tools; `unknown` for a plugin |
-| `paths` | A spec tool's path arguments with the ops foo checks (`src:r dst:w`, `path:rw`); `ungated` for a plugin, whose paths foo does not check |
+| `side_effect` | `read`, `write` or `destructive` for foo's tools and for a plugin that declares `foo_tool`; `unknown` for a plugin that declares none |
+| `paths` | The path arguments foo checks, with their ops (`src:r dst:w`, `path:rw`); `ungated` for a plugin that declares no `foo_tool`: foo cannot check paths a plugin does not declare |
 | `status` | `active`, or `shadowed`: another tool owns the name (Go built-ins, then specs, then `$PATH` plugins) and this one never runs |
 
 A spec that fails to load is left out with a warning on stderr and
@@ -323,8 +323,9 @@ still owns its name: `-T` with that name exits 3 with the spec's
 error. A plugin's name, description and parameter schema come from
 its `--ext-info` output; listing runs each `foo-tool-*` binary once to
 read it (links to foo itself and shadowed names are skipped). A binary
-whose `parameters` is not a JSON Schema object of type `object` is
-left out of the listing and of `-T`, with a warning on stderr from the
+whose `parameters` is not a JSON Schema object of type `object`, or
+whose `foo_tool` annotations foo cannot enforce, is left out of the
+listing and of `-T`, with a warning on stderr from the
 listing and from any `-T` run that names it (see
 [Write plugins](../how-to/write-plugins.md#--ext-info-for-tool-plugins)).
 Every `--format` works:

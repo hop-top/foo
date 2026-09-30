@@ -202,9 +202,11 @@ With no terminal, a call that would ask is refused (`declined`).
 Through a `foo-tool-<name>` link, `--ext-info` prints the model-facing
 `parameters` schema and a `foo_tool` object with `spec`,
 `side_effect`, `side_effect_if`, `network`, `digest` and, per path
-param, its `op`, `target` and the other path keys above. `foo_tool` is
-foo's description of its own tools; foo does not read it from
-third-party plugins.
+param, its `op`, `target` and the other path keys above. A third-party
+plugin that prints the same `foo_tool` object is gated by it
+([Gate your plugin](../how-to/write-plugins.md#gate-your-plugin-declare-foo_tool)),
+except for `into_dir` and `recursion: filter_before`/`filter_after`,
+which foo rejects for plugins.
 
 ## Related docs
 

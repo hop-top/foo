@@ -25,7 +25,7 @@ cause → fix; the longer sections below give the detail.
 | Tool call `declined: approval required but cannot be asked: no terminal ...` | A write, delete or `mode: prompt` call with no terminal to ask on | [Run on a terminal or auto-allow](#tool-calls-denied-or-declined) |
 | Tool output shows `/private/tmp/...` or `/private/var/...` (macOS) | foo reports canonical paths; `/tmp` and `/var` link into `/private` | Nothing to fix; scope rules written as `/tmp/**` still match |
 | Tool call `timeout: ... did not finish within 30s` | The command outran its limit | [Narrow the call](#tool-calls-denied-or-declined) |
-| `[foo] warning: skipping tool plugin ...` | The plugin's `--ext-info` `parameters` is not a JSON Schema object of type `object` | [Fix the plugin's schema](how-to/write-plugins.md#--ext-info-for-tool-plugins) |
+| `[foo] warning: skipping tool plugin ...` | The plugin's `--ext-info` `parameters` is not a JSON Schema object of type `object`, or its `foo_tool` annotations cannot be enforced | [Fix the plugin's schema](how-to/write-plugins.md#--ext-info-for-tool-plugins) or [its `foo_tool`](how-to/write-plugins.md#gate-your-plugin-declare-foo_tool) |
 | `schema not found and not valid DSL` | `--schema` value is neither saved nor valid DSL | [Fix DSL parse failures](#schema-dsl-parse-failure) |
 | `interactive REPL requires a terminal` | `foo repl` invoked without a TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
 | `no prompt provided (stdin was empty)` | `foo` got an empty pipe and no positional prompt | [Diagnose the upstream pipe](#empty-pipe-into-foo) |

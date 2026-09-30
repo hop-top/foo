@@ -105,8 +105,8 @@ type toolSet struct {
 	shadowed []toolRow
 	// invalid are specs that won their name but failed to load.
 	invalid map[string]*shim.Invalid
-	// engine runs every shim tool of the set; its authorizer is
-	// attached once a run selects a shim tool.
+	// engine runs every shim tool of the set and authorizes gated
+	// plugins; its authorizer is attached once a run selects either.
 	engine *shim.Engine
 }
 
@@ -164,6 +164,7 @@ func discoverTools(names []string, warn io.Writer) (*toolSet, error) {
 			warnSkippedTool(warn, names, err)
 			continue
 		}
+		ext.SetEngine(ts.engine)
 		if owner := ts.owner(ext.Name()); owner != "" || ts.registry.Register(ext) != nil {
 			if owner == "" {
 				owner = tool.SourceOf(mustGet(ts.registry, ext.Name()))
@@ -190,6 +191,18 @@ func (ts *toolSet) shadow(t *shim.Tool, by string) {
 	row.Status = statusShadowed
 	row.Description = "shadowed by " + by
 	ts.shadowed = append(ts.shadowed, row)
+}
+
+// gatedTool reports whether t's calls go through the path gate: every
+// spec tool, and plugins that declare foo_tool annotations.
+func gatedTool(t tool.Tool) bool {
+	switch v := t.(type) {
+	case *shim.Tool:
+		return true
+	case *tool.ExternalTool:
+		return v.Gated()
+	}
+	return false
 }
 
 func mustGet(r *tool.Registry, name string) tool.Tool {
