@@ -125,7 +125,7 @@ func TestExternalTool_GatedCalls(t *testing.T) {
 			t.Fatal(err)
 		}
 		client := &scriptedClient{call: llm.ToolCall{ID: "c1", Name: "demo", Arguments: json.RawMessage(args)}}
-		approve := func(string, json.RawMessage) bool { asked++; return true }
+		approve := func(string, json.RawMessage) (bool, error) { asked++; return true, nil }
 		if _, err := NewDispatcher(client, reg, DispatchConfig{Approve: approve}).Run(context.Background(), "go"); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
