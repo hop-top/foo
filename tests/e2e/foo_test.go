@@ -51,6 +51,9 @@ func runFoo(t *testing.T, tmpHome string, args ...string) (string, string, error
 		"XDG_CONFIG_HOME="+filepath.Join(tmpHome, ".config"),
 		"XDG_STATE_HOME="+filepath.Join(tmpHome, ".local", "state"),
 		"XDG_DATA_HOME="+filepath.Join(tmpHome, ".local", "share"),
+		// The binary links the keyring secrets backend; an inherited
+		// FOO_SECRETS_BACKEND=keyring would reach the real keychain.
+		"FOO_SECRETS_BACKEND=env",
 		// Force the no-color path so assertions are not foiled by
 		// terminfo escape sequences.
 		"NO_COLOR=1",
