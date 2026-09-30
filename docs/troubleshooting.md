@@ -246,9 +246,10 @@ model; `--tools-debug` prints it on stderr too:
 ```
 
 - **`no scope policy: <path>/scope.yaml does not exist`**: every call
-  is denied until you create that file. The path is OS-specific
-  (macOS `~/Library/Application Support/foo/scope.yaml`, Linux
-  `~/.config/foo/scope.yaml`); `foo scope show` prints it.
+  is denied until you create that file:
+  `$XDG_CONFIG_HOME/foo/scope.yaml` (`XDG_CONFIG_HOME` unset:
+  `~/.config` on Linux, `~/Library/Application Support` on macOS);
+  `foo scope show` prints it.
 - **`no scope allow rule covers <op> here`** or **`matches a scope
   deny rule`**: run `foo scope check <path> --op <op>` from the same
   directory. It checks the path the way the call did (relative to
@@ -304,7 +305,7 @@ server.
 
 **Requests still reach `api.openai.com`.** The `base_url` never
 resolved. It belongs under `providers:` → `openai:` in
-`~/.config/hop/llm.yaml` (not at the top level):
+`$XDG_CONFIG_HOME/hop/llm.yaml` (not at the top level):
 
 ```yaml
 providers:

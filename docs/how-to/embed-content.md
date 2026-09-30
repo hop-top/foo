@@ -19,8 +19,9 @@ You need:
   embeddings API; an Anthropic-only setup will not work for this
   command. See [troubleshooting.md](../troubleshooting.md) for the
   exact error.
-- Write access to `$XDG_STATE_HOME/foo/` (default
-  `~/.local/state/foo/`).
+- Write access to `$XDG_STATE_HOME/foo/` (`XDG_STATE_HOME` unset:
+  `~/.local/state` on Linux, `~/Library/Application Support` on
+  macOS).
 
 ## Outcome
 

@@ -62,7 +62,7 @@ per request — covered in
 | Pattern | A named system prompt | System role | `$XDG_CONFIG_HOME/foo/patterns/<name>/system.md` |
 | Strategy | A wrapper that decorates the system prompt | System role | Built-in (some user-extensible) |
 | Fragment | A named text snippet | User role (`-f`) or system role (`--system-fragment`) | Workspace store (WSM) |
-| Schema | A structured-output JSON contract | System role (appended) | Local SQLite under XDG state dir |
+| Schema | A structured-output JSON contract | System role (appended) | `$XDG_STATE_HOME/foo/schemas.db` (SQLite) |
 
 Each can be authored, listed, shown, and (where applicable)
 deleted via its grouped subcommand. See the matching how-to:
@@ -172,19 +172,23 @@ The frozen acceptance snapshot for this contract is
 
 ## Where state lives
 
-foo follows the XDG base-directory spec:
+foo follows the XDG base-directory spec. With a variable unset,
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` default to `~/.config` and
+`~/.local/state` on Linux, and both to `~/Library/Application Support`
+on macOS; see [XDG variables](reference/config.md#xdg-variables-kit-shared).
 
 | What | Where |
 |------|-------|
-| Config | `$XDG_CONFIG_HOME/foo/config.yaml` (default `~/.config/foo/config.yaml`) |
+| Config | `$XDG_CONFIG_HOME/foo/config.yaml` |
+| Model pool and providers (kit's, shared) | `$XDG_CONFIG_HOME/hop/llm.yaml` |
 | Patterns | `$XDG_CONFIG_HOME/foo/patterns/` |
 | Embeddings DB | `$XDG_STATE_HOME/foo/embeddings.db` |
 | Schemas DB | `$XDG_STATE_HOME/foo/schemas.db` |
-| Workspace events (fragments included) | WSM workspace store under `$XDG_STATE_HOME` |
-| Tool path scope | `scope.yaml` in foo's config dir (macOS `~/Library/Application Support/foo/`, Linux `~/.config/foo/`) |
-| Tool approval overrides | `tool-policy.yaml` beside `scope.yaml` |
-| Your tool specs | `tools/<name>.yaml` beside `scope.yaml` |
-| `foo tool install` link manifest | `tool-shims.json` in foo's state dir |
+| Workspace events (fragments included) | WSM workspace store, `$XDG_STATE_HOME/foo/workspace.db` |
+| Tool path scope | `$XDG_CONFIG_HOME/foo/scope.yaml` |
+| Tool approval overrides | `$XDG_CONFIG_HOME/foo/tool-policy.yaml` |
+| Your tool specs | `$XDG_CONFIG_HOME/foo/tools/<name>.yaml` |
+| `foo tool install` link manifest | `$XDG_STATE_HOME/foo/tool-shims.json` |
 
 Project-local overrides live next to the project root: `.foo.yaml`
 for config, `.foo/patterns/` for patterns.

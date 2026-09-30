@@ -303,7 +303,8 @@ foo tool list --format json
 
 `foo tool install` creates a `foo-tool-<name>` symlink to the foo
 binary for every valid spec tool in `--dir` (default
-`~/.local/bin/foo`, off `$PATH`; foo prints a note when the directory
+`$XDG_BIN_HOME/foo`, where `XDG_BIN_HOME` defaults to `~/.local/bin`,
+off `$PATH`; foo prints a note when the directory
 is not on `$PATH`). Columns: `name`, `link`, `action` (`created`,
 `unchanged`, `replaced`, `skipped`, `removed`, `kept`) and `reason`.
 Files and links that do not point at foo are never touched. Run
@@ -386,8 +387,8 @@ call that needs approval may therefore ask first and be refused after.
 ## `scope`
 
 Inspect the path policy tool calls are checked against: `scope.yaml`
-in foo's config directory (macOS `~/Library/Application Support/foo/`,
-Linux `~/.config/foo/`, or `$XDG_CONFIG_HOME/foo/`) and
+in foo's config directory, `$XDG_CONFIG_HOME/foo/` (`XDG_CONFIG_HOME`
+unset: `~/.config` on Linux, `~/Library/Application Support` on macOS), and
 `/etc/xdg/foo/scope.yaml`, plus a built-in deny list for secrets on
 every op: each of kit's secret patterns (`**/.env`, `**/secrets*`,
 `**/credentials*`, `~/.ssh/**`, ...) and its descendant form

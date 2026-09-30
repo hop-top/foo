@@ -176,7 +176,7 @@ type Param struct {
 	ClobberWhen map[string]any `yaml:"clobber_when"`
 	// ProtectRoots refuses "/", the home directory and every entry
 	// directly under "/" (or what such an entry links to) as a value,
-	// whatever the scope (rm, mv).
+	// whatever the scope (rm, mv, cp).
 	ProtectRoots bool `yaml:"protect_roots"`
 
 	// enum

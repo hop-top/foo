@@ -12,7 +12,7 @@ ones.
 |-------|------|-------|
 | Built-in defaults | (compiled) | Lowest |
 | System | `/etc/foo/config.yaml` | |
-| User | `$XDG_CONFIG_HOME/foo/config.yaml` (default `~/.config/foo/config.yaml`) | |
+| User | `$XDG_CONFIG_HOME/foo/config.yaml` ([defaults](#xdg-variables-kit-shared)) | |
 | Project | `.foo.yaml` (in the current directory) | |
 | Extra `-c` files | Per `-c <path>` invocation | |
 | Environment | `FOO_*` variables | |
@@ -43,7 +43,7 @@ ones.
 
 ```yaml
 model: claude-3-5-sonnet-latest
-patterns_path: /home/me/.config/foo/patterns
+patterns_path: /home/me/prompts/patterns
 accent: "#E040FB"
 
 secrets:
@@ -55,7 +55,7 @@ secrets:
 ## Kit `llm.yaml` (routing surface)
 
 Model routing lives in kit's config file, not foo's. Path:
-`~/.config/hop/llm.yaml` (or `$XDG_CONFIG_HOME/hop/llm.yaml`).
+`$XDG_CONFIG_HOME/hop/llm.yaml` ([defaults](#xdg-variables-kit-shared)).
 foo reads this file via `kit/llm.LoadConfig` when constructing
 the LLM client, so the keys below shape every `foo` invocation
 that talks to a model.
@@ -164,7 +164,7 @@ take effect on every `foo` invocation.
 | `FOO_SECRETS_BACKEND` | `secrets.backend` | Secret backend |
 | `FOO_SECRETS_PREFIX` | `secrets.prefix` | Secret key prefix |
 | `FOO_SECRETS_SERVICE` | `secrets.service` | Secret service id |
-| `FOO_CACHE` | (XDG cache dir) | Directory holding foo's own caches, e.g. `foo model list --endpoint`'s inventory store. |
+| `FOO_CACHE` | `$XDG_CACHE_HOME/foo` | Directory holding foo's own caches, e.g. `foo model list --endpoint`'s inventory store. |
 | `FOO_CACHE_TTL` | (per-cache default) | Freshness window for foo's own caches, as a Go duration (`30s`, `1h`). `0` disables caching. Does not affect the aim catalog's 24h window, which aim owns. |
 
 ### XDG variables (kit-shared)
@@ -172,12 +172,13 @@ take effect on every `foo` invocation.
 foo follows XDG base directories. The defaults below are what
 applies when the variable is unset.
 
-| Variable | Default | Holds |
-|----------|---------|-------|
-| `XDG_CONFIG_HOME` | `~/.config` | `foo/config.yaml`, `foo/patterns/`, tool files `foo/scope.yaml`, `foo/tool-policy.yaml`, `foo/tools/` (macOS default: `~/Library/Application Support/foo/`; see [Use OS tools](../how-to/use-os-tools.md#2-write-scopeyaml)) |
-| `XDG_STATE_HOME` | `~/.local/state` | `foo/embeddings.db`, `foo/schemas.db`, upgrade state, `foo/tool-shims.json` (`foo tool install` links), `foo/tool-flavors.json` (detected BSD/GNU/busybox flavor per binary) |
-| `XDG_DATA_HOME` | `~/.local/share` | WSM workspace store (fragments) |
-| `XDG_CACHE_HOME` | `~/.cache` | `foo/model-endpoint-cache.db`, `hop/aim/` (models.dev catalog) |
+| Variable | Linux default | macOS default | Holds |
+|----------|---------------|---------------|-------|
+| `XDG_CONFIG_HOME` | `~/.config` | `~/Library/Application Support` | `foo/config.yaml`, `foo/patterns/`, `foo/strategies/`, tool files `foo/scope.yaml`, `foo/tool-policy.yaml`, `foo/tools/`; kit's `hop/llm.yaml` |
+| `XDG_STATE_HOME` | `~/.local/state` | `~/Library/Application Support` | `foo/embeddings.db`, `foo/schemas.db`, `foo/workspace.db` (WSM workspace store, fragments included), upgrade state, `foo/tool-shims.json` (`foo tool install` links), `foo/tool-flavors.json` (detected BSD/GNU/busybox flavor per binary) |
+| `XDG_DATA_HOME` | `~/.local/share` | `~/Library/Application Support` | `wsm/machine-id` (WSM's machine identity) |
+| `XDG_CACHE_HOME` | `~/.cache` | `~/Library/Caches` | `foo/model-endpoint-cache.db`, `hop/aim/` (models.dev catalog) |
+| `XDG_BIN_HOME` | `~/.local/bin` | `~/.local/bin` | `foo/` (`foo tool install` links) |
 
 ## Kit `-c/--config` interaction
 

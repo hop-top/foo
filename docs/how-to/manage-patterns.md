@@ -165,12 +165,12 @@ FOO_PATTERNS_PATH=~/.config/fabric/patterns \
 For a persistent override, add it to foo's config:
 
 ```sh
-# ~/.config/foo/config.yaml
+# $XDG_CONFIG_HOME/foo/config.yaml
 patterns_path: ~/.config/fabric/patterns
 ```
 
 Trade-off: foo's own user-store patterns at
-`~/.config/foo/patterns/` become invisible until you switch back.
+`$XDG_CONFIG_HOME/foo/patterns/` become invisible until you switch back.
 `.foo/patterns/` (project-local) still wins regardless because
 foo checks it first.
 

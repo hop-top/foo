@@ -18,7 +18,8 @@ hosted model id, see [configure models](configure-models.md).
 ## Point foo at the server
 
 Set the endpoint under the `openai` scheme in
-`~/.config/hop/llm.yaml`:
+`$XDG_CONFIG_HOME/hop/llm.yaml` (`XDG_CONFIG_HOME` unset: `~/.config`
+on Linux, `~/Library/Application Support` on macOS):
 
 ```yaml
 providers:
@@ -163,8 +164,8 @@ wanted an explicit cap. Set `--max-tokens` and retry.
 **Requests reach `api.openai.com` instead of your server.** The
 `base_url` never resolved. Confirm the key is under `providers:` →
 `openai:` (not at the top level), and that the file is the one foo
-reads — `$XDG_CONFIG_HOME/hop/llm.yaml`, defaulting to
-`~/.config/hop/llm.yaml`.
+reads — `$XDG_CONFIG_HOME/hop/llm.yaml`; foo prints the resolved
+path when it seeds the file.
 
 **`model "..." not available`.** kit maps the server's 404 onto this
 message, so it usually means the path or the model id is wrong, not

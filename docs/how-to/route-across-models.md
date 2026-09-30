@@ -34,7 +34,7 @@ You need:
 
 After this guide you will be able to:
 
-- Configure a pool of candidate models in `~/.config/hop/llm.yaml`.
+- Configure a pool of candidate models in `$XDG_CONFIG_HOME/hop/llm.yaml`.
 - Use `--budget cheap|balanced|premium` to pick within the pool.
 - Pin a single model with `-m` when you want to bypass the picker.
 - Configure a fallback chain layered on top of any picked model.
@@ -45,7 +45,9 @@ After this guide you will be able to:
 
 Pool routing is foo's recommended path for "let me declare a budget
 posture, then forget about it." On first run foo seeds a default
-pool block into `~/.config/hop/llm.yaml`; edit it to match what you
+pool block into `$XDG_CONFIG_HOME/hop/llm.yaml` (`XDG_CONFIG_HOME`
+unset: `~/.config` on Linux, `~/Library/Application Support` on
+macOS); edit it to match what you
 have keys for and how aggressively you want to spend.
 
 ### Quick path
@@ -54,7 +56,7 @@ have keys for and how aggressively you want to spend.
 # 1. Seed and inspect the default pool. (foo seeds it on first run;
 #    this just shows where it lives.)
 foo --help | head -1
-cat ~/.config/hop/llm.yaml
+cat "$XDG_CONFIG_HOME/hop/llm.yaml"   # XDG_CONFIG_HOME unset? default above
 
 # 2. Pick the cheapest qualifying model.
 foo --budget cheap "summarize this"
@@ -87,8 +89,7 @@ across runs.
 
 ### Editing the pool
 
-The pool lives at `~/.config/hop/llm.yaml` (or
-`$XDG_CONFIG_HOME/hop/llm.yaml`). Each entry has four fields:
+The pool lives at `$XDG_CONFIG_HOME/hop/llm.yaml`. Each entry has four fields:
 
 ```yaml
 pool:
@@ -203,7 +204,7 @@ fallbackable errors (network, 429, 5xx). Non-fallbackable errors
 
 Two ways to declare fallbacks. Env wins.
 
-Via `~/.config/hop/llm.yaml`:
+Via `$XDG_CONFIG_HOME/hop/llm.yaml`:
 
 ```yaml
 default: anthropic://claude-3-5-sonnet-latest
@@ -240,7 +241,7 @@ export ROUTELLM_STRONG_MODEL=gpt-4o
 export ROUTELLM_WEAK_MODEL=gpt-4o-mini
 ```
 
-Or put the equivalent in `~/.config/hop/llm.yaml`:
+Or put the equivalent in `$XDG_CONFIG_HOME/hop/llm.yaml`:
 
 ```yaml
 providers:
@@ -282,7 +283,7 @@ foo's `internal/llm.NewClient` runs three paths:
 
 1. **Pool path** (default when no `-m`/`FOO_MODEL`/`config.model`
    is set). `kit/llm.LoadPool` reads the pool from
-   `~/.config/hop/llm.yaml`; `kit/llm.PickProviderInPool` filters
+   `$XDG_CONFIG_HOME/hop/llm.yaml`; `kit/llm.PickProviderInPool` filters
    the candidate set by the request profile, scores survivors by
    budget, returns the winner. foo derives the profile from flag
    state (`--schema` → JSON mode, `-T` → tool calling, prompt
@@ -307,10 +308,10 @@ via `WithFallback`.
 | `-m, --model` | config value | Pin one model; **bypasses the picker**. |
 | `FOO_MODEL` (env) | (unset) | Default model id. |
 | `model` (foo config key) | `claude-3-5-sonnet-latest` | Default model id. |
-| `pool:` (`~/.config/hop/llm.yaml`) | seeded by foo | Candidate set for the picker. |
+| `pool:` (`$XDG_CONFIG_HOME/hop/llm.yaml`) | seeded by foo | Candidate set for the picker. |
 | `LLM_POOL_DISABLE` (env) | (unset) | Comma list of `alias` or `<scheme>:<model>` to mute. |
 | `LLM_FALLBACK` (env) | (unset) | Comma-separated provider URIs tried in order on retriable failure. Overrides `fallback:` in `llm.yaml`. |
-| `fallback:` (`~/.config/hop/llm.yaml`) | (none) | Same list, set in config rather than env. |
+| `fallback:` (`$XDG_CONFIG_HOME/hop/llm.yaml`) | (none) | Same list, set in config rather than env. |
 | `router-<name>:<threshold>` model prefix | n/a | Send the call through RouteLLM with `<threshold>` in `[0, 1]`. |
 | `ROUTELLM_BASE_URL` (env) | `http://localhost:6060` | RouteLLM server endpoint. |
 | `ROUTELLM_STRONG_MODEL` (env) | (from kit config) | Strong model RouteLLM will pick when the router score is above threshold. |
