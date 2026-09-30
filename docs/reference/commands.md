@@ -88,7 +88,7 @@ foo < /dev/null
 | `--verbose` / `-V` | Increase log verbosity |
 | `--api-version` | Request a specific CLI schema version |
 | `--policy` | Named delegation policy |
-| `--profile` | Namespace secret lookups under an aps profile: sets the `keyring` backend's service to the profile name ([secret store](config.md#secret-store)); no effect on the default `env` backend |
+| `--profile` | Namespace secret lookups under an aps profile: sets the `keyring` backend's service to the profile name in place of `foo` ([secret store](config.md#secret-store)); no effect on the default `env` backend |
 | `--progress-format` | Progress output format (`human` or `json`) |
 | `--offline` | Refuse network access; see [Offline runs](#offline-runs) |
 

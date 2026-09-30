@@ -88,3 +88,48 @@ func TestProfile_ScopesKeyringService(t *testing.T) {
 		t.Errorf("no --profile: status = %v, want missing", got["status"])
 	}
 }
+
+// TestKeyring_DefaultServiceIsFoo: with no `secrets.service` and no
+// --profile, the keyring backend asks service `foo` — not kit's shared
+// `kit` — and --profile still replaces it.
+func TestKeyring_DefaultServiceIsFoo(t *testing.T) {
+	storeEnv(t, "  backend: keyring\n")
+	keyringSet(t, "foo", "openrouter_api_key", "sk-or-fake-foo")
+
+	if got := providerShowArgs(t, "openrouter"); got["status"] != "configured" {
+		t.Errorf("default service: status = %v, want configured (key under service foo)", got["status"])
+	}
+	if got := providerShowArgs(t, "openrouter", "--profile", "work"); got["status"] != "missing" {
+		t.Errorf("--profile work: status = %v, want missing (key only under foo)", got["status"])
+	}
+	keyringSet(t, "work", "openrouter_api_key", "sk-or-fake-work")
+	if got := providerShowArgs(t, "openrouter", "--profile", "work"); got["status"] != "configured" {
+		t.Errorf("--profile work: status = %v, want configured", got["status"])
+	}
+}
+
+// TestKeyring_DefaultServiceIsNotKit: a key under kit's shared service
+// is not foo's.
+func TestKeyring_DefaultServiceIsNotKit(t *testing.T) {
+	storeEnv(t, "  backend: keyring\n")
+	keyringSet(t, "kit", "openrouter_api_key", "sk-or-fake-kit")
+
+	if got := providerShowArgs(t, "openrouter"); got["status"] != "missing" {
+		t.Errorf("status = %v, want missing (key only under kit)", got["status"])
+	}
+}
+
+// TestEnvBackend_IgnoresKeyringService: the service default is the
+// keyring backend's alone; env still reads only the environment.
+func TestEnvBackend_IgnoresKeyringService(t *testing.T) {
+	storeEnv(t, "  backend: env\n")
+	keyringSet(t, "foo", "openrouter_api_key", "sk-or-fake-foo")
+
+	if got := providerShowArgs(t, "openrouter"); got["status"] != "missing" {
+		t.Errorf("env backend, key only in keyring: status = %v, want missing", got["status"])
+	}
+	t.Setenv("OPENROUTER_API_KEY", "sk-or-fake-plain")
+	if got := providerShowArgs(t, "openrouter"); got["status"] != "configured" {
+		t.Errorf("env backend, env var set: status = %v, want configured", got["status"])
+	}
+}
