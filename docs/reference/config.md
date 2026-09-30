@@ -139,10 +139,32 @@ End-to-end walkthrough:
 | `DEEPSEEK_API_KEY` | `deepseek` | DeepSeek hosted models |
 | `MISTRAL_API_KEY` | `mistral` | Mistral hosted models |
 
-Each scheme reads only its own variable. An OpenRouter or Groq
+Each scheme reads its own variable. An OpenRouter or Groq
 model never borrows `OPENAI_API_KEY`, so a real OpenAI key is
 never sent to another provider. `ollama`, `lmstudio` and
 `routellm` are local and take no key.
+
+#### Key precedence
+
+For a keyed scheme, foo resolves the key in this order and stops
+at the first hit:
+
+| # | Source | Example |
+|---|--------|---------|
+| 1 | `?api_key=` on the URI | `-m 'openrouter://openai/gpt-4.1-nano?api_key=sk-or-...'` |
+| 2 | The scheme's own key: secret store, then env var | `OPENROUTER_API_KEY` |
+| 3 | `LLM_API_KEY` | universal key |
+
+This mirrors kit: kit's `Resolve` sends only the URI's
+`api_key`, so foo appends the resolved key to the URI and the
+key it prechecks is the key sent. Tiers 2–3 follow kit's
+`SecretFor` order (provider key before `LLM_API_KEY`).
+
+`LLM_API_KEY` is not tied to a provider: it goes to every keyed
+scheme that has no key of its own, fallback entries included
+(kit's `LoadConfig` applies it to every URI). With more than one
+provider in play, prefer per-scheme variables so one provider's
+key is never sent to another host.
 
 The same key applies whether you pick the model by bare id, by
 pool, or as a URI: `-m 'openrouter://openai/gpt-4.1-nano'` gets
@@ -168,7 +190,7 @@ take effect on every `foo` invocation.
 | Variable | Used by | Purpose |
 |----------|---------|---------|
 | `LLM_PROVIDER` | `LoadConfig` | Default URI when no model is specified. Overrides `default:` in `llm.yaml`. |
-| `LLM_API_KEY` | `LoadConfig` | Generic provider key fallback when no per-provider env var is set. |
+| `LLM_API_KEY` | foo key precheck, `LoadConfig` | Universal key for any keyed scheme with no key of its own, fallbacks included; satisfies foo's precheck. A per-scheme variable outranks it ([key precedence](#key-precedence)). |
 | `LLM_BASE_URL` | `LoadConfig` | Custom base URL for the resolved provider. Overrides `providers.<scheme>.base_url`; a `?base_url=` param on `--model` overrides both. |
 | `LLM_FALLBACK` | `LoadConfig` | Comma-separated fallback URIs. Overrides `fallback:` in `llm.yaml`. |
 | `LLM_POOL_DISABLE` | `LoadPool` | Comma list of `alias` or `<scheme>:<model>` entries to mute without removing. |

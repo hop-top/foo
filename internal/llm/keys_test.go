@@ -41,6 +41,7 @@ func clearProviderKeys(t *testing.T) {
 	}
 	t.Setenv("LLM_BASE_URL", "")
 	t.Setenv("LLM_FALLBACK", "")
+	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 }
 

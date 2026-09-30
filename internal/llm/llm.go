@@ -222,7 +222,7 @@ func buildURI(scheme, model, envVar string) (string, error) {
 	if envVar == "" {
 		return fmt.Sprintf("%s://%s", scheme, model), nil
 	}
-	key := lookupAPIKey(envVar)
+	key := schemeKey(envVar)
 	if key == "" {
 		return "", missingKeyError(envVar, model, scheme)
 	}
@@ -272,7 +272,7 @@ func keyURI(uri string) (string, *missingKey) {
 	if envVar == "" {
 		return uri, nil
 	}
-	key := lookupAPIKey(envVar)
+	key := schemeKey(envVar)
 	if key == "" {
 		return "", &missingKey{envVar: envVar, model: parsed.Model, scheme: parsed.Scheme}
 	}
@@ -449,6 +449,30 @@ func warnDroppedFallback(m *missingKey) {
 		slog.String("missing", m.envVar),
 		slog.String("hint", "export "+m.envVar+"=... to enable it, or remove it from LLM_FALLBACK / llm.yaml fallback:"),
 	)
+}
+
+// schemeKey resolves the API key for a keyed scheme whose URI names no
+// ?api_key= (an explicit param outranks everything and is never
+// replaced). Precedence, highest first:
+//
+//  1. the scheme's own key: secret store, then its env var (lookupAPIKey)
+//  2. LLM_API_KEY, kit's universal key
+//
+// This is kit's own order for the two: SecretFor tries the provider's
+// key before LLM_API_KEY, and the google adapter reads GEMINI_API_KEY
+// before LLM_API_KEY. LLM_API_KEY is scheme-agnostic by design, so it
+// is sent to whichever keyed provider lacks its own key — fallbacks
+// included, as kit's LoadConfig applies it to every URI. That is the
+// user's explicit choice; per-scheme variables avoid it.
+//
+// Kit's Resolve reads the key from the URI alone, so the key returned
+// here is exactly the one kit sends: the precheck and the request
+// cannot disagree.
+func schemeKey(envVar string) string {
+	if key := lookupAPIKey(envVar); key != "" {
+		return key
+	}
+	return os.Getenv(kitllm.FallbackEnvKey)
 }
 
 // lookupAPIKey resolves a provider API key through the kit secret store
