@@ -106,44 +106,17 @@ func (e *Engine) Call(ctx context.Context, l *Loaded, raw json.RawMessage) (*Res
 	if err != nil {
 		return nil, err
 	}
-	if err := e.guardLexical(s, vals); err != nil {
-		return nil, err
-	}
-	req, pathArgs := e.request(l, v, vals)
-	grant, err := e.authorize(ctx, req)
+	req := e.request(l, v, vals)
+	grant, paths, err := e.gate(ctx, s, vals, req)
 	if err != nil {
 		return nil, err
 	}
-
-	for _, pa := range pathArgs {
-		if len(grant.Canonical[pa.Param]) == 0 {
-			return nil, denied(pa.Param, "authorizer granted no path")
-		}
-	}
-	if err := e.guardGranted(s, vals, grant.Canonical); err != nil {
-		return nil, err
-	}
-	paths, err := s.destinations(grant.Canonical)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.checkClobber(vals, grant.Canonical); err != nil {
-		return nil, err
-	}
+	pathArgs := req.Paths
 	filterBefore := ""
 	for _, pa := range pathArgs {
-		canon := grant.Canonical[pa.Param]
-		switch pa.Recursion {
-		case gate.FilterBefore:
+		if pa.Recursion == gate.FilterBefore {
 			filterBefore = pa.Param
 			paths[pa.Param] = grant.Files[pa.Param]
-		case gate.FilterAfter:
-			if grant.Allow == nil {
-				return nil, denied(pa.Param, "authorizer gave no output filter")
-			}
-		}
-		if err := checkKind(s.byName[pa.Param], pa, canon); err != nil {
-			return nil, err
 		}
 	}
 
@@ -167,10 +140,72 @@ func (e *Engine) Call(ctx context.Context, l *Loaded, raw json.RawMessage) (*Res
 	return res, nil
 }
 
+// gate runs every check between validated arguments and exec: the
+// lexical root guard, the authorizer, then foo's own checks on what it
+// granted (root guard, clobber, kind). It returns the grant and the
+// argv path tokens it maps to. Spec tools and gated plugins share it,
+// so a declared path is checked the same way whoever runs it.
+func (e *Engine) gate(ctx context.Context, s *Spec, vals values, req gate.Request) (gate.Grant, map[string][]string, error) {
+	if err := e.guardLexical(s, vals); err != nil {
+		return gate.Grant{}, nil, err
+	}
+	grant, err := e.authorize(ctx, req)
+	if err != nil {
+		return gate.Grant{}, nil, err
+	}
+	for _, pa := range req.Paths {
+		if len(grant.Canonical[pa.Param]) == 0 {
+			return gate.Grant{}, nil, denied(pa.Param, "authorizer granted no path")
+		}
+	}
+	if err := e.guardGranted(s, vals, grant.Canonical); err != nil {
+		return gate.Grant{}, nil, err
+	}
+	paths, err := s.destinations(grant.Canonical)
+	if err != nil {
+		return gate.Grant{}, nil, err
+	}
+	if err := s.checkClobber(vals, grant.Canonical); err != nil {
+		return gate.Grant{}, nil, err
+	}
+	for _, pa := range req.Paths {
+		if pa.Recursion == gate.FilterAfter && grant.Allow == nil {
+			return gate.Grant{}, nil, denied(pa.Param, "authorizer gave no output filter")
+		}
+		if err := checkKind(s.byName[pa.Param], pa, grant.Canonical[pa.Param]); err != nil {
+			return gate.Grant{}, nil, err
+		}
+	}
+	return grant, paths, nil
+}
+
 // request builds the gate request: one PathArg per supplied path param,
 // the effective side effect, and an argv renderer for prompts.
-func (e *Engine) request(l *Loaded, v *Variant, vals values) (gate.Request, []gate.PathArg) {
+func (e *Engine) request(l *Loaded, v *Variant, vals values) gate.Request {
 	s := l.Spec
+	return gate.Request{
+		Tool:       s.Name,
+		SideEffect: s.effectiveSideEffect(vals),
+		Network:    s.Network,
+		Paths:      s.pathArgs(vals),
+		Argv: func(canonical map[string][]string) []string {
+			paths, err := s.destinations(canonical)
+			if err != nil {
+				return nil
+			}
+			argv, err := s.render(l.Bin, v, vals, paths)
+			if err != nil {
+				return nil
+			}
+			return argv
+		},
+	}
+}
+
+// pathArgs maps the call's path values to gate path arguments, in
+// param order: the effective op, resolution target and recursion mode
+// of each supplied path param on this call.
+func (s *Spec) pathArgs(vals values) []gate.PathArg {
 	var args []gate.PathArg
 	for _, p := range s.Params {
 		list, ok := vals[p.Name].([]string)
@@ -200,23 +235,7 @@ func (e *Engine) request(l *Loaded, v *Variant, vals values) (gate.Request, []ga
 		}
 		args = append(args, pa)
 	}
-	return gate.Request{
-		Tool:       s.Name,
-		SideEffect: s.effectiveSideEffect(vals),
-		Network:    s.Network,
-		Paths:      args,
-		Argv: func(canonical map[string][]string) []string {
-			paths, err := s.destinations(canonical)
-			if err != nil {
-				return nil
-			}
-			argv, err := s.render(l.Bin, v, vals, paths)
-			if err != nil {
-				return nil
-			}
-			return argv
-		},
-	}, args
+	return args
 }
 
 func (e *Engine) authorize(ctx context.Context, req gate.Request) (gate.Grant, error) {

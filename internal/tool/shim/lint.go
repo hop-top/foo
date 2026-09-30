@@ -167,6 +167,11 @@ func (s *Spec) lintParams(l *linter) {
 	if s.Output == OutputPaths0 && filterAfter == 0 {
 		l.addf("output paths0 needs a path param with recursion filter_after")
 	}
+	s.lintSideEffectIf(l)
+}
+
+// lintSideEffectIf checks each escalation's side effect and condition.
+func (s *Spec) lintSideEffectIf(l *linter) {
 	for _, e := range s.SideEffectIf {
 		if !validSideEffect(e.SideEffect) {
 			l.addf("side_effect_if: side_effect %q invalid", e.SideEffect)
