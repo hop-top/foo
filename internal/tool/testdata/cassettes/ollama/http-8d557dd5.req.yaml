@@ -1,0 +1,56 @@
+xrr: "1"
+adapter: http
+fingerprint: 8d557dd5
+recorded_at: "2026-09-30T13:35:09Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else.",
+              "role": "user"
+            },
+            {
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"text\":\"pelican\"}",
+                    "name": "echo"
+                  },
+                  "id": "call_sm4lcnfw",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "{\"echo\":\"pelican\"}",
+              "role": "tool",
+              "tool_call_id": "call_sm4lcnfw"
+            }
+          ],
+          "model": "ornith:9b",
+          "tools": [
+            {
+              "function": {
+                "description": "Echo the given text back verbatim.",
+                "name": "echo",
+                "parameters": {
+                  "properties": {
+                    "text": {
+                      "description": "Text to echo",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }
