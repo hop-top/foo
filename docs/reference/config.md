@@ -101,7 +101,8 @@ providers:
       routers: [mf, bert]
 
 # Candidate pool the budget picker scores when no --model / -m is
-# set. foo seeds a default block on first run; edit to taste.
+# set. foo writes a default block when it creates llm.yaml on first
+# run; it never edits an existing llm.yaml. Edit to taste.
 pool:
   - alias: cheap-openai     # optional shorthand for LLM_POOL_DISABLE
     scheme: openai          # required: URI scheme in kit's registry

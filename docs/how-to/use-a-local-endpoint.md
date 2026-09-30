@@ -173,7 +173,7 @@ wanted an explicit cap. Set `--max-tokens` and retry.
 `base_url` never resolved. Confirm the key is under `providers:` →
 `openai:` (not at the top level), and that the file is the one foo
 reads — `$XDG_CONFIG_HOME/hop/llm.yaml`; foo prints the resolved
-path when it seeds the file.
+path when it creates the file on first run.
 
 **`model "..." not available`.** kit maps the server's 404 onto this
 message, so it usually means the path or the model id is wrong, not

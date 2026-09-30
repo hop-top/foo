@@ -124,11 +124,12 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 		pool, _ := kitllm.LoadPool()
 		if len(pool) == 0 {
 			// No pool block authored. Surface one slog warning so
-			// operators discover the surface; do not error — the seed
-			// path writes a default config on first run.
+			// operators discover the surface; do not error. foo seeds
+			// a pool only by creating an absent llm.yaml, never into
+			// an existing one, so the hint points at the file.
 			slog.Warn(
 				"llm.pool.empty: no pool block in ~/.config/hop/llm.yaml; falling back to single default model",
-				slog.String("hint", "edit ~/.config/hop/llm.yaml or run foo to seed a default"),
+				slog.String("hint", "add a pool: block to ~/.config/hop/llm.yaml"),
 			)
 		} else {
 			// Help operators understand why the picker has fewer

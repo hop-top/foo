@@ -150,3 +150,71 @@ func TestOffline_RemoteProviderExitCode(t *testing.T) {
 		}
 	}
 }
+
+// envValue returns key's value from an env slice built by isolatedEnv.
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// First-run seeding creates an absent llm.yaml once and never edits an
+// existing one — with or without -m, on a read-only subcommand or a
+// prompt. Loopback base_url plus --offline keep every run local.
+func TestSeed_LLMYAMLAbsentOnlyOnBinary(t *testing.T) {
+	foo := buildFoo(t)
+	const seeded = "seeded default pool config"
+	runs := [][]string{
+		{"--offline", "model", "current"},
+		{"--offline", "-m", "gpt-4o", "--no-stream", "hi"},
+	}
+
+	t.Run("existing file untouched", func(t *testing.T) {
+		env := isolatedEnv(t, t.TempDir())
+		path := filepath.Join(envValue(env, "XDG_CONFIG_HOME"), "hop", "llm.yaml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "providers:\n  openai:\n    base_url: http://127.0.0.1:9/v1\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range runs {
+			_, stderr, code := run(t, env, "", foo, args...)
+			if strings.Contains(stderr, seeded) || strings.Contains(stderr, "llm.seed.failed") {
+				t.Errorf("foo %v: exit %d, seeded over or warned about an existing llm.yaml: %q", args, code, stderr)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != body {
+				t.Fatalf("foo %v: llm.yaml changed (err %v):\n%s", args, err, got)
+			}
+			if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+				t.Errorf("foo %v: llm.yaml mode %v, want 0600", args, fi.Mode().Perm())
+			}
+		}
+	})
+
+	t.Run("absent file seeded once", func(t *testing.T) {
+		env := isolatedEnv(t, t.TempDir())
+		path := filepath.Join(envValue(env, "XDG_CONFIG_HOME"), "hop", "llm.yaml")
+
+		_, stderr, code := run(t, env, "", foo, runs[0]...)
+		if code != 0 || strings.Count(stderr, seeded) != 1 {
+			t.Fatalf("first run: exit %d, stderr %q; want 0 and one seed line", code, stderr)
+		}
+		first, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(first), "pool:") {
+			t.Fatalf("seeded llm.yaml: err %v\n%s", err, first)
+		}
+		_, stderr, code = run(t, env, "", foo, runs[0]...)
+		if code != 0 || strings.Contains(stderr, seeded) {
+			t.Errorf("second run: exit %d, stderr %q; want 0 and no seed line", code, stderr)
+		}
+		if again, _ := os.ReadFile(path); string(again) != string(first) {
+			t.Errorf("second run changed the seeded file")
+		}
+	})
+}
