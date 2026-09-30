@@ -1,0 +1,85 @@
+xrr: "1"
+adapter: http
+fingerprint: 63d5d97b
+recorded_at: "2026-09-30T13:48:50Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the ls tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"path\":[\"{{root}}/outside/missing-dir/x\"]}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            },
+            {
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"path\":[\"{{root}}/outside/missing-dir/x\"]}",
+                    "name": "ls"
+                  },
+                  "id": "call_3fJPPRaKDsZFrZ4UchoWGlq3",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "<elided: tool result>",
+              "role": "tool",
+              "tool_call_id": "call_3fJPPRaKDsZFrZ4UchoWGlq3"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "List directory contents, or show files themselves. One name per line, or a long listing (mode, links, owner, group, size, date) with long=true. Not recursive: use find to walk a tree. Paths are taken literally: no globbing, no $VAR; ~ is the home directory. Output shows canonical paths.",
+                "name": "ls",
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "all": {
+                      "description": "Include names starting with a dot (never . and ..). Default false.",
+                      "type": "boolean"
+                    },
+                    "directory": {
+                      "description": "List directories themselves, not their contents. Default false.",
+                      "type": "boolean"
+                    },
+                    "long": {
+                      "description": "Long listing instead of one name per line. Default false.",
+                      "type": "boolean"
+                    },
+                    "path": {
+                      "description": "Directories or files to list. Absolute, or relative to {{root}}. Default [\".\"].",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 64,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "reverse": {
+                      "description": "Reverse the sort order. Default false.",
+                      "type": "boolean"
+                    },
+                    "sort": {
+                      "description": "Sort by name, modification time (newest first) or size (largest first). Default \"name\".",
+                      "enum": [
+                        "name",
+                        "size",
+                        "time"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

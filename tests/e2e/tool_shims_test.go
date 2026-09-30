@@ -26,7 +26,7 @@ func runShimCases(t *testing.T, e *shimEnv, cases []shimCase) {
 	for _, mode := range shimModes {
 		for _, tc := range cases {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
-				tc.check(t, e.call(mode, tc.cwd, tc.tool, jsonArgs(t, tc.args)))
+				tc.check(t, e.call(t, mode, tc.cwd, tc.tool, jsonArgs(t, tc.args)))
 			})
 		}
 	}
@@ -34,7 +34,7 @@ func runShimCases(t *testing.T, e *shimEnv, cases []shimCase) {
 
 // TestToolShims_Acceptance is the path-scope acceptance table: one
 // read-only grant, strict mode, and each call through -T (in-process,
-// stub model) and through a foo-tool-<name> link.
+// recorded model) and through a foo-tool-<name> link.
 func TestToolShims_Acceptance(t *testing.T) {
 	ensureBinary(t)
 	e := newShimEnv(t)
@@ -230,7 +230,7 @@ func TestToolShims_Writes(t *testing.T) {
 			return d
 		}
 		call := func(t *testing.T, tool string, args map[string]any) outcome {
-			return e.call(mode, e.root, tool, jsonArgs(t, args))
+			return e.call(t, mode, e.root, tool, jsonArgs(t, args))
 		}
 		t.Run(mode, func(t *testing.T) {
 			t.Run("sed replace is literal", func(t *testing.T) {
@@ -340,7 +340,7 @@ func TestToolShims_OutsideGrantAlike(t *testing.T) {
 						if tool == "cp" {
 							args = map[string]any{"src": []string{filepath.Join(w, "f")}, "dst": p}
 						}
-						o := e.call(mode, e.root, tool, jsonArgs(t, args))
+						o := e.call(t, mode, e.root, tool, jsonArgs(t, args))
 						require.NotNilf(t, o.Err, "%s %s ran: %s", tool, rel, o.Raw)
 						require.Equalf(t, "denied", o.Err.Kind, "%s %s: %s", tool, rel, o.Raw)
 						// Shapes: the lexical path climbs back into the grant or not.
@@ -460,14 +460,13 @@ func TestToolShims_UnknownTool(t *testing.T) {
 	ensureBinary(t)
 	e := newShimEnv(t)
 	t.Run(modeInProcess, func(t *testing.T) {
-		stub := newStubModel(t, "ls", "{}")
-		code, _, stderr := e.run(e.root, []string{"OPENAI_API_KEY=sk-test", "LLM_BASE_URL=" + stub.URL + "/v1"},
-			"--offline", "-m", "gpt-4o", "-T", "nope", "go")
+		run := e.runModel(e.root, "nope", "go")
+		code, stderr := run.code, run.stderr
 		require.Equal(t, 3, code, stderr)
 		for _, want := range []string{`"nope"`, "ls", "rm", "sed", "foo tool list"} {
 			require.Contains(t, stderr, want)
 		}
-		require.Empty(t, stub.toolMessage())
+		require.Empty(t, run.exchanges, "a model request went out before the unknown tool was refused")
 	})
 	t.Run(modeLink, func(t *testing.T) {
 		link := filepath.Join(e.bin, "foo-tool-nope")

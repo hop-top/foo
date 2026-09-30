@@ -70,6 +70,10 @@ type Exchange struct {
 // through an xrr session and refuses every other request.
 type Transport struct {
 	Session xrr.Session
+	// Replay, when set, is tried first; only a request it has no
+	// recording for goes to Session. With a record-mode Session this
+	// records just the missing calls and keeps every existing one.
+	Replay xrr.Session
 	// Next carries record-mode requests to the network.
 	Next http.RoundTripper
 	// Subst lists volatile values to replace with placeholders.
@@ -131,7 +135,21 @@ func (t *Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	fp, _ := t.adapter.Fingerprint(req)
 
 	ex := Exchange{Method: r.Method, URL: stripKey(r.URL), Body: jsonOrString(body), Canonical: canonical, Fingerprint: fp}
-	resp, err := t.Session.Record(r.Context(), &t.adapter, req, func() (xrr.Response, error) {
+	var resp xrr.Response
+	var err error = xrr.ErrCassetteMiss
+	if t.Replay != nil {
+		resp, err = t.Replay.Record(r.Context(), &t.adapter, req, nil)
+	}
+	if errors.Is(err, xrr.ErrCassetteMiss) {
+		resp, err = t.record(r, req, &ex)
+	}
+	return t.finish(r, req, fp, ex, resp, err)
+}
+
+// record sends req through Session: replayed in replay mode, sent live
+// and saved in record mode.
+func (t *Transport) record(r *http.Request, req *xhttp.Request, ex *Exchange) (xrr.Response, error) {
+	return t.Session.Record(r.Context(), &t.adapter, req, func() (xrr.Response, error) {
 		// Only record mode runs this; replay never touches the network.
 		t.live.Add(1)
 		ex.Live = true
@@ -150,6 +168,10 @@ func (t *Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 			Body:    t.hide(string(data)),
 		}, nil
 	})
+}
+
+// finish turns a session result into the response foo sees.
+func (t *Transport) finish(r *http.Request, req *xhttp.Request, fp string, ex Exchange, resp xrr.Response, err error) (*http.Response, error) {
 	if errors.Is(err, xrr.ErrCassetteMiss) {
 		ex.Miss = true
 		t.observe(ex)

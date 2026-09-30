@@ -1,0 +1,55 @@
+xrr: "1"
+adapter: http
+fingerprint: 1e6bd410
+recorded_at: "2026-09-30T13:46:36Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json
+    body: |
+        {
+          "id": "chatcmpl-EToviU6larjDjuwogI2RIlSAgkkOJ",
+          "object": "chat.completion",
+          "created": 1790775994,
+          "model": "gpt-4.1-nano-2025-04-14",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call_tlch312ahY5EFiRl6UEM7Jrf",
+                    "type": "function",
+                    "function": {
+                      "name": "cp",
+                      "arguments": "{\"dst\": \"{{root}}/tmp/b\", \"src\": [\"{{root}}/path/to/a\"]}"
+                    }
+                  }
+                ],
+                "refusal": null,
+                "annotations": []
+              },
+              "logprobs": null,
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 455,
+            "completion_tokens": 117,
+            "total_tokens": 572,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "service_tier": "default",
+          "system_fingerprint": "fp_d3d6c52e18"
+        }

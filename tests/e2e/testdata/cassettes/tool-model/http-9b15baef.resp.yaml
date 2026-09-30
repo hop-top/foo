@@ -1,0 +1,55 @@
+xrr: "1"
+adapter: http
+fingerprint: 9b15baef
+recorded_at: "2026-09-30T13:46:30Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json
+    body: |
+        {
+          "id": "chatcmpl-ETovdDT7Y0sxivN1pz9VnQohlcvL6",
+          "object": "chat.completion",
+          "created": 1790775989,
+          "model": "gpt-4.1-nano-2025-04-14",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call_Z2Tb23vLIOo0UFKBGWehytbK",
+                    "type": "function",
+                    "function": {
+                      "name": "ls",
+                      "arguments": "{\"path\": [\"-R\"]}"
+                    }
+                  }
+                ],
+                "refusal": null,
+                "annotations": []
+              },
+              "logprobs": null,
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 357,
+            "completion_tokens": 32,
+            "total_tokens": 389,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "service_tier": "default",
+          "system_fingerprint": "fp_3910564f3b"
+        }

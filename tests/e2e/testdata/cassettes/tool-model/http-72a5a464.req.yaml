@@ -1,0 +1,59 @@
+xrr: "1"
+adapter: http
+fingerprint: 72a5a464
+recorded_at: "2026-09-30T13:46:10Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the notes tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"file\":\"todo.md\",\"text\":\"two\"}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            },
+            {
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"file\": \"todo.md\", \"text\": \"two\"}",
+                    "name": "notes"
+                  },
+                  "id": "call_NvG0hGQbEwnpaKzhfLBy2HeI",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "<elided: tool result>",
+              "role": "tool",
+              "tool_call_id": "call_NvG0hGQbEwnpaKzhfLBy2HeI"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Append a note to a file",
+                "name": "notes",
+                "parameters": {
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "file",
+                    "text"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

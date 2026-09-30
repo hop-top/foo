@@ -111,3 +111,31 @@ func mustGlob(t *testing.T, dir, pattern string) string {
 	}
 	return m[0]
 }
+
+// With Replay set, a record-mode transport sends only the calls that
+// have no recording.
+func TestTransport_ReplayFirstRecordsOnlyMisses(t *testing.T) {
+	dir := t.TempDir()
+	var live int
+	next := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		live++
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"n":1}`))}, nil
+	})
+	tr := &Transport{
+		Session: xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(dir)),
+		Replay:  xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette(dir)),
+		Next:    next,
+	}
+	send := func(body string) {
+		req, _ := http.NewRequest(http.MethodPost, "http://x/v1/chat/completions", strings.NewReader(body))
+		if _, err := tr.RoundTrip(req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(`{"a":1}`)
+	send(`{"a":1}`)
+	send(`{"a":2}`)
+	if live != 2 {
+		t.Fatalf("live = %d, want 2 (the repeat replays)", live)
+	}
+}

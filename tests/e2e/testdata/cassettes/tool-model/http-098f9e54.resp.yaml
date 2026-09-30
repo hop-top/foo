@@ -1,0 +1,45 @@
+xrr: "1"
+adapter: http
+fingerprint: 098f9e54
+recorded_at: "2026-09-30T13:49:15Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json
+    body: |
+        {
+          "id": "chatcmpl-EToyJKyG5YwADWoZXit7tEFKwJlvu",
+          "object": "chat.completion",
+          "created": 1790776155,
+          "model": "gpt-4.1-nano-2025-04-14",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "done",
+                "refusal": null,
+                "annotations": []
+              },
+              "logprobs": null,
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 478,
+            "completion_tokens": 2,
+            "total_tokens": 480,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "service_tier": "default",
+          "system_fingerprint": "fp_a8d11c9b56"
+        }

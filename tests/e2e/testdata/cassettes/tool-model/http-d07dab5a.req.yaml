@@ -1,0 +1,71 @@
+xrr: "1"
+adapter: http
+fingerprint: d07dab5a
+recorded_at: "2026-09-30T13:47:51Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the mv tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"dst\":\"{{root}}/w/in-process/mv_from_a_read-only_grant_denied_on_src/m\",\"src\":[\"{{root}}/ro/in-process/mv_from_a_read-only_grant_denied_on_src/m\"]}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            },
+            {
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"dst\":\"{{root}}/w/in-process/mv_from_a_read-only_grant_denied_on_src/m\",\"src\":[\"{{root}}/ro/in-process/mv_from_a_read-only_grant_denied_on_src/m\"]}",
+                    "name": "mv"
+                  },
+                  "id": "call_sYuq9zQNGAcMfM7HgUtYfOgB",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "<elided: tool result>",
+              "role": "tool",
+              "tool_call_id": "call_sYuq9zQNGAcMfM7HgUtYfOgB"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Move or rename files or directories. With several sources, dst must be an existing directory; an existing directory dst receives each source under its own name. Never replaces an existing file unless overwrite=true, and never an existing directory. A link is moved as the link itself. Never moves /, the home directory or an entry directly under /, nor puts anything there. Paths are taken literally: no globbing, no $VAR; ~ is the home directory. Output shows canonical paths.",
+                "name": "mv",
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dst": {
+                      "description": "New path, or an existing directory to move into. Absolute, or relative to {{root}}.",
+                      "type": "string"
+                    },
+                    "overwrite": {
+                      "description": "Replace an existing destination file. Default false.",
+                      "type": "boolean"
+                    },
+                    "src": {
+                      "description": "Files or directories to move. Absolute, or relative to {{root}}.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 64,
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "src",
+                    "dst"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

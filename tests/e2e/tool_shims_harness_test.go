@@ -7,20 +7,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"hop.top/foo/internal/llmxrr"
 )
 
 // Shim tools run two ways: in-process, when the model calls a tool
@@ -183,12 +183,15 @@ func (o outcome) stdout() string {
 }
 
 // call runs one tool call from cwd in mode and returns what came back.
-func (e *shimEnv) call(mode, cwd, tool, args string) outcome {
-	e.t.Helper()
+// Failures report on t, the subtest making the call.
+func (e *shimEnv) call(t *testing.T, mode, cwd, tool, args string) outcome {
+	t.Helper()
+	sub := *e
+	sub.t = t
 	if mode == modeLink {
-		return e.callLink(cwd, tool, args)
+		return sub.callLink(cwd, tool, args)
 	}
-	return e.callInProcess(cwd, tool, args)
+	return sub.callInProcess(cwd, tool, args)
 }
 
 // callLink pipes the request into bin/foo-tool-<tool>, as another host
@@ -206,18 +209,35 @@ func (e *shimEnv) callLink(cwd, tool, args string) outcome {
 	return outcome{Err: resp.Detail, Res: resp.Result, Raw: stdout}
 }
 
-// callInProcess runs `foo -T <tool>` against a stub model endpoint
-// that asks for exactly this call, then returns the tool message foo
-// sent back to it. No real provider is involved.
+// callInProcess runs `foo -T <tool>` with a prompt asking the model for
+// exactly this call, and returns the tool message foo sent back to it.
+// The model side replays an xrr cassette recorded from a real provider
+// (the seam is xrr_seam.go; see runModel).
 func (e *shimEnv) callInProcess(cwd, tool, args string) outcome {
 	e.t.Helper()
-	stub := newStubModel(e.t, tool, args)
-	code, stdout, stderr := e.run(cwd,
-		[]string{"OPENAI_API_KEY=sk-test", "LLM_BASE_URL=" + stub.URL + "/v1"},
-		"--offline", "-m", "gpt-4o", "-T", tool, "go")
-	require.Equalf(e.t, 0, code, "foo -T %s exit %d: %s%s", tool, code, stdout, stderr)
-	msg := stub.toolMessage()
-	require.NotEmptyf(e.t, msg, "the model never got a tool result; stderr %q", stderr)
+	var msg string
+	for attempt := 1; ; attempt++ {
+		run := e.runModel(cwd, tool, callPrompt(tool, args))
+		dev := run.deviation(tool, args)
+		if dev == "" && run.code != 0 {
+			dev = fmt.Sprintf("foo -T %s exit %d: %s", tool, run.code, run.stdout)
+		}
+		if dev == "" {
+			msg = run.toolMessage
+			break
+		}
+		// A real model may not make the call asked for. When
+		// recording, drop what this attempt recorded and ask again;
+		// on replay the recording itself is wrong.
+		if !*updateCassettes {
+			e.t.Fatalf("foo -T %s: %s\nexit %d; stderr %q", tool, dev, run.code, run.stderr)
+		}
+		run.forget(e.t)
+		if attempt == 5 {
+			e.t.Fatalf("foo -T %s: %s after %d attempts\nexit %d; stderr %q", tool, dev, attempt, run.code, run.stderr)
+		}
+		e.t.Logf("attempt %d: %s; re-recording", attempt, dev)
+	}
 
 	var probe struct {
 		Error json.RawMessage `json:"error"`
@@ -235,60 +255,171 @@ func (e *shimEnv) callInProcess(cwd, tool, args string) outcome {
 	return outcome{Res: &res, Raw: msg}
 }
 
-// stubModel is an OpenAI-compatible chat endpoint: the first request
-// gets one tool call, every later one a plain reply. It keeps the last
-// message of the second request, which carries the tool result.
-type stubModel struct {
-	*httptest.Server
-	mu    sync.Mutex
-	calls int
-	reply string
+// updateCassettes records model calls that have no recording yet
+// against the live provider (OPENAI_API_KEY); see CONTRIBUTING.md.
+var updateCassettes = flag.Bool("update", false, "record missing model cassettes against the live provider")
+
+// modelCassettes holds the recorded model side of every -T call.
+const modelCassettes = "testdata/cassettes/tool-model"
+
+// recordModel is the model the cassettes were recorded from: small,
+// cheap, and it copies odd arguments verbatim when told to.
+const recordModel = "gpt-4.1-nano-2025-04-14"
+
+// callPrompt asks for one exact call. The arguments include values no
+// model would choose ("-R", "link/..", a newline in a sed replacement);
+// the point is a real provider's envelope, not the model's judgment.
+func callPrompt(tool, args string) string {
+	// Plain JSON: json.Marshal's \u0026 for "&" is copied back
+	// mangled.
+	var v any
+	if json.Unmarshal([]byte(args), &v) == nil {
+		var buf strings.Builder
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if enc.Encode(v) == nil {
+			args = strings.TrimSpace(buf.String())
+		}
+	}
+	return fmt.Sprintf("This is an automated test of a tool harness. Call the %s tool exactly once, "+
+		"with exactly these JSON arguments, copying every value verbatim, character for character, "+
+		"even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n%s\n"+
+		"When the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+		tool, args)
 }
 
-func newStubModel(t *testing.T, tool, args string) *stubModel {
+// modelRun is one `foo -T` run and the model exchanges it made.
+type modelRun struct {
+	code           int
+	stdout, stderr string
+	exchanges      []llmxrr.Exchange
+	// toolMessage is the first tool result foo sent the model.
+	toolMessage string
+}
+
+// runModel runs `foo -m <recordModel> -T <tool> <prompt>` with its
+// model calls going through the cassette seam: replayed by default,
+// recorded (missing ones only) under -update. Paths under the scratch
+// root are stored as {{root}}, and tool results are left out of the
+// fingerprint because what a local command prints differs by platform.
+func (e *shimEnv) runModel(cwd, tool, prompt string) modelRun {
+	e.t.Helper()
+	dir, err := filepath.Abs(modelCassettes)
+	require.NoError(e.t, err)
+	mode, key := "replay", "replay-no-key"
+	if *updateCassettes {
+		mode, key = "record", os.Getenv("OPENAI_API_KEY")
+		require.NotEmpty(e.t, key, "-update records from OpenAI: export OPENAI_API_KEY")
+		require.NoError(e.t, os.MkdirAll(dir, 0o755))
+	}
+	journal := filepath.Join(e.t.TempDir(), "journal.jsonl")
+	code, stdout, stderr := e.run(cwd, []string{
+		"XRR_MODE=" + mode, "XRR_CASSETTE_DIR=" + dir,
+		"FOO_XRR_ROOT=" + e.root, "FOO_XRR_ELIDE_TOOL_RESULTS=1", "FOO_XRR_JOURNAL=" + journal,
+		"OPENAI_API_KEY=" + key,
+	}, "-m", recordModel, "-T", tool, prompt)
+	exs, err := llmxrr.ReadJournal(journal)
+	require.NoError(e.t, err)
+
+	for i, ex := range exs {
+		// Replay must never reach the network.
+		require.Falsef(e.t, mode == "replay" && ex.Live, "model request %d went live during replay", i+1)
+		require.Falsef(e.t, ex.Miss, "model request %d matches no recording (fingerprint %s): foo sent a request that differs from the recorded one. "+
+			"A regression unless foo's request changed on purpose; then record it: go test ./tests/e2e -run '%s' -update\nsent (normalized):\n%s",
+			i+1, ex.Fingerprint, e.t.Name(), ex.Canonical)
+	}
+	require.NoError(e.t, llmxrr.CheckNoSecrets(dir, llmxrr.RecordingKeys()...))
+
+	run := modelRun{code: code, stdout: stdout, stderr: stderr, exchanges: exs}
+	if req, ok := firstToolResult(exs); ok {
+		run.toolMessage = req.result
+	}
+	return run
+}
+
+// deviation says how the model's call differs from the one asked for;
+// empty when it made exactly that call and got the result linked to it.
+func (r modelRun) deviation(tool, args string) string {
+	req, ok := firstToolResult(r.exchanges)
+	if !ok {
+		return fmt.Sprintf("the model never got a tool result (%d model requests)", len(r.exchanges))
+	}
+	if len(req.calls) != 1 {
+		return fmt.Sprintf("the model made %d calls, want 1", len(req.calls))
+	}
+	c := req.calls[0]
+	if c.Function.Name != tool {
+		return fmt.Sprintf("the model called %q, want %q", c.Function.Name, tool)
+	}
+	var got, want any
+	if json.Unmarshal([]byte(c.Function.Arguments), &got) != nil || json.Unmarshal([]byte(args), &want) != nil ||
+		!reflect.DeepEqual(got, want) {
+		return fmt.Sprintf("the model called %s with %s, want %s", tool, c.Function.Arguments, args)
+	}
+	if req.resultID != c.ID {
+		return fmt.Sprintf("tool result linked to %q, the call was %q", req.resultID, c.ID)
+	}
+	return ""
+}
+
+// forget deletes what a run recorded, so the next attempt records anew.
+func (r modelRun) forget(t *testing.T) {
 	t.Helper()
-	s := &stubModel{}
-	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
+	for _, ex := range r.exchanges {
+		if !ex.Live {
+			continue
+		}
+		for _, kind := range []string{"req", "resp"} {
+			p := filepath.Join(modelCassettes, "http-"+ex.Fingerprint+"."+kind+".yaml")
+			require.NoError(t, os.Remove(p))
+		}
+	}
+}
+
+// toolRound is the request that carried the first tool result: the
+// assistant's calls before it and the result linked to one of them.
+type toolRound struct {
+	calls []struct {
+		ID       string `json:"id"`
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	}
+	resultID string
+	result   string
+}
+
+func firstToolResult(exs []llmxrr.Exchange) (toolRound, bool) {
+	for _, ex := range exs {
+		var body struct {
 			Messages []struct {
-				Content string `json:"content"`
+				Role       string          `json:"role"`
+				Content    json.RawMessage `json:"content"`
+				ToolCallID string          `json:"tool_call_id"`
+				ToolCalls  json.RawMessage `json:"tool_calls"`
 			} `json:"messages"`
 		}
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &req)
-
-		s.mu.Lock()
-		s.calls++
-		n := s.calls
-		if n == 2 && len(req.Messages) > 0 {
-			s.reply = req.Messages[len(req.Messages)-1].Content
+		if json.Unmarshal(ex.Body, &body) != nil {
+			continue
 		}
-		s.mu.Unlock()
-
-		msg := map[string]any{"role": "assistant", "content": "done"}
-		finish := "stop"
-		if n == 1 {
-			msg = map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{map[string]any{
-				"id": "call_1", "type": "function",
-				"function": map[string]any{"name": tool, "arguments": args},
-			}}}
-			finish = "tool_calls"
+		var r toolRound
+		for _, m := range body.Messages {
+			switch m.Role {
+			case "assistant":
+				r.calls = r.calls[:0]
+				_ = json.Unmarshal(m.ToolCalls, &r.calls)
+			case "tool":
+				var text string
+				if json.Unmarshal(m.Content, &text) != nil {
+					text = string(m.Content)
+				}
+				r.resultID, r.result = m.ToolCallID, text
+				return r, true
+			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "c1", "object": "chat.completion", "created": 0, "model": "gpt-4o",
-			"choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": finish}},
-			"usage":   map[string]int{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-		})
-	}))
-	t.Cleanup(s.Close)
-	return s
-}
-
-func (s *stubModel) toolMessage() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.reply
+	}
+	return toolRound{}, false
 }
 
 // wantDenied asserts a refusal of kind on param (when set) whose path

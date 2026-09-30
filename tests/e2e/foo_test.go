@@ -68,10 +68,14 @@ func runFoo(t *testing.T, tmpHome string, args ...string) (string, string, error
 // binary. VCS stamping is off: no test reads it (the version comes from
 // ldflags), and it fails wherever the go tool misreads the checkout,
 // e.g. in a linked worktree under a dir holding an unrelated .git.
+//
+// The xrr tag compiles in the cassette seam (xrr_seam.go), so a test
+// can replay model calls recorded from a real provider. It stays inert
+// unless the test sets XRR_MODE; release builds never carry it.
 func ensureBinary(t *testing.T) {
 	t.Helper()
 	buildOnce.Do(func() {
-		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", fooBin, ".")
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-tags", "xrr", "-o", fooBin, ".")
 		cmd.Dir = filepath.Join("..", "..")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build foo: %w\n%s", err, out)

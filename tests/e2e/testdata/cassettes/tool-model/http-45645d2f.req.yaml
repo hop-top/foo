@@ -1,0 +1,66 @@
+xrr: "1"
+adapter: http
+fingerprint: 45645d2f
+recorded_at: "2026-09-30T13:47:57Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the cat tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"path\":[\"{{root}}/outside/f\"]}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            },
+            {
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"path\":[\"{{root}}/outside/f\"]}",
+                    "name": "cat"
+                  },
+                  "id": "call_YbZfzlg6wtpTkJi0Vq1Bdam5",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "<elided: tool result>",
+              "role": "tool",
+              "tool_call_id": "call_YbZfzlg6wtpTkJi0Vq1Bdam5"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Print the contents of files, concatenated in order. Large output is truncated (see stdout_truncated); use head, tail or grep for big files, and stat for binary ones. Paths are taken literally: no globbing, no $VAR; ~ is the home directory. Output shows canonical paths.",
+                "name": "cat",
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "number": {
+                      "description": "Number output lines. Default false.",
+                      "type": "boolean"
+                    },
+                    "path": {
+                      "description": "Files to print. Absolute, or relative to {{root}}.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 16,
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }
