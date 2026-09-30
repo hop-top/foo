@@ -28,9 +28,8 @@ and `-T <name>` enables.
 ## Quick path
 
 ```sh
-# macOS; Linux: ~/.config/foo/tools
-mkdir -p ~/Library/Application\ Support/foo/tools
-$EDITOR ~/Library/Application\ Support/foo/tools/file.yaml
+mkdir -p "$XDG_CONFIG_HOME/foo/tools"
+$EDITOR "$XDG_CONFIG_HOME/foo/tools/file.yaml"
 foo tool list | grep '^file '
 ```
 
@@ -38,8 +37,10 @@ foo tool list | grep '^file '
 
 ### 1. Write the spec
 
-Save as `tools/file.yaml` in foo's config directory (next to
-`scope.yaml`; the file name must be the tool name):
+Save as `$XDG_CONFIG_HOME/foo/tools/file.yaml`, next to `scope.yaml`
+(`XDG_CONFIG_HOME` defaults to `~/.config` on Linux and
+`~/Library/Application Support` on macOS). The file name must be the
+tool name:
 
 ```yaml
 spec: 1
@@ -83,8 +84,8 @@ Excerpt (some columns elided):
 
 ```
 $ foo tool list
-NAME  SOURCE                                                         …  SIDE-EFFECT  PATHS   STATUS
-file  user:/Users/me/Library/Application Support/foo/tools/file.yaml …  read         path:r  active
+NAME  SOURCE                                         …  SIDE-EFFECT  PATHS   STATUS
+file  user:$XDG_CONFIG_HOME/foo/tools/file.yaml      …  read         path:r  active
 ```
 
 A spec that fails to load is left out, and `foo tool list` says why
@@ -118,8 +119,8 @@ replaces foo's `head` everywhere, including `foo tool install` links
 
 ```
 $ foo tool list
-NAME  SOURCE                                                                                 …  STATUS
-head  user:/Users/me/Library/Application Support/foo/tools/head.yaml (overrides builtin)  …  active
+NAME  SOURCE                                                             …  STATUS
+head  user:$XDG_CONFIG_HOME/foo/tools/head.yaml (overrides builtin)      …  active
 ```
 
 Start from the built-in's behavior in
@@ -141,7 +142,7 @@ Start from the built-in's behavior in
 
 foo reads specs from three places; for each name the highest one wins:
 
-1. `tools/<name>.yaml` in foo's config directory (user),
+1. `$XDG_CONFIG_HOME/foo/tools/<name>.yaml` (user),
 2. `/etc/xdg/foo/tools/<name>.yaml` (system),
 3. foo's embedded specs (built-in).
 

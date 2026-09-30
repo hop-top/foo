@@ -8,7 +8,7 @@ built-ins and your own. Task walkthrough:
 
 | Source | Path | `foo tool list` SOURCE |
 |--------|------|------------------------|
-| User | `<foo config dir>/tools/<name>.yaml` (macOS `~/Library/Application Support/foo/tools`, Linux `~/.config/foo/tools`, or `$XDG_CONFIG_HOME/foo/tools`) | `user:<path>` |
+| User | `$XDG_CONFIG_HOME/foo/tools/<name>.yaml` (`XDG_CONFIG_HOME` unset: `~/.config` on Linux, `~/Library/Application Support` on macOS) | `user:<path>` |
 | System | `/etc/xdg/foo/tools/<name>.yaml` | `system:<path>` |
 | Built-in | compiled into foo | `builtin` |
 

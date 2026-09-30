@@ -33,7 +33,7 @@ foo's spec tools on the host's `$PATH`, gated by your scope.
 ## Quick path
 
 ```sh
-foo tool install --dir ~/.local/bin      # a directory already on $PATH
+foo tool install --dir "$XDG_BIN_HOME"   # a directory already on $PATH
 echo '{"name":"ls","arguments":{"path":["src"]}}' | foo-tool-ls
 ```
 
@@ -43,15 +43,16 @@ echo '{"name":"ls","arguments":{"path":["src"]}}' | foo-tool-ls
 
 ```
 $ foo tool install
-[foo] note: /Users/me/.local/bin/foo is not on $PATH; add it for other hosts to find the links
+[foo] note: $XDG_BIN_HOME/foo is not on $PATH; add it for other hosts to find the links
 NAME   LINK                                      ACTION   REASON
-cat    /Users/me/.local/bin/foo/foo-tool-cat     created
-cp     /Users/me/.local/bin/foo/foo-tool-cp      created
+cat    $XDG_BIN_HOME/foo/foo-tool-cat     created
+cp     $XDG_BIN_HOME/foo/foo-tool-cp      created
 …
 ```
 
 Each link is a symlink named `foo-tool-<name>` pointing at the foo
-binary. The default directory, `~/.local/bin/foo`, is off `$PATH` on
+binary. The default directory, `$XDG_BIN_HOME/foo` (`XDG_BIN_HOME`
+defaults to `~/.local/bin`), is off `$PATH` on
 purpose: add it to the host's `PATH`, or pass `--dir` with a directory
 that is already on it. Running `install` again reports `unchanged`;
 links for specs you removed are deleted; anything at a link path that
@@ -90,7 +91,7 @@ It applies to `-T` runs too.
 ### 4. Remove the links
 
 ```sh
-foo tool uninstall                  # or: foo tool uninstall --dir ~/.local/bin
+foo tool uninstall                  # or: foo tool uninstall --dir "$XDG_BIN_HOME"
 ```
 
 Only links that point at foo are removed.
@@ -112,8 +113,8 @@ the tool's discovery metadata: `parameters` (the JSON Schema the host
 passes to its model) and `foo_tool`, foo's own annotations (side
 effect, and for each path argument its ops and how it is resolved).
 Discovery reads no policy file. A call reads your `scope.yaml` and
-`tool-policy.yaml` from foo's config directory, like `-T` does. A
-manifest in foo's state directory records the links foo created, so
+`tool-policy.yaml` from `$XDG_CONFIG_HOME/foo`, like `-T` does. A
+manifest, `$XDG_STATE_HOME/foo/tool-shims.json`, records the links foo created, so
 `install` and `uninstall` touch nothing else.
 
 `foo tool list` skips links to foo on `$PATH`, so installing them
