@@ -1,0 +1,82 @@
+xrr: "1"
+adapter: http
+fingerprint: 7eaac719
+recorded_at: "2026-09-30T13:47:24Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the sed tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"find\":\"x\",\"path\":[\"{{root}}/w/in-process/sed_newline_in_replace_refused/s.txt\"],\"replace\":\"y\\nw /tmp/leak\"}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Replace text in files with one substitution: find is a regular expression (basic, or extended with extended=true), replace is the text put in its place, taken literally unless backrefs=true. Edits the files in place unless dry_run=true, which prints the result and changes nothing. Replaces the first match per line unless global=true or occurrence is set. Paths are taken literally: no globbing, no $VAR; ~ is the home directory. Output shows canonical paths.",
+                "name": "sed",
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "backrefs": {
+                      "description": "Read replace with sed syntax: & is the whole match, \\1 to \\9 are groups, \\& and \\\\ are a literal & and backslash; replace may not end in a lone backslash. Default false.",
+                      "type": "boolean"
+                    },
+                    "dry_run": {
+                      "description": "Print the result instead of editing the files; needs only read access. Default false.",
+                      "type": "boolean"
+                    },
+                    "extended": {
+                      "description": "Use extended regular expressions (+ ? | and bare groups). Default false.",
+                      "type": "boolean"
+                    },
+                    "find": {
+                      "description": "Regular expression to match; no newlines.",
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "global": {
+                      "description": "Replace every match on a line. Default false.",
+                      "type": "boolean"
+                    },
+                    "ignore_case": {
+                      "description": "Match case-insensitively. Default false.",
+                      "type": "boolean"
+                    },
+                    "occurrence": {
+                      "description": "Replace only the Nth match on each line.",
+                      "maximum": 512,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "description": "Files to edit. Absolute, or relative to {{root}}.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 16,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "replace": {
+                      "description": "Replacement text, inserted literally: & and backslashes are plain characters. Set backrefs=true to use & and \\1 to \\9. No newlines.",
+                      "maxLength": 1024,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "find",
+                    "replace"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

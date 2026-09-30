@@ -1,0 +1,55 @@
+xrr: "1"
+adapter: http
+fingerprint: f53e2015
+recorded_at: "2026-09-30T13:48:00Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json
+    body: |
+        {
+          "id": "chatcmpl-ETox5kM82UNFBXA79y7gQQD9XBwiv",
+          "object": "chat.completion",
+          "created": 1790776079,
+          "model": "gpt-4.1-nano-2025-04-14",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call_UEvemzGOX0Re7QETHHhuc1aO",
+                    "type": "function",
+                    "function": {
+                      "name": "cat",
+                      "arguments": "{\"path\":[\"{{root}}/outside/missing\"]}"
+                    }
+                  }
+                ],
+                "refusal": null,
+                "annotations": []
+              },
+              "logprobs": null,
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 297,
+            "completion_tokens": 58,
+            "total_tokens": 355,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "service_tier": "default",
+          "system_fingerprint": "fp_a8d11c9b56"
+        }

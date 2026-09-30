@@ -1,0 +1,98 @@
+xrr: "1"
+adapter: http
+fingerprint: 6316303d
+recorded_at: "2026-09-30T13:47:09Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the grep tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"path\":[\"{{root}}/path/to/a\"],\"pattern\":\"-f/etc/passwd\"}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Search files for lines matching a pattern (basic regular expression unless extended or fixed). Prints path:line:text. With recursive=true, searches every permitted regular file under the given directories; symlinks are skipped and files outside the permitted scope are left out and counted in \"filtered\". Exit code 1 means no match and is ok. Paths are taken literally: no globbing, no $VAR; ~ is the home directory. Output shows canonical paths.",
+                "name": "grep",
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "context": {
+                      "description": "Lines of context to print around each match.",
+                      "maximum": 20,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "count": {
+                      "description": "Print only a count of matching lines per file. Default false.",
+                      "type": "boolean"
+                    },
+                    "extended": {
+                      "description": "Treat the pattern as an extended regular expression. Default false.",
+                      "type": "boolean"
+                    },
+                    "files_only": {
+                      "description": "Print only the names of files with a match. Default false.",
+                      "type": "boolean"
+                    },
+                    "fixed": {
+                      "description": "Treat the pattern as a literal string. Default false.",
+                      "type": "boolean"
+                    },
+                    "ignore_case": {
+                      "description": "Case-insensitive match. Default false.",
+                      "type": "boolean"
+                    },
+                    "invert": {
+                      "description": "Print lines that do not match. Default false.",
+                      "type": "boolean"
+                    },
+                    "line_number": {
+                      "description": "Prefix each line with its line number. Default true.",
+                      "type": "boolean"
+                    },
+                    "max_count": {
+                      "description": "Stop reading a file after this many matching lines.",
+                      "maximum": 10000,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "description": "Files to search, or directories with recursive=true. Absolute, or relative to {{root}}.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 64,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "pattern": {
+                      "description": "The pattern to search for.",
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "recursive": {
+                      "description": "Search every permitted regular file under directory paths. Default false.",
+                      "type": "boolean"
+                    },
+                    "word": {
+                      "description": "Match whole words only. Default false.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "pattern",
+                    "path"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

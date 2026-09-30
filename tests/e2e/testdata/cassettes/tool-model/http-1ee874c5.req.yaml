@@ -1,0 +1,52 @@
+xrr: "1"
+adapter: http
+fingerprint: 1ee874c5
+recorded_at: "2026-09-30T13:51:16Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the rm tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"path\":[\"{{root}}/hl\"]}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Remove files, links or directories. A link is removed itself; its target is never touched. Directories need recursive=true (or dir=true when empty). Recursive removal is all or nothing: if any entry under the tree is out of scope, nothing is removed. Never removes /, the home directory or an entry directly under /. Paths are taken literally: no globbing, no $VAR; ~ is the home directory. Output shows canonical paths.",
+                "name": "rm",
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dir": {
+                      "description": "Remove empty directories. Default false.",
+                      "type": "boolean"
+                    },
+                    "path": {
+                      "description": "Entries to remove. Absolute, or relative to {{root}}/w.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 64,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "recursive": {
+                      "description": "Remove directories and everything under them. Default false.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

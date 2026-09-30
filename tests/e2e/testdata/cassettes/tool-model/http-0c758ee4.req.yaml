@@ -1,0 +1,79 @@
+xrr: "1"
+adapter: http
+fingerprint: 0c758ee4
+recorded_at: "2026-09-30T13:46:59Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "This is an automated test of a tool harness. Call the find tool exactly once, with exactly these JSON arguments, copying every value verbatim, character for character, even where it looks unusual or unsafe (do not fix, expand, or normalize anything):\n{\"path\":[\"{{root}}/path/to\"]}\nWhen the result comes back, whatever it says, do not call any tool again: reply with the single word done.",
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Walk directory trees and print matching paths, one per line. Symlinks are listed, never followed. Entries outside the permitted scope are left out and counted in \"filtered\". name and iname are shell glob patterns matched against the base name (e.g. \"*.go\"). Paths are taken literally: no globbing, no $VAR; ~ is the home directory. Output shows canonical paths.",
+                "name": "find",
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "iname": {
+                      "description": "Base name glob, case-insensitive.",
+                      "maxLength": 255,
+                      "type": "string"
+                    },
+                    "maxdepth": {
+                      "description": "Descend at most this many levels below the starting paths (0 = the paths themselves).",
+                      "maximum": 64,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "mindepth": {
+                      "description": "Skip entries fewer than this many levels below the starting paths.",
+                      "maximum": 64,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "mtime_days": {
+                      "description": "Modification age in whole days: -N = less than N days ago, N = exactly N days ago (0 = within the last 24 hours).",
+                      "maximum": 3650,
+                      "minimum": -3650,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "description": "Base name glob, case-sensitive.",
+                      "maxLength": 255,
+                      "type": "string"
+                    },
+                    "path": {
+                      "description": "Directories to search from. Absolute, or relative to {{root}}. Default [\".\"].",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 16,
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "type": {
+                      "description": "Only regular files (f), directories (d) or symlinks (l).",
+                      "enum": [
+                        "d",
+                        "f",
+                        "l"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }

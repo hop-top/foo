@@ -79,19 +79,19 @@ func TestToolPlugins_DeclaredPathsGated(t *testing.T) {
 		require.Truef(t, found, "notes missing from %s", stdout)
 	})
 	t.Run("write needs approval, no terminal: declined", func(t *testing.T) {
-		o := e.call(modeInProcess, notes, "notes", jsonArgs(t, map[string]any{"file": "todo.md", "text": "two"}))
+		o := e.call(t, modeInProcess, notes, "notes", jsonArgs(t, map[string]any{"file": "todo.md", "text": "two"}))
 		wantRefused(t, o, "declined", "", "cannot be asked")
 		require.False(t, ran(), "declined plugin ran")
 	})
 
 	e.policy(allowLocalChanges)
 	t.Run("outside the grant: denied", func(t *testing.T) {
-		o := e.call(modeInProcess, e.root, "notes", jsonArgs(t, map[string]any{"file": e.path("outside", "x.md"), "text": "two"}))
+		o := e.call(t, modeInProcess, e.root, "notes", jsonArgs(t, map[string]any{"file": e.path("outside", "x.md"), "text": "two"}))
 		wantRefused(t, o, "denied", "file", e.path("outside", "x.md"))
 		require.False(t, ran(), "denied plugin ran")
 	})
 	t.Run("relative path runs with the canonical path", func(t *testing.T) {
-		o := e.call(modeInProcess, notes, "notes", jsonArgs(t, map[string]any{"file": "./sub/../todo.md", "text": "two"}))
+		o := e.call(t, modeInProcess, notes, "notes", jsonArgs(t, map[string]any{"file": "./sub/../todo.md", "text": "two"}))
 		args := received(t, o)
 		require.Equal(t, filepath.Join(notes, "todo.md"), args["file"])
 		require.Equal(t, "two", args["text"])
