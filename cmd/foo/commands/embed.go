@@ -53,7 +53,7 @@ Each call mints a fresh ULID-keyed row in the store. The default
 collection is "default"; override with --collection.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			embedder, err := embed.NewOpenAIEmbedder()
+			embedder, err := newEmbedder()
 			if err != nil {
 				return err
 			}
@@ -117,7 +117,7 @@ same content produces new rows.`,
 				return nil
 			}
 
-			embedder, err := embed.NewOpenAIEmbedder()
+			embedder, err := newEmbedder()
 			if err != nil {
 				return err
 			}
@@ -172,7 +172,7 @@ func embedSearchCmd() *cobra.Command {
 from the named collection. Pure read; no state mutation.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			embedder, err := embed.NewOpenAIEmbedder()
+			embedder, err := newEmbedder()
 			if err != nil {
 				return err
 			}
@@ -271,6 +271,12 @@ delete collections; embeddings themselves are added with
 	cmd.AddCommand(deleteCmd)
 
 	return cmd
+}
+
+// newEmbedder builds the embedder on foo's configured secret store, the
+// one the run path reads, so a key stored there works for both.
+func newEmbedder() (*embed.OpenAIEmbedder, error) {
+	return embed.NewOpenAIEmbedder(embed.WithSecretStore(secretStore()))
 }
 
 func openEmbedStore() (*embed.Store, error) {

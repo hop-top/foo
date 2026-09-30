@@ -15,10 +15,13 @@ later with `foo embed search`.
 
 You need:
 
-- `OPENAI_API_KEY` exported. foo's embedder talks to the OpenAI
-  embeddings API; an Anthropic-only setup will not work for this
-  command. See [troubleshooting.md](../troubleshooting.md) for the
-  exact error.
+- An OpenAI key: `OPENAI_API_KEY` exported, or `openai_api_key` in
+  the configured [secret store](../reference/config.md#secret-store).
+  foo's embedder talks to the OpenAI embeddings API and resolves its
+  key the way a run on an `openai` model does
+  ([key precedence](../reference/config.md#key-precedence)); an
+  Anthropic-only setup will not work for this command. See
+  [troubleshooting.md](../troubleshooting.md) for the exact error.
 - Write access to `$XDG_STATE_HOME/foo/` (`XDG_STATE_HOME` unset:
   `~/.local/state` on Linux, `~/Library/Application Support` on
   macOS).

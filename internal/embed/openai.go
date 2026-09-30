@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 
+	"hop.top/foo/internal/llm"
+	kitllm "hop.top/kit/go/ai/llm"
 	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/storage/secret"
-	_ "hop.top/kit/go/storage/secret/env"
 )
 
 const (
@@ -25,6 +26,8 @@ type OpenAIEmbedder struct {
 	apiKey string
 	model  string
 	dim    int
+	store  secret.Store
+	url    string
 	client *http.Client
 }
 
@@ -41,40 +44,38 @@ func WithDimension(dim int) OpenAIOption {
 	return func(e *OpenAIEmbedder) { e.dim = dim }
 }
 
-// NewOpenAIEmbedder creates a new OpenAI-backed Embedder.
-// The OpenAI API key is resolved through the kit secret store (default
-// "env" backend), so it reads OPENAI_API_KEY from the environment by
-// default but transparently honors a configured keychain/vault backend.
-func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
-	key := lookupOpenAIKey()
-	if key == "" {
-		return nil, output.UnauthorizedError("OPENAI_API_KEY not set")
-	}
+// WithSecretStore sets the secret store the API key is read from:
+// foo's configured store, the one the run path reads. Nil, the
+// default, reads the environment only.
+func WithSecretStore(store secret.Store) OpenAIOption {
+	return func(e *OpenAIEmbedder) { e.store = store }
+}
 
+// NewOpenAIEmbedder creates a new OpenAI-backed Embedder.
+// The OpenAI API key is resolved as a run resolves it (llm.APIKey):
+// the store given by WithSecretStore under its documented name
+// `openai_api_key`, then OPENAI_API_KEY, then LLM_API_KEY, with
+// llm.yaml's providers.openai.api_key ahead of all three.
+func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	e := &OpenAIEmbedder{
-		apiKey: key,
 		model:  defaultModel,
 		dim:    defaultDimension,
+		url:    openaiURL,
 		client: http.DefaultClient,
 	}
 	for _, o := range opts {
 		o(e)
 	}
-	return e, nil
-}
 
-// lookupOpenAIKey resolves the OpenAI API key via the kit secret store.
-// The default "env" backend maps secret key `openai_api_key` to env var
-// OPENAI_API_KEY, preserving prior behavior; a store-open failure falls
-// back to a direct env read so an env-only setup never regresses.
-func lookupOpenAIKey() string {
-	store, err := secret.Open(secret.Config{Backend: "env"})
-	if err == nil {
-		if got, getErr := store.Get(context.Background(), "openai_api_key"); getErr == nil {
-			return string(got.Value)
-		}
+	key, err := llm.APIKey(context.Background(), e.store, "openai://"+e.model)
+	switch {
+	case errors.Is(err, kitllm.ErrMissingKey):
+		return nil, output.UnauthorizedError("OPENAI_API_KEY not set")
+	case err != nil:
+		return nil, err
 	}
-	return os.Getenv("OPENAI_API_KEY")
+	e.apiKey = key
+	return e, nil
 }
 
 func (e *OpenAIEmbedder) Dimension() int { return e.dim }
@@ -101,7 +102,7 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openaiURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
