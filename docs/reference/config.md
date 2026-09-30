@@ -105,7 +105,7 @@ fallback:
 |-------|------|---------|
 | `default` | string | URI used when no model is specified. Overridden by `LLM_PROVIDER` env. |
 | `providers.<scheme>.api_key` | string | Provider key for that scheme only; satisfies foo's key precheck. Lowest precedence: the scheme's env var (e.g. `OPENAI_API_KEY`) and `LLM_API_KEY` override it ([key precedence](#key-precedence)). |
-| `providers.<scheme>.base_url` | string | Custom base URL. Overridden by `LLM_BASE_URL` env, and by a `?base_url=` param on `--model`. See [use a local endpoint](../how-to/use-a-local-endpoint.md). |
+| `providers.<scheme>.base_url` | string | Custom base URL for that scheme: bare id, URI-form `--model`, pool pick and fallback entries alike. Overridden by `LLM_BASE_URL` (primary's scheme only) and by a `?base_url=` param on the URI ([base URL precedence](#base-url-precedence)). See [use a local endpoint](../how-to/use-a-local-endpoint.md). |
 | `providers.<scheme>.model` | string | Default model for this scheme; URI model wins when set. |
 | `providers.routellm.routellm.base_url` | string | RouteLLM server URL. Overridden by `ROUTELLM_BASE_URL`. |
 | `providers.routellm.routellm.strong_model` | string | Strong-tier model RouteLLM picks above threshold. Overridden by `ROUTELLM_STRONG_MODEL`. |
@@ -117,7 +117,7 @@ fallback:
 | `pool[].model` | string | Model id as it appears on models.dev. |
 | `pool[].enabled` | bool | Default `true`. Set `false` to keep the entry but mute it. |
 | `pool[].weight` | float | Default `1.0`. Reserved for future load-distribution policy. |
-| `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. Each entry gets its own scheme's key, resolved as for the primary model ([key precedence](#provider-keys)); an entry whose key is missing is dropped with one stderr warning, and the run continues. |
+| `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. Each entry gets its own scheme's key, resolved as for the primary model ([key precedence](#provider-keys)); an entry whose key is missing is dropped with one stderr warning, and the run continues. Each entry also gets its scheme's configured base URL ([base URL precedence](#base-url-precedence)). |
 
 End-to-end walkthrough:
 [how-to: route across models](../how-to/route-across-models.md).
@@ -186,6 +186,31 @@ fallback=openrouter://... missing=OPENROUTER_API_KEY`.
 `foo provider show <scheme>` reports each scheme's expected key
 and whether foo can see it.
 
+#### Base URL precedence
+
+Every URI foo sends — bare id, URI-form `--model`, pool pick,
+each fallback entry — resolves its endpoint the same way, stopping
+at the first hit:
+
+| # | Source | Applies to |
+|---|--------|------------|
+| 1 | `?base_url=` on the URI | That URI; never replaced |
+| 2 | `LLM_BASE_URL` | The primary model, and fallbacks on the primary's scheme |
+| 3 | `providers.<scheme>.base_url` in llm.yaml | Any URI of that scheme |
+| 4 | The adapter's default | Public API for hosted schemes; local default for `ollama`, `lmstudio` |
+
+A host-form URI (`scheme://host:port/model`) names its endpoint
+and is sent as written.
+
+`LLM_BASE_URL` is one server for any scheme, so it stops at the
+primary's scheme. With `LLM_BASE_URL=http://127.0.0.1:8000/v1`,
+`-m my-model` (openai scheme) and `LLM_FALLBACK=anthropic://claude-...`,
+the fallback goes to Anthropic, or to `providers.anthropic.base_url`
+if set — never to the local server, which would receive the
+Anthropic key. An `openai://` fallback in the same run does go to
+the local server. Pin a fallback elsewhere with `?base_url=` on
+its entry.
+
 ### Kit routing env vars
 
 These are consumed by `kit/llm` (not foo directly), but they
@@ -195,7 +220,7 @@ take effect on every `foo` invocation.
 |----------|---------|---------|
 | `LLM_PROVIDER` | `LoadConfig` | Default URI when no model is specified. Overrides `default:` in `llm.yaml`. |
 | `LLM_API_KEY` | foo key precheck, `LoadConfig` | Universal key for any keyed scheme with no key of its own, fallbacks included; satisfies foo's precheck. A per-scheme variable outranks it ([key precedence](#key-precedence)). |
-| `LLM_BASE_URL` | `LoadConfig` | Custom base URL for the resolved provider. Overrides `providers.<scheme>.base_url`; a `?base_url=` param on `--model` overrides both. |
+| `LLM_BASE_URL` | foo, `LoadConfig` | Custom base URL for the primary model, and for fallback entries on the primary's scheme. Overrides `providers.<scheme>.base_url` there; a `?base_url=` param on the URI overrides both. Never applied to a fallback on another scheme ([base URL precedence](#base-url-precedence)). |
 | `LLM_FALLBACK` | `LoadConfig` | Comma-separated fallback URIs. Overrides `fallback:` in `llm.yaml`. |
 | `LLM_POOL_DISABLE` | `LoadPool` | Comma list of `alias` or `<scheme>:<model>` entries to mute without removing. |
 | `LLM_PICKER_TRACE` | picker | When set to a truthy value (`1`, `true`, `on`, `yes`) emits one structured slog line per pick on stderr. `--picker-debug` sets this implicitly. |

@@ -94,8 +94,8 @@ func ensureRegistry() *aim.Registry {
 //
 // Fallback wiring runs on every path: kit's LoadConfig reads
 // `~/.config/hop/llm.yaml` `fallback:` plus the LLM_FALLBACK env var
-// and each entry is added via WithFallback once its scheme's key is
-// injected (fallbackURIs). Errors from LoadConfig are tolerated —
+// and each entry is added via WithFallback once its scheme's key and
+// configured endpoint are applied (fallbackURIs). Errors from LoadConfig are tolerated —
 // missing/invalid config must not block a working call.
 func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 	model := opts.Model
@@ -183,7 +183,8 @@ func modelIsURI(model string) bool {
 // 404s and kit maps that to the misleading "model not available". Kit's
 // Resolve already reads api_key and base_url out of the URI's query
 // params, so the caller keeps full control of both; foo only appends
-// the scheme's key when the URI names none (see injectURIKey).
+// the scheme's key and configured endpoint when the URI names none (see
+// injectURIKey, applyConfiguredBaseURL).
 func newClientFromModel(model string, maxTokens int) (*Client, error) {
 	uri, guessed, err := resolveURIForModel(model)
 	if err != nil {
@@ -208,7 +209,7 @@ func buildClient(scheme, model, envVar string, maxTokens int) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildClientFromURI(uri, maxTokens)
+	return buildClientFromURI(applyConfiguredBaseURL(uri, scheme), maxTokens)
 }
 
 // buildURI assembles the provider URI for a bare model id, running the
@@ -294,38 +295,6 @@ func querySep(s string) string {
 	return "?"
 }
 
-// applyConfiguredBaseURL folds the base_url resolved by kit's LoadConfig
-// (llm.yaml `providers.<scheme>.base_url`, overridden by LLM_BASE_URL)
-// into the URI as a param.
-//
-// foo builds a URI by hand and hands it to kitllm.Resolve, which reads
-// the URI alone — so neither documented lever reached the provider and
-// requests went to the provider's public endpoint regardless. LoadConfig
-// is the function that applies both layers, so it resolves them here.
-//
-// A base_url already present on the URI is left alone: it came from the
-// caller's --model value and outranks both file and env.
-func applyConfiguredBaseURL(uri string) string {
-	parsed, err := kitllm.ParseURI(uri)
-	if err != nil {
-		return uri
-	}
-	if _, explicit := parsed.Params["base_url"]; explicit {
-		return uri
-	}
-	cfg, err := kitllm.LoadConfig(uri)
-	if err != nil || cfg.Provider.BaseURL == "" {
-		return uri
-	}
-	// Host-form URIs ("scheme://host:port/model") already encode an
-	// endpoint; LoadConfig echoes it back as BaseURL, so appending it
-	// as a param would be redundant.
-	if parsed.Host != "" {
-		return uri
-	}
-	return uri + querySep(uri) + "base_url=" + cfg.Provider.BaseURL
-}
-
 // resolveURIForModel returns the provider URI a given --model value
 // resolves to, without constructing a client. It mirrors
 // newClientFromModel's branching exactly so tests can assert on the URI
@@ -339,7 +308,10 @@ func applyConfiguredBaseURL(uri string) string {
 func resolveURIForModel(model string) (uri string, guessed bool, err error) {
 	if modelIsURI(model) {
 		uri, err := injectURIKey(model)
-		return uri, false, err
+		if err != nil {
+			return "", false, err
+		}
+		return applyConfiguredBaseURL(uri, schemeOf(uri)), false, nil
 	}
 	scheme, envVar, guessed := schemeForModel(model)
 	if scheme == "routellm" {
@@ -359,7 +331,7 @@ func resolveURIForModel(model string) (uri string, guessed bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
-	return applyConfiguredBaseURL(built), guessed, nil
+	return applyConfiguredBaseURL(built, scheme), guessed, nil
 }
 
 // resolvedURIForModel is the URI-only view of resolveURIForModel, kept
@@ -402,9 +374,12 @@ func buildClientFromURI(uri string, maxTokens int) (*Client, error) {
 // tolerated so a missing config file never blocks a working
 // single-provider call.
 //
-// Kit's Resolve takes a key from the URI and nowhere else, so an entry
-// passed through bare reached its provider unauthenticated. Each entry
-// gets the same key resolution as a URI-form --model (keyURI).
+// Kit's Resolve takes a key and an endpoint from the URI and nowhere
+// else, so an entry passed through bare reached its provider's public
+// endpoint unauthenticated. Each entry gets the same key resolution as
+// a URI-form --model (keyURI) and the same endpoint resolution as the
+// primary (applyConfiguredBaseURL, with LLM_BASE_URL scoped to the
+// primary's scheme).
 //
 // An entry whose key cannot be found is dropped, not fatal: the primary
 // may be healthy, and failing the run over a backup that is never
@@ -415,6 +390,7 @@ func fallbackURIs(uri string) []string {
 	if err != nil {
 		return nil
 	}
+	primaryScheme := schemeOf(uri)
 	out := make([]string, 0, len(cfg.Fallbacks))
 	for _, fb := range cfg.Fallbacks {
 		keyed, missing := keyURI(fb)
@@ -422,7 +398,7 @@ func fallbackURIs(uri string) []string {
 			warnDroppedFallback(missing)
 			continue
 		}
-		out = append(out, keyed)
+		out = append(out, applyConfiguredBaseURL(keyed, primaryScheme))
 	}
 	return out
 }
