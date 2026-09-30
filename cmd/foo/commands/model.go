@@ -80,12 +80,13 @@ func modelListCmd() *cobra.Command {
 
 By default only models you can actually call are listed: ones foo links
 an adapter for, whose provider either needs no credential (a local
-runtime) or whose API key is present in your secret store. The catalog
-spans thousands of models across hundreds of providers and almost all of
-them need a key you have not configured, so the unfiltered view is
-mostly models that would fail on first use. --all turns the filtering
-off and lists the whole catalog; a footer reports how many rows it would
-add. --all composes with the filters below rather than replacing them.
+runtime) or has an API key a run would find (secret store or env var,
+LLM_API_KEY, or llm.yaml). The catalog spans thousands of models across
+hundreds of providers and almost all of them need a key you have not
+configured, so the unfiltered view is mostly models that would fail on
+first use. --all turns the filtering off and lists the whole catalog; a
+footer reports how many rows it would add. --all composes with the
+filters below rather than replacing them.
 
 The remaining view is still truncated. Models are ordered rotating
 across providers so the first screenful is each provider's current

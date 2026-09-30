@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -67,11 +69,37 @@ func withAuth(t *testing.T, envByProvider map[string][]string, configured ...str
 		}
 		return "", false, nil
 	}
+	// The index also honours what a run's precheck does — the
+	// scheme's env var, LLM_API_KEY, llm.yaml — so those are cleared
+	// too; a test that wants one sets it after this call.
+	for _, v := range keyEnvVars {
+		t.Setenv(v, "")
+		_ = os.Unsetenv(v)
+	}
+	// An empty pool: block keeps the first-run seed (and its stderr
+	// notice) out of the way; a test that wants llm.yaml overwrites it.
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if err := os.MkdirAll(filepath.Join(xdg, "hop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "hop", "llm.yaml"), []byte("pool: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	prev := providerAuthIndex
 	providerAuthIndex = func(ctx context.Context) (*llm.AuthIndex, error) {
 		return llm.NewAuthIndexFrom(ctx, envByProvider, lookup), nil
 	}
 	t.Cleanup(func() { providerAuthIndex = prev })
+}
+
+// keyEnvVars is every variable that can satisfy a key check.
+var keyEnvVars = []string{
+	"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
+	"GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
+	"GROQ_API_KEY", "XAI_API_KEY", "TOGETHER_API_KEY", "FIREWORKS_API_KEY",
+	"DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "LMSTUDIO_API_KEY",
+	"LLM_API_KEY",
 }
 
 // sampleEntries returns n routable rows across two providers.

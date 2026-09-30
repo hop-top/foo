@@ -449,14 +449,51 @@ func warnDroppedFallback(m *missingKey) {
 // here is exactly the one kit sends: the precheck and the request
 // cannot disagree.
 func schemeKey(uri, envVar string) string {
-	if key := lookupAPIKey(envVar); key != "" {
-		return key
+	key, _ := resolveSchemeKey(uri, envVar, lookupAPIKey)
+	return key
+}
+
+// KeySource names the tier of [schemeKey]'s chain a key came from.
+type KeySource string
+
+const (
+	// KeySourceSecret: the scheme's own key, under its secret name
+	// (the store, or the env var the name maps to).
+	KeySourceSecret KeySource = "secret_key"
+	// KeySourceLLMAPIKey: kit's universal LLM_API_KEY.
+	KeySourceLLMAPIKey KeySource = "LLM_API_KEY"
+	// KeySourceLLMConfig: providers.<scheme>.api_key in llm.yaml.
+	KeySourceLLMConfig KeySource = "llm.yaml"
+)
+
+// resolveSchemeKey is schemeKey's chain, and the one place it lives:
+// the run precheck and the credential index (auth.go) both call it, so
+// "is there a key" has one answer. own is tier 1 — the scheme's own key
+// by env var name; the precheck passes lookupAPIKey. The source is
+// reported alongside the key so a caller can say where it came from
+// without ever printing it.
+func resolveSchemeKey(uri, envVar string, own func(envVar string) string) (string, KeySource) {
+	if key := own(envVar); key != "" {
+		return key, KeySourceSecret
 	}
+	universal := os.Getenv(kitllm.FallbackEnvKey)
 	cfg, err := kitllm.LoadConfig(uri)
 	if err != nil {
-		return os.Getenv(kitllm.FallbackEnvKey)
+		if universal != "" {
+			return universal, KeySourceLLMAPIKey
+		}
+		return "", ""
 	}
-	return cfg.Provider.APIKey
+	switch key := cfg.Provider.APIKey; {
+	case key == "":
+		return "", ""
+	case universal != "":
+		// LoadConfig layers LLM_API_KEY over the file, so a set
+		// LLM_API_KEY is the key it returned.
+		return key, KeySourceLLMAPIKey
+	default:
+		return key, KeySourceLLMConfig
+	}
 }
 
 // lookupAPIKey resolves a provider API key through the kit secret store

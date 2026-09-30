@@ -734,8 +734,9 @@ func providerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider",
 		Short: "Inspect configured LLM providers",
-		Long: `Inspect which LLM providers are compiled in and whether the
-credentials they expect are present in the configured secret store.`,
+		Long: `Inspect which LLM providers are compiled in and whether a run would
+find the API key they expect: the scheme's own key (secret store, then
+env var), LLM_API_KEY, or providers.<scheme>.api_key in llm.yaml.`,
 	}
 
 	listCmd := &cobra.Command{
@@ -758,7 +759,7 @@ credentials they expect are present in the configured secret store.`,
 	showCmd := &cobra.Command{
 		Use:   "show <scheme>",
 		Short: "Show provider auth status",
-		Long:  "Show the secret key a provider expects and whether it is currently configured.",
+		Long:  "Show the secret key a provider expects, whether a run would find a key for it, and where that key comes from (key_source in structured output).",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scheme := strings.TrimSuffix(args[0], "://")
@@ -770,6 +771,7 @@ credentials they expect are present in the configured secret store.`,
 				Scheme:    scheme,
 				AuthType:  auth.AuthType(),
 				SecretKey: auth.SecretKey,
+				KeySource: string(auth.Source),
 				Status:    auth.Status(),
 			})
 		},
@@ -1131,8 +1133,10 @@ func newUpgradeChecker() *upgrade.Checker {
 //
 // The requirement comes from aim's provider census, the same source
 // `foo model list` filters on — not from a hand-maintained switch over
-// scheme names. The switch this replaced enumerated four providers and
-// answered "available", i.e. needs no auth, for everything else, so
+// scheme names — and for a scheme foo links an adapter for, the run's
+// own key precheck has the final say (see llm.AuthIndex). The switch
+// this replaced enumerated four providers and answered "available",
+// i.e. needs no auth, for everything else, so
 // `foo provider show groq` reported a provider that will 401 on first
 // use as ready to go. Reading the census instead means a provider foo
 // has never heard of is described correctly the day models.dev adds it,
@@ -1224,5 +1228,9 @@ type providerStatus struct {
 	Scheme    string `json:"scheme" yaml:"scheme" table:"SCHEME,priority=9"`
 	AuthType  string `json:"auth_type" yaml:"auth_type" table:"AUTH,priority=7"`
 	SecretKey string `json:"secret_key,omitempty" yaml:"secret_key,omitempty"`
+	// KeySource names where a configured key was found: secret_key
+	// (the store, or the env var it maps to), LLM_API_KEY, or llm.yaml.
+	// Never the key itself.
+	KeySource string `json:"key_source,omitempty" yaml:"key_source,omitempty"`
 	Status    string `json:"status" yaml:"status" table:"STATUS,priority=8"`
 }
