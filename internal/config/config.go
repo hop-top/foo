@@ -9,7 +9,11 @@ import (
 	"hop.top/kit/go/core/config"
 	"hop.top/kit/go/core/xdg"
 	"hop.top/kit/go/storage/secret"
+	// The backends `secrets.backend` accepts: kit registers each one
+	// through a blank import, so a name missing here opens as "unknown
+	// backend". env is the default; keyring is the OS keychain.
 	_ "hop.top/kit/go/storage/secret/env"
+	_ "hop.top/kit/go/storage/secret/keyring"
 )
 
 const (

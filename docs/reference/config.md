@@ -35,9 +35,9 @@ ones.
 | `patterns_path` | string | `$XDG_CONFIG_HOME/foo/patterns` | Directory for pattern files | `FOO_PATTERNS_PATH` |
 | `accent` | string | `#E040FB` | TUI accent color (hex) | `FOO_ACCENT` |
 | `budget` | string | `""` (= `balanced` at use) | Persistent pool routing tier. Env wins. | `FOO_BUDGET` |
-| `secrets.backend` | string | `env` | Secret store backend id | `FOO_SECRETS_BACKEND` |
-| `secrets.prefix` | string | `""` | Prefix applied to secret key lookups | `FOO_SECRETS_PREFIX` |
-| `secrets.service` | string | `""` | Service identifier for the backend | `FOO_SECRETS_SERVICE` |
+| `secrets.backend` | string | `env` | Secret store backend: `env` or `keyring` ([secret store](#secret-store)) | `FOO_SECRETS_BACKEND` |
+| `secrets.prefix` | string | `""` | Env var prefix for `env` lookups; ignored by `keyring` | `FOO_SECRETS_PREFIX` |
+| `secrets.service` | string | `""` (= `kit` at use) | Keychain service name for `keyring`; `--profile` replaces it; ignored by `env` | `FOO_SECRETS_SERVICE` |
 
 ### Example `config.yaml`
 
@@ -62,13 +62,36 @@ listing reports as configured is the key a run uses.
 A provider's key is stored under its env var's name in lowercase
 (`openrouter_api_key` for `OPENROUTER_API_KEY`). The store is
 asked under each of the provider's key names first, then the env
-vars of those names ([key precedence](#key-precedence)). The default `env`
-backend maps the name straight back to `OPENROUTER_API_KEY`. With
-`prefix: FOO_` it reads `FOO_OPENROUTER_API_KEY` first. A backend
+vars of those names ([key precedence](#key-precedence)). A backend
 error counts as "not in the store": the env var still answers.
 
-If foo cannot open the configured backend, it warns on stderr
-(`secrets.store.unavailable`) and reads keys from env vars only.
+| Backend | Reads | Settings |
+|---------|-------|----------|
+| `env` (default) | The env var the name maps to: `openrouter_api_key` reads `OPENROUTER_API_KEY`; with `prefix: FOO_`, `FOO_OPENROUTER_API_KEY` | `prefix` |
+| `keyring` | The OS keychain (macOS Keychain, Secret Service on Linux, Windows Credential Manager): item with service `service`, account the key name | `service`; empty uses kit's shared `kit` |
+
+`--profile <name>` sets `service` to `<name>`, so each aps profile
+keeps its own keys; it has no effect on `env`.
+
+Store a key for the `keyring` backend with the OS tool; foo only
+reads it:
+
+```sh
+# macOS (prompts for the value)
+security add-generic-password -s foo -a openrouter_api_key -w
+# Linux (Secret Service)
+secret-tool store --label='foo openrouter' service foo username openrouter_api_key
+```
+
+```yaml
+secrets:
+  backend: keyring
+  service: foo
+```
+
+If foo cannot open the configured backend — any name other than
+`env` or `keyring` — it warns on stderr (`secrets.store.unavailable`)
+and reads keys from env vars only.
 
 ## Kit `llm.yaml` (routing surface)
 
@@ -277,9 +300,9 @@ take effect on every `foo` invocation.
 | `FOO_BUDGET` | `--budget` | Pool routing tier fallback (`cheap` / `balanced` / `premium`). |
 | `FOO_PATTERNS_PATH` | `patterns_path` | Directory for patterns |
 | `FOO_ACCENT` | `accent` | TUI accent color |
-| `FOO_SECRETS_BACKEND` | `secrets.backend` | Secret backend |
-| `FOO_SECRETS_PREFIX` | `secrets.prefix` | Secret key prefix |
-| `FOO_SECRETS_SERVICE` | `secrets.service` | Secret service id |
+| `FOO_SECRETS_BACKEND` | `secrets.backend` | Secret backend (`env`, `keyring`) |
+| `FOO_SECRETS_PREFIX` | `secrets.prefix` | Env var prefix (`env` backend) |
+| `FOO_SECRETS_SERVICE` | `secrets.service` | Keychain service (`keyring` backend) |
 | `FOO_CACHE` | `$XDG_CACHE_HOME/foo` | Directory holding foo's own caches, e.g. `foo model list --endpoint`'s inventory store. |
 | `FOO_CACHE_TTL` | (per-cache default) | Freshness window for foo's own caches, as a Go duration (`30s`, `1h`). `0` disables caching. Does not affect the aim catalog's 24h window, which aim owns. |
 
