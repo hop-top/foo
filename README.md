@@ -28,9 +28,12 @@ export OPENAI_API_KEY=sk-...
 
 ```sh
 foo "hello"
-# [foo] info: seeded default pool config at ~/.config/hop/llm.yaml; edit to taste.
+# [foo] info: seeded default pool config at $XDG_CONFIG_HOME/hop/llm.yaml; edit to taste.
 # Hello! How can I help you today?
 ```
+
+foo prints the resolved path (`XDG_CONFIG_HOME` unset: `~/.config` on
+Linux, `~/Library/Application Support` on macOS).
 
 If that prints a model response, you are done. If it errors, read
 [docs/troubleshooting.md](docs/troubleshooting.md).

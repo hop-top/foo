@@ -87,4 +87,4 @@ entirely by the kit-shipped upgrade subsystem.
 ## Related docs
 
 - [Troubleshooting](../troubleshooting.md) — recovery if upgrade leaves the binary in a bad state.
-- [Reference: commands](../reference/commands.md#upgrade) — top-level verb surface.
+- [Reference: commands](../reference/commands.md#top-level) — top-level verb surface.
