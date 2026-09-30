@@ -45,6 +45,7 @@ you recorded with.
 |-------|-----------|--------|
 | Tool round, OpenAI | `internal/tool/testdata/cassettes/openai` | `OPENAI_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/openai' -update` |
 | Tool round, Ollama | `internal/tool/testdata/cassettes/ollama` | `FOO_RECORD_OLLAMA_BASE_URL=http://<ollama-host>:11434/v1 go test ./internal/tool -run 'TestRecordedToolRound/ollama' -update` (model `ornith:9b`, any OpenAI-compatible Ollama `/v1`) |
+| Tool round, OpenRouter | `internal/tool/testdata/cassettes/openrouter` | `OPENROUTER_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/openrouter' -update` (model `openai/gpt-4.1-nano`) |
 | Tool round, Anthropic | `internal/tool/testdata/cassettes/anthropic` | `ANTHROPIC_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/anthropic' -update` |
 | Tool round, Gemini | `internal/tool/testdata/cassettes/gemini` | `GOOGLE_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/gemini' -update` (`GEMINI_API_KEY` also works) |
 | e2e `-T` shim calls | `tests/e2e/testdata/cassettes/tool-model` | `OPENAI_API_KEY=... go test ./tests/e2e -run 'TestToolShims\|TestToolPlugins' -update -timeout 60m` |
