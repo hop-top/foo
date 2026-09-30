@@ -320,10 +320,10 @@ func (a *audit) approve(req Request, canonical map[string][]string, dec policy.D
 			return &Error{Kind: KindDenied, Param: f.param, Path: f.show, Op: f.showOp,
 				Message: fmt.Sprintf("%s and the scope policy asks before allowing it, but approval cannot be asked: %v", f.public, err)}
 		}
-		return &Error{Kind: KindDeclined, Message: "approval required but cannot be asked: " + err.Error()}
+		return Declined(err)
 	}
 	if !ok {
-		return &Error{Kind: KindDeclined, Message: "the user declined this call; do not retry it unchanged"}
+		return Declined(nil)
 	}
 	return nil
 }

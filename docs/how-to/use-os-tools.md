@@ -230,7 +230,8 @@ cron, a detached session) nothing is asked and the call comes back
 ```
 
 `--tools-approve` asks before **every** call, reads included. It never
-overrides a denial.
+overrides a denial. A call you decline comes back `declined` from
+every tool, plugins and built-ins included.
 
 ### 7. Let writes run without asking (optional)
 

@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"io"
 
+	"hop.top/foo/internal/tool/gate"
+	"hop.top/foo/internal/tool/shim"
 	"hop.top/kit/go/ai/llm"
 )
 
 // ApproveFunc is called before executing a tool when approval is required.
-// It receives the tool name and pretty-printed arguments. Return true
-// to proceed, false to skip.
-type ApproveFunc func(name string, args json.RawMessage) bool
+// It receives the tool name and pretty-printed arguments. It returns
+// true to proceed, false when the user declined, or an error when the
+// question could not be asked; the error says why.
+type ApproveFunc func(name string, args json.RawMessage) (bool, error)
 
 // DispatchConfig controls the agentic dispatch loop.
 type DispatchConfig struct {
@@ -155,8 +158,11 @@ func (d *Dispatcher) executeTool(
 
 	// Approval gate, unless the tool asks on its own.
 	if d.cfg.Approve != nil && !approvesItself(t) {
-		if !d.cfg.Approve(tc.Name, tc.Arguments) {
-			return json.RawMessage(`{"skipped": true}`), nil
+		// A declined call gets the same structured error as a shim's
+		// (spec §6), with the reason when nobody could be asked.
+		ok, err := d.cfg.Approve(tc.Name, tc.Arguments)
+		if err != nil || !ok {
+			return nil, &shim.CallError{Err: gate.Declined(err)}
 		}
 	}
 

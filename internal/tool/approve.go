@@ -103,13 +103,13 @@ func (p *Prompter) Confirm(question string) (bool, error) {
 }
 
 // Approve is an ApproveFunc that asks before a tool call runs. When the
-// question cannot be asked the call is denied and the reason is
-// written, so a denial is never silent.
-func (p *Prompter) Approve(name string, args json.RawMessage) bool {
+// question cannot be asked the call is denied: the reason is written
+// for the user and returned for the model, so a denial is never silent.
+func (p *Prompter) Approve(name string, args json.RawMessage) (bool, error) {
 	ok, err := p.Confirm(fmt.Sprintf("[tool] execute %s with %s?", name, string(args)))
 	if err != nil {
 		_, _ = fmt.Fprintf(p.w, "[tool] %s denied: cannot ask for approval: %v\n", name, err)
-		return false
+		return false, err
 	}
-	return ok
+	return ok, nil
 }
