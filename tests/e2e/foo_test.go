@@ -2,24 +2,49 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
+// fooBin is the binary under test: built once per package run into a
+// scratch dir, so a stale build cannot mask a change in command
+// vocabulary and the source tree is never written to.
+var (
+	fooBin    string
+	buildOnce sync.Once
+	buildErr  error
+)
+
+func TestMain(m *testing.M) { os.Exit(runTests(m)) }
+
+func runTests(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "foo-e2e-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "e2e: scratch dir:", err)
+		return 1
+	}
+	defer os.RemoveAll(dir)
+	// Canonical path: shims compare their own location against it.
+	if dir, err = filepath.EvalSymlinks(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "e2e: scratch dir:", err)
+		return 1
+	}
+	fooBin = filepath.Join(dir, "foo")
+	return m.Run()
+}
+
 // runFoo executes the foo binary against an isolated $HOME, returning
-// stdout, stderr, and the exec error. The binary is rebuilt every test
-// run so stale `bin/foo` cannot mask a change in command vocabulary.
+// stdout, stderr, and the exec error.
 func runFoo(t *testing.T, tmpHome string, args ...string) (string, string, error) {
 	t.Helper()
-	binPath := filepath.Join("..", "..", "bin", "foo")
-	absBinPath, err := filepath.Abs(binPath)
-	require.NoError(t, err)
-	cmd := exec.Command(absBinPath, args...)
+	cmd := exec.Command(fooBin, args...)
 
 	cmd.Env = append(os.Environ(),
 		"HOME="+tmpHome,
@@ -35,18 +60,24 @@ func runFoo(t *testing.T, tmpHome string, args ...string) (string, string, error
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err = cmd.Run()
+	err := cmd.Run()
 	return stdout.String(), stderr.String(), err
 }
 
-// ensureBinary builds foo into bin/foo. Tests share one binary.
+// ensureBinary builds foo into fooBin on first use. Tests share one
+// binary. VCS stamping is off: no test reads it (the version comes from
+// ldflags), and it fails wherever the go tool misreads the checkout,
+// e.g. in a linked worktree under a dir holding an unrelated .git.
 func ensureBinary(t *testing.T) {
 	t.Helper()
-	binPath := filepath.Join("..", "..", "bin", "foo")
-	mainPath := filepath.Join("..", "..", ".")
-	cmd := exec.Command("go", "build", "-o", binPath, mainPath)
-	out, err := cmd.CombinedOutput()
-	require.NoErrorf(t, err, "build foo: %s", string(out))
+	buildOnce.Do(func() {
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", fooBin, ".")
+		cmd.Dir = filepath.Join("..", "..")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			buildErr = fmt.Errorf("build foo: %w\n%s", err, out)
+		}
+	})
+	require.NoError(t, buildErr)
 }
 
 func TestCLI_Basic(t *testing.T) {

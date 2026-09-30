@@ -51,12 +51,10 @@ type shimEnv struct {
 
 func newShimEnv(t *testing.T) *shimEnv {
 	t.Helper()
-	foo, err := filepath.Abs(filepath.Join("..", "..", "bin", "foo"))
-	require.NoError(t, err)
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 
-	e := &shimEnv{t: t, root: root, foo: foo, bin: filepath.Join(root, "bin")}
+	e := &shimEnv{t: t, root: root, foo: fooBin, bin: filepath.Join(root, "bin")}
 	dirs := map[string]string{
 		"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_DATA_HOME": "data",
 		"XDG_CACHE_HOME": "cache", "XDG_STATE_HOME": "state",
