@@ -471,7 +471,7 @@ func (c *Client) Prompt(ctx context.Context, prompt string) (string, error) {
 		MaxTokens: c.maxTokens,
 	})
 	if err != nil {
-		return "", c.enrichUnknownModel(err)
+		return "", offlineRefusal(c.enrichUnknownModel(err))
 	}
 	return resp.Content, nil
 }
@@ -488,7 +488,7 @@ func (c *Client) CallWithTools(
 		Messages:  messages,
 		MaxTokens: c.maxTokens,
 	}, tools)
-	return resp, c.enrichUnknownModel(err)
+	return resp, offlineRefusal(c.enrichUnknownModel(err))
 }
 
 // PromptStream streams LLM response tokens to w. Falls back to
@@ -520,7 +520,7 @@ func (c *Client) PromptStream(ctx context.Context, w io.Writer, prompt string) e
 			if err == io.EOF {
 				return nil
 			}
-			return c.enrichUnknownModel(err)
+			return offlineRefusal(c.enrichUnknownModel(err))
 		}
 		if _, writeErr := fmt.Fprint(w, tok.Content); writeErr != nil {
 			return writeErr
