@@ -2,6 +2,8 @@ package llm
 
 import (
 	"testing"
+
+	kitllm "hop.top/kit/go/ai/llm"
 )
 
 // Key precedence, highest first, for a keyed scheme:
@@ -124,5 +126,124 @@ func TestLLMAPIKey_AppliesToFallbacks(t *testing.T) {
 	}
 	if warnings.Len() != 0 {
 		t.Errorf("unexpected warnings:\n%s", warnings.String())
+	}
+}
+
+// TestConfigFileKey_SatisfiesPrecheck: llm.yaml providers.<scheme>.api_key
+// is documented as a key source; it satisfies the precheck on every path
+// and is the key that reaches kit.
+func TestConfigFileKey_SatisfiesPrecheck(t *testing.T) {
+	const yaml = "providers:\n  openai:\n    api_key: fake-file-openai\n  openrouter:\n    api_key: fake-file-or\n"
+	for model, want := range map[string]string{
+		"gpt-4o-mini":                      "fake-file-openai", // bare id
+		"qwen3.6-colibri":                  "fake-file-openai", // guessed openai arm
+		"openrouter://openai/gpt-4.1-nano": "fake-file-or",     // URI form
+	} {
+		t.Run(model, func(t *testing.T) {
+			clearProviderKeys(t)
+			writeLLMYAML(t, yaml)
+
+			got, err := resolvedURIForModel(model)
+			if err != nil {
+				t.Fatalf("resolvedURIForModel(%q) with a config-file key: %v", model, err)
+			}
+			if k := parseOrFatal(t, got).Params["api_key"]; k != want {
+				t.Errorf("api_key = %q, want %q (llm.yaml)", k, want)
+			}
+		})
+	}
+}
+
+// TestConfigFileKey_PickerAndFallback: the pool pick and fallback
+// entries read the same file key.
+func TestConfigFileKey_PickerAndFallback(t *testing.T) {
+	clearProviderKeys(t)
+	warnings := captureWarnings(t)
+	writeLLMYAML(t, "providers:\n  openrouter:\n    api_key: fake-file-or\nfallback:\n  - openrouter://openai/gpt-4.1-mini\n")
+
+	got, err := buildURI("openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	if err != nil {
+		t.Fatalf("buildURI with a config-file key: %v", err)
+	}
+	if k := parseOrFatal(t, got).Params["api_key"]; k != "fake-file-or" {
+		t.Errorf("picker api_key = %q, want fake-file-or", k)
+	}
+
+	fbs := fallbackURIs("ollama://llama3.2")
+	if len(fbs) != 1 {
+		t.Fatalf("fallbackURIs = %q, want 1 entry\n%s", fbs, warnings.String())
+	}
+	if k := parseOrFatal(t, fbs[0]).Params["api_key"]; k != "fake-file-or" {
+		t.Errorf("fallback api_key = %q, want fake-file-or", k)
+	}
+}
+
+// TestConfigFileKey_OtherSchemeNeverLent: a file key belongs to its own
+// scheme. providers.openai.api_key must not satisfy an openrouter model.
+func TestConfigFileKey_OtherSchemeNeverLent(t *testing.T) {
+	clearProviderKeys(t)
+	writeLLMYAML(t, "providers:\n  openai:\n    api_key: fake-file-openai\n")
+
+	_, err := resolvedURIForModel("openrouter://openai/gpt-4.1-nano")
+	assertMissingKeyError(t, err, "OPENROUTER_API_KEY", "openrouter")
+}
+
+// TestKeyPrecedence_Matrix pins the full order and checks the rows kit
+// itself defines against kit. Highest first: URI ?api_key=, the
+// scheme's own key (secret store / env), LLM_API_KEY, llm.yaml
+// providers.<scheme>.api_key.
+//
+// Kit's Resolve reads the key from the URI's api_key param alone, so
+// the param on the URI foo builds is exactly what kit sends. For the
+// rows with no scheme key, kit's LoadConfig merge (file < URI <
+// LLM_API_KEY) must pick the same key foo did.
+func TestKeyPrecedence_Matrix(t *testing.T) {
+	const model = "openrouter://openai/gpt-4.1-nano"
+	cases := []struct {
+		name                   string
+		explicit, env, llm, fs string
+		want                   string
+	}{
+		{name: "explicit beats all", explicit: "k-uri", env: "k-env", llm: "k-llm", fs: "k-file", want: "k-uri"},
+		{name: "scheme env beats LLM_API_KEY and file", env: "k-env", llm: "k-llm", fs: "k-file", want: "k-env"},
+		{name: "LLM_API_KEY beats file", llm: "k-llm", fs: "k-file", want: "k-llm"},
+		{name: "file alone", fs: "k-file", want: "k-file"},
+		{name: "scheme env alone", env: "k-env", want: "k-env"},
+		{name: "LLM_API_KEY alone", llm: "k-llm", want: "k-llm"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearProviderKeys(t)
+			yaml := ""
+			if tc.fs != "" {
+				yaml = "providers:\n  openrouter:\n    api_key: " + tc.fs + "\n"
+			}
+			writeLLMYAML(t, yaml)
+			t.Setenv("OPENROUTER_API_KEY", tc.env)
+			t.Setenv("LLM_API_KEY", tc.llm)
+			uri := model
+			if tc.explicit != "" {
+				uri += "?api_key=" + tc.explicit
+			}
+
+			got, err := resolvedURIForModel(uri)
+			if err != nil {
+				t.Fatalf("resolvedURIForModel(%q): %v", uri, err)
+			}
+			sent := parseOrFatal(t, got).Params["api_key"]
+			if sent != tc.want {
+				t.Errorf("api_key sent = %q, want %q", sent, tc.want)
+			}
+
+			if tc.explicit == "" && tc.env == "" {
+				cfg, err := kitllm.LoadConfig(model)
+				if err != nil {
+					t.Fatalf("kit LoadConfig: %v", err)
+				}
+				if cfg.Provider.APIKey != sent {
+					t.Errorf("foo sent %q but kit's LoadConfig resolves %q", sent, cfg.Provider.APIKey)
+				}
+			}
+		})
 	}
 }

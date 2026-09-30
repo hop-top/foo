@@ -222,7 +222,7 @@ func buildURI(scheme, model, envVar string) (string, error) {
 	if envVar == "" {
 		return fmt.Sprintf("%s://%s", scheme, model), nil
 	}
-	key := schemeKey(envVar)
+	key := schemeKey(fmt.Sprintf("%s://%s", scheme, model), envVar)
 	if key == "" {
 		return "", missingKeyError(envVar, model, scheme)
 	}
@@ -272,7 +272,7 @@ func keyURI(uri string) (string, *missingKey) {
 	if envVar == "" {
 		return uri, nil
 	}
-	key := schemeKey(envVar)
+	key := schemeKey(uri, envVar)
 	if key == "" {
 		return "", &missingKey{envVar: envVar, model: parsed.Model, scheme: parsed.Scheme}
 	}
@@ -451,28 +451,36 @@ func warnDroppedFallback(m *missingKey) {
 	)
 }
 
-// schemeKey resolves the API key for a keyed scheme whose URI names no
-// ?api_key= (an explicit param outranks everything and is never
-// replaced). Precedence, highest first:
+// schemeKey resolves the API key for uri, a keyed scheme's URI that
+// names no ?api_key= (an explicit param outranks everything and is
+// never replaced). Precedence, highest first:
 //
 //  1. the scheme's own key: secret store, then its env var (lookupAPIKey)
 //  2. LLM_API_KEY, kit's universal key
+//  3. llm.yaml providers.<scheme>.api_key
 //
-// This is kit's own order for the two: SecretFor tries the provider's
-// key before LLM_API_KEY, and the google adapter reads GEMINI_API_KEY
-// before LLM_API_KEY. LLM_API_KEY is scheme-agnostic by design, so it
+// 1 before 2 is kit's SecretFor order (the google adapter likewise
+// reads GEMINI_API_KEY before LLM_API_KEY). 2 before 3 is kit's
+// LoadConfig merge, which layers LLM_API_KEY over the file — so tiers
+// 2 and 3 are read through LoadConfig itself rather than a second
+// parse of llm.yaml. LLM_API_KEY is scheme-agnostic by design, so it
 // is sent to whichever keyed provider lacks its own key — fallbacks
-// included, as kit's LoadConfig applies it to every URI. That is the
-// user's explicit choice; per-scheme variables avoid it.
+// included, as LoadConfig applies it to every URI. That is the user's
+// explicit choice; per-scheme variables avoid it. A file key belongs
+// to its own scheme and is never lent to another.
 //
 // Kit's Resolve reads the key from the URI alone, so the key returned
 // here is exactly the one kit sends: the precheck and the request
 // cannot disagree.
-func schemeKey(envVar string) string {
+func schemeKey(uri, envVar string) string {
 	if key := lookupAPIKey(envVar); key != "" {
 		return key
 	}
-	return os.Getenv(kitllm.FallbackEnvKey)
+	cfg, err := kitllm.LoadConfig(uri)
+	if err != nil {
+		return os.Getenv(kitllm.FallbackEnvKey)
+	}
+	return cfg.Provider.APIKey
 }
 
 // lookupAPIKey resolves a provider API key through the kit secret store

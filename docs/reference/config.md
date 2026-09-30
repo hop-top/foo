@@ -104,7 +104,7 @@ fallback:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `default` | string | URI used when no model is specified. Overridden by `LLM_PROVIDER` env. |
-| `providers.<scheme>.api_key` | string | Provider key. Overridden by the per-provider env var (e.g. `OPENAI_API_KEY`). |
+| `providers.<scheme>.api_key` | string | Provider key for that scheme only; satisfies foo's key precheck. Lowest precedence: the scheme's env var (e.g. `OPENAI_API_KEY`) and `LLM_API_KEY` override it ([key precedence](#key-precedence)). |
 | `providers.<scheme>.base_url` | string | Custom base URL. Overridden by `LLM_BASE_URL` env, and by a `?base_url=` param on `--model`. See [use a local endpoint](../how-to/use-a-local-endpoint.md). |
 | `providers.<scheme>.model` | string | Default model for this scheme; URI model wins when set. |
 | `providers.routellm.routellm.base_url` | string | RouteLLM server URL. Overridden by `ROUTELLM_BASE_URL`. |
@@ -154,11 +154,15 @@ at the first hit:
 | 1 | `?api_key=` on the URI | `-m 'openrouter://openai/gpt-4.1-nano?api_key=sk-or-...'` |
 | 2 | The scheme's own key: secret store, then env var | `OPENROUTER_API_KEY` |
 | 3 | `LLM_API_KEY` | universal key |
+| 4 | `providers.<scheme>.api_key` in `$XDG_CONFIG_HOME/hop/llm.yaml` | `providers: {openrouter: {api_key: sk-or-...}}` |
 
 This mirrors kit: kit's `Resolve` sends only the URI's
 `api_key`, so foo appends the resolved key to the URI and the
 key it prechecks is the key sent. Tiers 2–3 follow kit's
-`SecretFor` order (provider key before `LLM_API_KEY`).
+`SecretFor` order (provider key before `LLM_API_KEY`); tiers 3–4
+are read through kit's `LoadConfig`, whose merge layers
+`LLM_API_KEY` over the file. A file key belongs to its scheme:
+`providers.openai.api_key` never satisfies an `openrouter` model.
 
 `LLM_API_KEY` is not tied to a provider: it goes to every keyed
 scheme that has no key of its own, fallback entries included
