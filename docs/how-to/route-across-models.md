@@ -49,8 +49,9 @@ Pool routing is foo's recommended path for "let me declare a budget
 posture, then forget about it." On first run foo creates
 `$XDG_CONFIG_HOME/hop/llm.yaml` (`XDG_CONFIG_HOME` unset: `~/.config`
 on Linux, `~/Library/Application Support` on macOS) holding a default
-pool; edit it to match what you have keys for and how aggressively
-you want to spend.
+pool, owner-only (`0600`) since provider keys may go there; edit it
+to match what you have keys for and how aggressively you want to
+spend.
 
 foo only seeds a file that does not exist. An `llm.yaml` you already
 have — say, one holding only `providers:` — is never edited; add a

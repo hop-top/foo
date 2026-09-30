@@ -39,8 +39,9 @@ If that prints a model response, you are done. If it errors, read
 [docs/troubleshooting.md](docs/troubleshooting.md).
 
 The first run seeds a default pool — a list of models foo picks
-from based on what each request needs — by creating `llm.yaml`. foo
-only creates that file; if one already exists, foo leaves it as is,
+from based on what each request needs — by creating `llm.yaml`,
+owner-only (`0600`) since provider keys may go there. foo only
+creates that file; if one already exists, foo leaves it as is,
 and you add a `pool:` block yourself
 ([shape](docs/reference/config.md#kit-llmyaml-routing-surface)). The
 `balanced` tier is the default; switch with `--budget cheap` for
