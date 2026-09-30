@@ -248,11 +248,20 @@ func TestShimGate_ToolsApproveAsksOnce(t *testing.T) {
 	t.Run("builtin keeps dispatcher question", func(t *testing.T) {
 		withApproval(t, func() (io.Reader, error) { return strings.NewReader("n\n"), nil })
 		r := mustShimRun(t, "wc", "foo_time")
-		if msg := r.call("foo_time", `{}`); msg != `{"skipped": true}` {
-			t.Errorf("foo_time declined = %q", msg)
-		}
+		// Declined the same way as a shim: the structured error, not
+		// {"skipped": true}.
+		decodeToolMessage(t, r.call("foo_time", `{}`)).wantDenied(t, "declined", "the user declined this call")
 		if n := r.questions(); n != 1 || !strings.Contains(r.stderr.String(), "[tool] execute foo_time") {
 			t.Errorf("asked %d times: %q; want the dispatcher's question once", n, r.stderr)
+		}
+	})
+	// With no terminal, the model is told why, as the gate does for shims.
+	t.Run("builtin no terminal carries reason", func(t *testing.T) {
+		withApproval(t, func() (io.Reader, error) { return nil, errors.New("open /dev/tty: device not configured") })
+		r := mustShimRun(t, "wc", "foo_time")
+		decodeToolMessage(t, r.call("foo_time", `{}`)).wantDenied(t, "declined", "cannot be asked: no terminal")
+		if !strings.Contains(r.stderr.String(), "foo_time denied") {
+			t.Errorf("stderr %q; want the denial reported to the user too", r.stderr)
 		}
 	})
 }

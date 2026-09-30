@@ -117,8 +117,13 @@ func TestPrompterApprove_NoTerminalDeniesWithReason(t *testing.T) {
 		return nil, errors.New("open /dev/tty: device not configured")
 	}, &out)
 
-	if p.Approve("foo_time", json.RawMessage(`{}`)) {
+	ok, err := p.Approve("foo_time", json.RawMessage(`{}`))
+	if ok {
 		t.Fatal("Approve returned true without a terminal")
+	}
+	// The reason also goes back to the caller, so the model is told why.
+	if !errors.Is(err, ErrNoTerminal) || !strings.Contains(err.Error(), "device not configured") {
+		t.Fatalf("err = %v; want ErrNoTerminal naming the open failure", err)
 	}
 	msg := out.String()
 	for _, want := range []string{"foo_time", "denied", "no terminal", "device not configured"} {
@@ -132,8 +137,8 @@ func TestPrompterApprove_AsksWithToolAndArgs(t *testing.T) {
 	var opens int
 	var out bytes.Buffer
 	p := NewPrompter(answers("y\n", &opens), &out)
-	if !p.Approve("foo_time", json.RawMessage(`{"tz":"UTC"}`)) {
-		t.Fatal("Approve returned false on y")
+	if ok, err := p.Approve("foo_time", json.RawMessage(`{"tz":"UTC"}`)); !ok || err != nil {
+		t.Fatalf("Approve = %v, %v on y; want true, nil", ok, err)
 	}
 	if want := `[tool] execute foo_time with {"tz":"UTC"}? [y/N] `; out.String() != want {
 		t.Fatalf("prompt = %q, want %q", out.String(), want)

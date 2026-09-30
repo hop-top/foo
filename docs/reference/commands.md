@@ -62,7 +62,7 @@ foo < /dev/null
 | `--tool` | `-T` | (none) | Enable tools by name (repeatable); names come from [`foo tool list`](#tool). An unknown name fails with exit 3 before any model call |
 | `--chain-limit` | | `5` | Max tool-call iterations |
 | `--tools-debug` | | `false` | Log tool calls + results to stderr |
-| `--tools-approve` | | `false` | Confirm before each tool execution. Answers come from the terminal, never stdin; with no terminal the call is denied |
+| `--tools-approve` | | `false` | Confirm before each tool execution. Answers come from the terminal, never stdin. A no, or no terminal to ask on, returns the `declined` error to the model, with the reason |
 | `--fragment` | `-f` | (none) | Attach fragment(s) to the user prompt |
 | `--system-fragment` | | (none) | Attach fragment(s) to the system prompt |
 | `--schema` | | (none) | Structured JSON output (schema name or DSL) |

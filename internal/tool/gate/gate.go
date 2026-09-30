@@ -126,3 +126,14 @@ func (e *Error) Error() string {
 	}
 	return fmt.Sprintf("%s: %s %s: %s", e.Kind, e.Param, e.Path, e.Message)
 }
+
+// Declined is the refusal of a call that needed approval and did not
+// get it: the user said no, or, with a non-nil err, nobody could be
+// asked and err says why. Every tool reports a declined call with it,
+// so the model sees one message shape whichever tool it called.
+func Declined(err error) *Error {
+	if err != nil {
+		return &Error{Kind: KindDeclined, Message: "approval required but cannot be asked: " + err.Error()}
+	}
+	return &Error{Kind: KindDeclined, Message: "the user declined this call; do not retry it unchanged"}
+}
