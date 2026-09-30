@@ -221,6 +221,11 @@ foo`
 // a subcommand plugin.
 const toolPluginSubcommandPrefix = "tool-"
 
+// cobraExecuteCommands are the subcommands cobra mounts on the root at
+// Execute, after plugin registration: they are built-ins too, but are
+// not yet on the tree when registerExtPlugins runs.
+var cobraExecuteCommands = []string{"help", "completion"}
+
 // registerExtPlugins discovers `foo-*` binaries on $PATH, registers each
 // as a passthrough subcommand via kit's ext/dispatch helper, and stamps
 // the cobra metadata the strict validator demands (Long, side-effect,
@@ -228,30 +233,45 @@ const toolPluginSubcommandPrefix = "tool-"
 // description; on failure we synthesize a non-empty placeholder so the
 // validator gate stays armed.
 //
-// kit's scan matches every `foo-*` binary, `foo-tool-*` included, so
-// tool plugins are dropped before annotation: they never reach help
-// and are never exec'd here.
+// kit's scan matches every `foo-*` binary, so two kinds are dropped
+// before annotation: `foo-tool-*` tool plugins, and any binary whose
+// name a built-in command already owns, by name or alias. Built-ins
+// win: a dropped binary never reaches help and is never exec'd here.
 func registerExtPlugins(rootCmd *cobra.Command) {
-	before := commandSet(rootCmd)
-	extdispatch.Register(rootCmd, "foo", "")
-	var toolPlugins []*cobra.Command
+	builtins := builtinCommandNames(rootCmd)
+	before := make(map[*cobra.Command]struct{}, len(rootCmd.Commands()))
 	for _, sub := range rootCmd.Commands() {
-		if _, existed := before[sub.Name()]; existed {
+		before[sub] = struct{}{}
+	}
+	extdispatch.Register(rootCmd, "foo", "")
+	var dropped []*cobra.Command
+	for _, sub := range rootCmd.Commands() {
+		if _, existed := before[sub]; existed {
 			continue
 		}
-		if strings.HasPrefix(sub.Name(), toolPluginSubcommandPrefix) {
-			toolPlugins = append(toolPlugins, sub)
+		_, shadowed := builtins[sub.Name()]
+		if shadowed || strings.HasPrefix(sub.Name(), toolPluginSubcommandPrefix) {
+			dropped = append(dropped, sub)
 			continue
 		}
 		annotateExtPlugin(sub)
 	}
-	rootCmd.RemoveCommand(toolPlugins...)
+	rootCmd.RemoveCommand(dropped...)
 }
 
-func commandSet(c *cobra.Command) map[string]struct{} {
-	s := make(map[string]struct{}, len(c.Commands()))
+// builtinCommandNames returns every word that already dispatches to a
+// built-in: each root command's name and aliases, plus the commands
+// cobra adds at Execute.
+func builtinCommandNames(c *cobra.Command) map[string]struct{} {
+	s := make(map[string]struct{}, len(c.Commands())+len(cobraExecuteCommands))
+	for _, name := range cobraExecuteCommands {
+		s[name] = struct{}{}
+	}
 	for _, sub := range c.Commands() {
 		s[sub.Name()] = struct{}{}
+		for _, a := range sub.Aliases {
+			s[a] = struct{}{}
+		}
 	}
 	return s
 }

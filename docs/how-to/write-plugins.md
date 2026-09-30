@@ -79,6 +79,11 @@ registers it as a cobra subcommand under the PLUGINS group, and
 forwards argv with `DisableFlagParsing: true` (you handle flags
 yourself).
 
+Built-in commands win. A binary named after a built-in command or
+alias (`foo-config`, `foo-tool`, `foo-help`, `foo-completion`, …)
+is skipped: it is not listed, not run for `--ext-info`, and
+`foo <name>` runs the built-in. Pick a name no built-in uses.
+
 ### Required: `--ext-info`
 
 When invoked as `<binary> --ext-info`, the plugin must write a
@@ -263,6 +268,7 @@ exit or non-JSON stdout reaches the model as a tool error.
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | Plugin missing from `foo --help` | Wrong PATH or wrong filename | `which foo-<name>`; rename binary; check it's executable |
+| Plugin missing from `foo --help`, `foo <name>` runs something else | A built-in command or alias owns `<name>` (`config`, `tool`, `help`, …) | Rename the plugin |
 | Description shows as generic placeholder | `--ext-info` errored or returned non-JSON | Run `foo-<name> --ext-info` directly and validate the JSON |
 | `pipe broken` when running `foo <plugin> | foo` | Plugin wrote binary to stdout | Emit markdown; diagnostics to stderr |
 | `foo <name>` is treated as a prompt arg | Binary not on PATH at all | `go install` the plugin or `chmod +x` after copying |
@@ -279,7 +285,8 @@ At foo startup, `commands.New` calls
 `registerExtPlugins(rootCmd)`. That helper scans `$PATH` for
 `foo-*` executables via kit's `discover.Scanner`, registers each
 discovered binary as a passthrough cobra subcommand, drops the
-`foo-tool-*` ones, and stamps the kit annotations the strict
+`foo-tool-*` ones and any whose name a built-in command or alias
+owns, and stamps the kit annotations the strict
 validator requires on the rest. Each remaining plugin's
 `--ext-info` description is read once, right there at startup,
 and assigned to `cmd.Short` and `cmd.Long`.
