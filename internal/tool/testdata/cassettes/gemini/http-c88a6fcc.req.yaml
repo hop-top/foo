@@ -1,0 +1,69 @@
+xrr: "1"
+adapter: http
+fingerprint: c88a6fcc
+recorded_at: "2026-09-30T14:51:14Z"
+payload:
+    method: POST
+    url: /v1beta/models/gemini-3.5-flash-lite:generateContent
+    body: |
+        {
+          "contents": [
+            {
+              "parts": [
+                {
+                  "text": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else."
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "parts": [
+                {
+                  "functionCall": {
+                    "args": {
+                      "text": "pelican"
+                    },
+                    "name": "echo"
+                  },
+                  "thoughtSignature": "EmAKXgFpFH0TJaCJfZQylptkbBm6+ttsdK+4rLfwIwUJcYgMXrsBd62HFq6SAuqKwug9TatJ34Qv+X6RteyilGKAz5yhRkU4l0O9yO1En3tljyG02e//XHt62IIZPlyZqrQ="
+                }
+              ],
+              "role": "model"
+            },
+            {
+              "parts": [
+                {
+                  "functionResponse": {
+                    "name": "echo",
+                    "response": {
+                      "echo": "pelican"
+                    }
+                  }
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "tools": [
+            {
+              "functionDeclarations": [
+                {
+                  "description": "Echo the given text back verbatim.",
+                  "name": "echo",
+                  "parameters": {
+                    "properties": {
+                      "text": {
+                        "description": "Text to echo",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "text"
+                    ],
+                    "type": "object"
+                  }
+                }
+              ]
+            }
+          ]
+        }

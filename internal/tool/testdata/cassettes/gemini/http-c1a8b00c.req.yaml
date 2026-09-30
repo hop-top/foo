@@ -1,0 +1,42 @@
+xrr: "1"
+adapter: http
+fingerprint: c1a8b00c
+recorded_at: "2026-09-30T14:51:09Z"
+payload:
+    method: POST
+    url: /v1beta/models/gemini-3.5-flash-lite:generateContent
+    body: |
+        {
+          "contents": [
+            {
+              "parts": [
+                {
+                  "text": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else."
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "tools": [
+            {
+              "functionDeclarations": [
+                {
+                  "description": "Echo the given text back verbatim.",
+                  "name": "echo",
+                  "parameters": {
+                    "properties": {
+                      "text": {
+                        "description": "Text to echo",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "text"
+                    ],
+                    "type": "object"
+                  }
+                }
+              ]
+            }
+          ]
+        }

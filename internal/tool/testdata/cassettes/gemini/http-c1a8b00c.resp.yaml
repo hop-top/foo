@@ -1,0 +1,47 @@
+xrr: "1"
+adapter: http
+fingerprint: c1a8b00c
+recorded_at: "2026-09-30T14:51:09Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json; charset=UTF-8
+    body: |
+        {
+          "candidates": [
+            {
+              "content": {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "name": "echo",
+                      "args": {
+                        "text": "pelican"
+                      },
+                      "id": "call_730386"
+                    },
+                    "thoughtSignature": "EmAKXgFpFH0TJaCJfZQylptkbBm6+ttsdK+4rLfwIwUJcYgMXrsBd62HFq6SAuqKwug9TatJ34Qv+X6RteyilGKAz5yhRkU4l0O9yO1En3tljyG02e//XHt62IIZPlyZqrQ="
+                  }
+                ],
+                "role": "model"
+              },
+              "finishReason": "STOP",
+              "index": 0,
+              "finishMessage": "Model generated function call(s)."
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 88,
+            "candidatesTokenCount": 15,
+            "totalTokenCount": 103,
+            "promptTokensDetails": [
+              {
+                "modality": "TEXT",
+                "tokenCount": 88
+              }
+            ],
+            "serviceTier": "standard"
+          },
+          "modelVersion": "gemini-3.5-flash-lite",
+          "responseId": "2SG9aoD2KJWj_PUPj-6SwAg"
+        }

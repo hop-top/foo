@@ -1,0 +1,40 @@
+xrr: "1"
+adapter: http
+fingerprint: c88a6fcc
+recorded_at: "2026-09-30T14:51:14Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json; charset=UTF-8
+    body: |
+        {
+          "candidates": [
+            {
+              "content": {
+                "parts": [
+                  {
+                    "text": "pelican",
+                    "thoughtSignature": "EmAKXgFpFH0ThpvwWc9Q9xWRPAAPEjgNkuCVA2W7/SZkneWPszFJ4SmPzBAtJH//m7WHmhA3K/lNau2QJVl5lCSGUm+WmUmRYH1Ar5j9KvtQTPxrRK/bT9wIQel/7OPV6jI="
+                  }
+                ],
+                "role": "model"
+              },
+              "finishReason": "STOP",
+              "index": 0
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 116,
+            "candidatesTokenCount": 2,
+            "totalTokenCount": 118,
+            "promptTokensDetails": [
+              {
+                "modality": "TEXT",
+                "tokenCount": 116
+              }
+            ],
+            "serviceTier": "standard"
+          },
+          "modelVersion": "gemini-3.5-flash-lite",
+          "responseId": "3SG9aoz0Eeff_uMPuuTTOA"
+        }
