@@ -272,7 +272,11 @@ func isolateLLMConfig(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	for _, k := range []string{"LLM_BASE_URL", "LLM_FALLBACK", "LLM_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"} {
+		// Unset, not empty: the Anthropic SDK takes a present-but-empty
+		// ANTHROPIC_BASE_URL as the base URL and posts to a bare path.
+		// t.Setenv first so the original value is restored on cleanup.
 		t.Setenv(k, "")
+		os.Unsetenv(k)
 	}
 }
 
