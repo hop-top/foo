@@ -30,7 +30,7 @@ cause → fix; the longer sections below give the detail.
 | `interactive REPL requires a terminal` | `foo repl` invoked without a TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
 | `no prompt provided (stdin was empty)` | `foo` got an empty pipe and no positional prompt | [Diagnose the upstream pipe](#empty-pipe-into-foo) |
 | `pattern "X" not found` despite `foo pattern list` showing it elsewhere | Pattern is project-local in another cwd | [Make the pattern global](#pattern-found-here-not-there) |
-| `OFFLINE: --offline refused <host>` (exit 5) | `--offline` and a model on a remote endpoint | [Use a local model or drop `--offline`](#--offline-refused-the-model-endpoint) |
+| `OFFLINE: --offline refused <host>` (exit 10) | `--offline` and a model on a remote endpoint | [Use a local model or drop `--offline`](#--offline-refused-the-model-endpoint) |
 | `UNAUTHORIZED` from a `delete` command | Destructive command refused off-TTY | [Use `--confirm=yes`](#destructive-command-refused-with-unauthorized) |
 | Empty output or visible garbled bytes | Streaming hiccup | [Disable streaming](#streaming-garbled-or-truncated) |
 | `embed: ... 401 Unauthorized` | `OPENAI_API_KEY` missing | Export it |
