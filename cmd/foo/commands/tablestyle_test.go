@@ -6,6 +6,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"hop.top/kit/go/console/output"
@@ -103,9 +104,18 @@ func TestStyledTable_TTYIsBordered(t *testing.T) {
 	if err := f.Render(tty, []styleRow{{"anthropic"}}, nil, nil); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
+	// Close the slave only and let the drain run to its natural end: the
+	// master hands over everything still buffered, then reports EOF/EIO.
+	// Closing the master here instead races the reader; where the master
+	// is pollable (Linux) Close aborts the pending Read and the buffered
+	// table is discarded, so the output arrives empty or truncated.
 	tty.Close()
-	ptmx.Close()
-	got := <-done
+	var got string
+	select {
+	case got = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("pty master never reported EOF after the slave closed")
+	}
 
 	if !strings.ContainsAny(got, "┌┐└┘│─") {
 		t.Errorf("TTY output must be bordered, got:\n%q", got)
