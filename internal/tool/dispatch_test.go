@@ -160,3 +160,61 @@ func (c *countingTool) Execute(context.Context, json.RawMessage) (json.RawMessag
 	c.runs++
 	return json.RawMessage(`{"ok":true}`), nil
 }
+
+type echoTool struct{}
+
+func (echoTool) Name() string                { return "echo" }
+func (echoTool) Description() string         { return "echo" }
+func (echoTool) Parameters() json.RawMessage { return json.RawMessage(emptyParameters) }
+func (echoTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+	return args, nil
+}
+
+// twoCallClient asks for two tool calls in its first turn, then answers.
+type twoCallClient struct{ msgsSeen [][]llm.Message }
+
+func (c *twoCallClient) CallWithTools(
+	_ context.Context, msgs []llm.Message, _ []llm.ToolDef,
+) (llm.ToolResponse, error) {
+	c.msgsSeen = append(c.msgsSeen, append([]llm.Message(nil), msgs...))
+	if len(c.msgsSeen) == 1 {
+		return llm.ToolResponse{Content: "checking", ToolCalls: []llm.ToolCall{
+			{ID: "c1", Name: "echo", Arguments: json.RawMessage(`{"n":1}`)},
+			{ID: "c2", Name: "echo", Arguments: json.RawMessage(`{"n":2}`)},
+		}}, nil
+	}
+	return llm.ToolResponse{Content: "done"}, nil
+}
+
+// The next request carries the assistant turn with the calls it made,
+// and each result names the call it answers, so providers can pair
+// them (OpenAI tool_call_id, Anthropic tool_use_id, Gemini
+// functionResponse).
+func TestDispatch_ResultsLinkedToCalls(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Register(echoTool{}); err != nil {
+		t.Fatal(err)
+	}
+	client := &twoCallClient{}
+	if _, err := NewDispatcher(client, reg, DispatchConfig{}).Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(client.msgsSeen) != 2 {
+		t.Fatalf("model called %d times, want 2", len(client.msgsSeen))
+	}
+	msgs := client.msgsSeen[1]
+	if len(msgs) != 4 {
+		t.Fatalf("second request has %d messages, want user, assistant, tool, tool: %+v", len(msgs), msgs)
+	}
+	asst := msgs[1]
+	if asst.Role != "assistant" || asst.Content != "checking" || len(asst.ToolCalls) != 2 ||
+		asst.ToolCalls[0].ID != "c1" || asst.ToolCalls[1].ID != "c2" {
+		t.Errorf("assistant turn = %+v; want content %q with calls c1, c2", asst, "checking")
+	}
+	for i, id := range []string{"c1", "c2"} {
+		m := msgs[2+i]
+		if m.Role != "tool" || m.ToolCallID != id {
+			t.Errorf("result %d = role %q id %q; want tool answering %s", i, m.Role, m.ToolCallID, id)
+		}
+	}
+}
