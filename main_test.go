@@ -131,3 +131,22 @@ func TestMultiCall_LinkDispatchesOnArgv0(t *testing.T) {
 		t.Errorf("foo --version: exit %d %q", code, out)
 	}
 }
+
+// --offline refuses a remote model provider with exit 5 and the
+// OFFLINE code, whichever side of the prompt the flag sits on. The
+// .invalid endpoint never resolves, so nothing leaves the machine even
+// if the refusal regresses.
+func TestOffline_RemoteProviderExitCode(t *testing.T) {
+	foo := buildFoo(t)
+	env := append(isolatedEnv(t, t.TempDir()),
+		"OPENAI_API_KEY=sk-test", "LLM_BASE_URL=http://model.invalid/v1")
+	for _, args := range [][]string{
+		{"--offline", "-m", "gpt-4o", "--no-stream", "hi"},
+		{"-m", "gpt-4o", "-T", "foo_time", "hi", "--offline"},
+	} {
+		_, stderr, code := run(t, env, "", foo, args...)
+		if code != 5 || !strings.Contains(stderr, "OFFLINE") || !strings.Contains(stderr, "model.invalid") {
+			t.Errorf("foo %v: exit %d, stderr %q; want 5 with the OFFLINE refusal naming the endpoint", args, code, stderr)
+		}
+	}
+}

@@ -30,6 +30,7 @@ cause → fix; the longer sections below give the detail.
 | `interactive REPL requires a terminal` | `foo repl` invoked without a TTY | [Provide a prompt or run on a TTY](#repl-launched-without-tty) |
 | `no prompt provided (stdin was empty)` | `foo` got an empty pipe and no positional prompt | [Diagnose the upstream pipe](#empty-pipe-into-foo) |
 | `pattern "X" not found` despite `foo pattern list` showing it elsewhere | Pattern is project-local in another cwd | [Make the pattern global](#pattern-found-here-not-there) |
+| `OFFLINE: --offline refused <host>` (exit 5) | `--offline` and a model on a remote endpoint | [Use a local model or drop `--offline`](#--offline-refused-the-model-endpoint) |
 | `UNAUTHORIZED` from a `delete` command | Destructive command refused off-TTY | [Use `--confirm=yes`](#destructive-command-refused-with-unauthorized) |
 | Empty output or visible garbled bytes | Streaming hiccup | [Disable streaming](#streaming-garbled-or-truncated) |
 | `embed: ... 401 Unauthorized` | `OPENAI_API_KEY` missing | Export it |
@@ -297,6 +298,32 @@ renderer to pick up — a kit-side gap, not a foo misconfiguration.
 
 Address the specific entry and re-run; status is purely
 informational and never mutates state.
+
+## `--offline` refused the model endpoint
+
+`--offline` only lets foo reach model endpoints on this machine: a
+`base_url` host of `localhost`, `127.0.0.0/8` or `[::1]`. Any other
+endpoint, including a provider's default
+(`api.openai.com`, …), fails before the request is sent:
+
+```
+OFFLINE: --offline refused api.openai.com: only loopback endpoints (localhost, 127.0.0.0/8, ::1) are reachable offline
+```
+
+The exit code is 5. Fix it one of two ways:
+
+- Point the call at a model you serve locally, e.g.
+  `LLM_BASE_URL=http://127.0.0.1:11434/v1 foo --offline -m llama3 "hi"`
+  ([details](how-to/use-a-local-endpoint.md)).
+- Drop `--offline` if the call is meant to reach the provider.
+
+A host name that resolves to loopback still counts as remote,
+because resolving it would touch the network. Write the address
+instead (`127.0.0.1`, `[::1]`) or `localhost`.
+
+If a local primary model fails and a remote fallback is configured,
+the refusal names the fallback's host. Check that the local server
+is up.
 
 ## Local endpoint: wrong host, or a nonsensical context-length error
 

@@ -349,9 +349,20 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	// and wireBusNetwork() read.
 	offline = root.Offline()
 
-	// --offline suppresses every network call. The upgrade check is the
-	// one unconditional network touch in the runtime init path; gate it
-	// here. Downstream LLM/embedding calls read the same flag via
+	// --offline refuses every request that would leave the machine;
+	// loopback (localhost, 127.0.0.0/8, ::1) and unix sockets stay
+	// reachable, so a model served locally still answers. Enforcement
+	// is kit's network guard, which cli.New installs under
+	// http.DefaultTransport and which every provider adapter and foo's
+	// own HTTP clients ride; it refuses a request whose context carries
+	// the offline marker. kit stamps that marker in its own
+	// PersistentPreRunE chain, which this hook replaces, so stamp it
+	// here or nothing downstream is ever refused.
+	cmd.SetContext(kitcli.WithOffline(cmd.Context(), offline))
+
+	// Work foo skips outright rather than letting the guard refuse:
+	// the upgrade check (the one unconditional network touch in the
+	// init path), bus peers (wireBusNetwork) and `foo upgrade` all read
 	// networkAllowed().
 	if !offline && cmd.Name() != "upgrade" {
 		upgrade.NotifyIfAvailable(cmd.Context(), newUpgradeChecker(), cmd.ErrOrStderr())

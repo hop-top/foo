@@ -10,6 +10,9 @@ that speaks `/v1/chat/completions`.
 - You reach a hosted model through a gateway or proxy that
   presents an OpenAI-compatible API.
 - You want to keep prompts off a third-party provider.
+- You run foo with `--offline`: a loopback endpoint
+  (`localhost`, `127.0.0.0/8`, `[::1]`) is the only kind it reaches
+  ([offline runs](../reference/commands.md#offline-runs)).
 
 For picking between *hosted* models, see
 [route across models](route-across-models.md); for pinning one
