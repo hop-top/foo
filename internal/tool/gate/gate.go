@@ -72,6 +72,10 @@ type Request struct {
 	// SideEffect is the effective class after side_effect_if:
 	// "read", "write" or "destructive".
 	SideEffect string
+	// Network is what the tool reaches beyond the local machine:
+	// "none" (or empty), "local-only" or "egress". With SideEffect it
+	// picks the side-effect policy row.
+	Network string
 	// Paths are the call's path arguments.
 	Paths []PathArg
 	// Argv renders the command that will run from the canonical paths.

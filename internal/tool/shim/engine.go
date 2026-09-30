@@ -203,6 +203,7 @@ func (e *Engine) request(l *Loaded, v *Variant, vals values) (gate.Request, []ga
 	return gate.Request{
 		Tool:       s.Name,
 		SideEffect: s.effectiveSideEffect(vals),
+		Network:    s.Network,
 		Paths:      args,
 		Argv: func(canonical map[string][]string) []string {
 			paths, err := s.destinations(canonical)

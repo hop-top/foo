@@ -194,7 +194,7 @@ The model receives:
 |--------|---------|
 | `denied` | The scope refused a path (or there is no `scope.yaml`) |
 | `declined` | Approval was needed and you said no, or nobody could be asked |
-| `policy` | `tool-policy.yaml` denies this side effect |
+| `policy` | `tool-policy.yaml` denies this side effect on the tool's network |
 | `invalid_args` | Bad arguments, an existing destination without `overwrite=true`, or a protected path (below) |
 | `not_found` | A path that must exist does not (only for a path the scope grants) |
 | `timeout` | The command ran past its limit (30s; 60s for `find`, `grep`, `cp`, `mv`, `rm`); output discarded |
@@ -252,9 +252,25 @@ Now `mkdir`, `cp` and `mv` run without a question; `rm`, `sed` and
 `destructive` rule to change those too, or `action: deny` to forbid a
 class outright (the call returns `policy`).
 
-Write `network: none`, not `any`: foo's own rule is keyed on
-`(write, none)`, and an exact match beats `any`, so a `network: any`
-rule never takes effect for these tools.
+A rule matches a tool by its side effect and the `network` its spec
+declares. The built-in tools declare `network: none`. A
+[tool spec](../reference/tool-spec.md#side-effects) of yours that
+declares `local-only` or `egress` gets that network's rule instead:
+by default a write there asks, an `egress` read asks, and an `egress`
+destructive call is refused. To let one of your egress tools read
+without asking:
+
+```yaml
+  - side_effect: read
+    network: egress
+    action: auto-allow
+    reason: "my mirror tool only fetches from a trusted host"
+```
+
+Name the network, not `any`: an exact `(side_effect, network)` rule
+beats `any`, and kit and foo already have an exact rule for every
+`read`, `write` and `destructive` cell, so a `network: any` rule never
+takes effect for these tools.
 
 ### 8. Pick a mode
 

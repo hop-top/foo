@@ -154,11 +154,12 @@ func (g *Gate) Authorize(ctx context.Context, req Request) (Grant, error) {
 		return Grant{}, err
 	}
 
-	dec := g.table.Resolve(policy.SideEffect(req.SideEffect), policy.NetworkNone)
+	dec := g.table.Resolve(policy.SideEffect(req.SideEffect), networkOf(req))
 	if dec.Action == policy.ActionDeny {
 		return Grant{}, &Error{
-			Kind:    KindPolicy,
-			Message: fmt.Sprintf("side effect %q is denied by the tool policy: %s", req.SideEffect, dec.Reason),
+			Kind: KindPolicy,
+			Message: fmt.Sprintf("side effect %q with network %q is denied by the tool policy: %s",
+				req.SideEffect, networkOf(req), dec.Reason),
 		}
 	}
 	if err := a.approve(req, grant.Canonical, dec); err != nil {
@@ -401,3 +402,11 @@ func renderArgv(argv []string) string {
 // errNoConfirmer stands in for a missing terminal when the gate has no
 // Confirmer.
 var errNoConfirmer = errors.New("no terminal to ask for approval")
+
+// networkOf is the policy network of req: none when undeclared.
+func networkOf(req Request) policy.Network {
+	if req.Network == "" {
+		return policy.NetworkNone
+	}
+	return policy.Network(req.Network)
+}
