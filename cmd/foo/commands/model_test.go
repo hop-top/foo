@@ -1178,7 +1178,9 @@ func TestMetaFromProvenance(t *testing.T) {
 // not fire without it.
 //
 // The refetch is stubbed rather than run, so the test asserts the
-// command's wiring and never touches models.dev.
+// command's wiring and never touches models.dev. The credential index
+// is pinned too: unpinned, the reachability filter builds it from the
+// shared aim registry, which fetches the catalog on a cold cache.
 func TestModelList_RefreshForcesACatalogRefetch(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -1190,6 +1192,7 @@ func TestModelList_RefreshForcesACatalogRefetch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withLiveSourceSelection(t)
+			withAuth(t, nil)
 
 			var calls atomic.Int64
 			prevRefresh := refreshCatalog
