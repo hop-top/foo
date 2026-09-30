@@ -94,8 +94,9 @@ func ensureRegistry() *aim.Registry {
 //
 // Fallback wiring runs on every path: kit's LoadConfig reads
 // `~/.config/hop/llm.yaml` `fallback:` plus the LLM_FALLBACK env var
-// and each entry is added via WithFallback. Errors from LoadConfig are
-// tolerated — missing/invalid config must not block a working call.
+// and each entry is added via WithFallback once its scheme's key is
+// injected (fallbackURIs). Errors from LoadConfig are tolerated —
+// missing/invalid config must not block a working call.
 func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 	model := opts.Model
 
@@ -243,6 +244,23 @@ func buildURI(scheme, model, envVar string) (string, error) {
 // a scheme foo has no entry for or a URI kit cannot parse — kit reports
 // those itself, more accurately than a missing-key error would.
 func injectURIKey(uri string) (string, error) {
+	keyed, missing := keyURI(uri)
+	if missing != nil {
+		return "", missingKeyError(missing.envVar, missing.model, missing.scheme)
+	}
+	return keyed, nil
+}
+
+// missingKey describes a keyed URI whose API key could not be found.
+type missingKey struct {
+	envVar, model, scheme string
+}
+
+// keyURI is injectURIKey's resolution without the error policy: it
+// returns uri with the scheme's key appended, or the missing key's
+// description. The primary model turns a miss into a precheck failure;
+// a fallback entry turns it into a dropped entry (fallbackURIs).
+func keyURI(uri string) (string, *missingKey) {
 	parsed, err := kitllm.ParseURI(uri)
 	if err != nil {
 		return uri, nil
@@ -256,7 +274,7 @@ func injectURIKey(uri string) (string, error) {
 	}
 	key := lookupAPIKey(envVar)
 	if key == "" {
-		return "", missingKeyError(envVar, parsed.Model, parsed.Scheme)
+		return "", &missingKey{envVar: envVar, model: parsed.Model, scheme: parsed.Scheme}
 	}
 	return uri + querySep(uri) + "api_key=" + key, nil
 }
@@ -361,25 +379,76 @@ func buildClientFromURI(uri string, maxTokens int) (*Client, error) {
 		return nil, err
 	}
 
-	// Fallback wiring (per LoadConfig + LLM_FALLBACK env). LoadConfig
-	// errors are tolerated so a missing config file never blocks a
-	// successful single-provider call; per-URI Resolve errors skip
-	// just that one entry so one bad fallback can't disable the rest.
+	// Per-URI Resolve errors skip just that one entry so one bad
+	// fallback can't disable the rest.
 	var clientOpts []kitllm.Option
-	if cfg, cfgErr := kitllm.LoadConfig(uri); cfgErr == nil {
-		for _, fbURI := range cfg.Fallbacks {
-			fb, fbErr := kitllm.Resolve(fbURI)
-			if fbErr != nil {
-				continue
-			}
-			clientOpts = append(clientOpts, kitllm.WithFallback(fb))
+	for _, fbURI := range fallbackURIs(uri) {
+		fb, fbErr := kitllm.Resolve(fbURI)
+		if fbErr != nil {
+			continue
 		}
+		clientOpts = append(clientOpts, kitllm.WithFallback(fb))
 	}
 
 	return &Client{
 		client:    kitllm.NewClient(p, clientOpts...),
 		maxTokens: maxTokens,
 	}, nil
+}
+
+// fallbackURIs returns the fallback chain for a client whose primary is
+// uri, each entry carrying its scheme's API key. kit's LoadConfig reads
+// llm.yaml `fallback:` and LLM_FALLBACK (env wins); its errors are
+// tolerated so a missing config file never blocks a working
+// single-provider call.
+//
+// Kit's Resolve takes a key from the URI and nowhere else, so an entry
+// passed through bare reached its provider unauthenticated. Each entry
+// gets the same key resolution as a URI-form --model (keyURI).
+//
+// An entry whose key cannot be found is dropped, not fatal: the primary
+// may be healthy, and failing the run over a backup that is never
+// needed would be worse than running without it. The drop is announced
+// once per process on stderr, naming the variable to set.
+func fallbackURIs(uri string) []string {
+	cfg, err := kitllm.LoadConfig(uri)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(cfg.Fallbacks))
+	for _, fb := range cfg.Fallbacks {
+		keyed, missing := keyURI(fb)
+		if missing != nil {
+			warnDroppedFallback(missing)
+			continue
+		}
+		out = append(out, keyed)
+	}
+	return out
+}
+
+// droppedFallbacks remembers which fallback drops were already
+// announced, so a process that builds more than one client warns once.
+var (
+	droppedFallbacksMu sync.Mutex
+	droppedFallbacks   = map[string]struct{}{}
+)
+
+func warnDroppedFallback(m *missingKey) {
+	id := m.scheme + "://" + m.model
+	droppedFallbacksMu.Lock()
+	_, seen := droppedFallbacks[id]
+	droppedFallbacks[id] = struct{}{}
+	droppedFallbacksMu.Unlock()
+	if seen {
+		return
+	}
+	slog.Warn(
+		"llm.fallback.dropped: fallback has no API key; skipping it",
+		slog.String("fallback", id),
+		slog.String("missing", m.envVar),
+		slog.String("hint", "export "+m.envVar+"=... to enable it, or remove it from LLM_FALLBACK / llm.yaml fallback:"),
+	)
 }
 
 // lookupAPIKey resolves a provider API key through the kit secret store

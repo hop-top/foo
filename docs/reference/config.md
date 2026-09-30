@@ -117,7 +117,7 @@ fallback:
 | `pool[].model` | string | Model id as it appears on models.dev. |
 | `pool[].enabled` | bool | Default `true`. Set `false` to keep the entry but mute it. |
 | `pool[].weight` | float | Default `1.0`. Reserved for future load-distribution policy. |
-| `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. |
+| `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. Each entry gets its own scheme's key, resolved as for the primary model ([key precedence](#provider-keys)); an entry whose key is missing is dropped with one stderr warning, and the run continues. |
 
 End-to-end walkthrough:
 [how-to: route across models](../how-to/route-across-models.md).
@@ -149,6 +149,13 @@ pool, or as a URI: `-m 'openrouter://openai/gpt-4.1-nano'` gets
 `OPENROUTER_API_KEY` appended. A URI that already carries
 `?api_key=` is sent as written. A missing key fails before any
 request with `missing OPENROUTER_API_KEY for model "..."`.
+
+Fallback entries (`LLM_FALLBACK`, llm.yaml `fallback:`) get their
+own scheme's key the same way. A fallback whose key is missing is
+dropped rather than failing the run — the primary may be fine —
+and foo warns once on stderr:
+`llm.fallback.dropped: fallback has no API key; skipping it
+fallback=openrouter://... missing=OPENROUTER_API_KEY`.
 
 `foo provider show <scheme>` reports each scheme's expected key
 and whether foo can see it.
