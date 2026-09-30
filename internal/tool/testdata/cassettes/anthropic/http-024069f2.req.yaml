@@ -1,0 +1,69 @@
+xrr: "1"
+adapter: http
+fingerprint: 024069f2
+recorded_at: "2026-09-30T14:24:30Z"
+payload:
+    method: POST
+    url: /v1/messages
+    body: |
+        {
+          "max_tokens": 1024,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else.",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "id": "toolu_01S8DBSaE4ZAwVqPnDQLqQSv",
+                  "input": {
+                    "text": "pelican"
+                  },
+                  "name": "echo",
+                  "type": "tool_use"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "content": [
+                    {
+                      "text": "{\"echo\":\"pelican\"}",
+                      "type": "text"
+                    }
+                  ],
+                  "tool_use_id": "toolu_01S8DBSaE4ZAwVqPnDQLqQSv",
+                  "type": "tool_result"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "claude-haiku-4-5-20251001",
+          "tools": [
+            {
+              "description": "Echo the given text back verbatim.",
+              "input_schema": {
+                "properties": {
+                  "text": {
+                    "description": "Text to echo",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              },
+              "name": "echo"
+            }
+          ]
+        }
