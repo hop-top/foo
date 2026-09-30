@@ -75,6 +75,8 @@ plugin you installed is missing from this list:
 - Confirm `which foo-<name>` returns a path.
 - Confirm the binary is executable (`chmod +x`).
 - Run `foo-<name> --ext-info` directly; it must emit valid JSON.
+- Confirm `<name>` is not a built-in command or alias (`config`,
+  `tool`, `help`, …): built-ins win and the plugin is skipped.
 
 ### 3. Run the plugin standalone
 
@@ -119,7 +121,8 @@ at startup. The registrar scans `$PATH` for executables named
 `foo-*`, registers each as a cobra subcommand in the PLUGINS
 group with `DisableFlagParsing: true`, and forwards argv straight
 to the binary via `exec.Command`. Foo then drops the `foo-tool-*`
-matches, which are LLM tools rather than subcommands.
+matches, which are LLM tools rather than subcommands, and any
+binary whose name a built-in command or alias already owns.
 
 Each plugin binary is interrogated for `--ext-info` once per `foo`
 invocation, at startup, to populate the description shown in
