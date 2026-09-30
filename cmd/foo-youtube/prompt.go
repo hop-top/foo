@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -14,8 +15,6 @@ import (
 	_ "hop.top/kit/go/ai/llm/routellm"
 	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/core/xdg"
-	"hop.top/kit/go/storage/secret"
-	_ "hop.top/kit/go/storage/secret/env"
 )
 
 // youtubeModelDefault is the model used when neither FOO_YOUTUBE_MODEL,
@@ -118,70 +117,80 @@ func modelFromHostConfig() string {
 	return ""
 }
 
-// schemeForModel maps a bare model id to its kit URI scheme and the env
-// var holding that provider's key. An empty envVar means a local
-// provider with no credential to precheck.
+// schemeForModel maps a bare model id to its kit URI scheme.
 //
-// This mirrors the host's own mapping. It is duplicated rather than
-// imported because the host's copy lives in a foo internal package and
-// this binary imports none — the same structural duplication
-// resolveCachePath already carries.
-func schemeForModel(model string) (scheme, envVar string) {
+// Guessing a scheme from a bare id is this binary's policy, so it stays
+// here; which key that scheme takes is kit's (see modelURI). It mirrors
+// the host's own guess, duplicated rather than imported because the
+// host's copy lives in a foo internal package and this binary imports
+// none — the same structural duplication resolveCachePath already
+// carries.
+func schemeForModel(model string) string {
 	switch {
 	case strings.HasPrefix(model, "gpt-"), strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"):
-		return "openai", "OPENAI_API_KEY"
+		return "openai"
 	case strings.HasPrefix(model, "claude-"):
-		return "anthropic", "ANTHROPIC_API_KEY"
+		return "anthropic"
 	case strings.HasPrefix(model, "gemini-"):
-		return "google", "GOOGLE_API_KEY"
+		return "google"
 	case strings.HasPrefix(model, "llama"), strings.HasPrefix(model, "mistral"), strings.HasPrefix(model, "deepseek-r1"):
-		return "ollama", ""
+		return "ollama"
 	case strings.HasPrefix(model, "router-"):
-		return "routellm", ""
+		return "routellm"
 	default:
-		// Unknown prefix — assume an OpenAI-compatible endpoint
-		// (openrouter, groq, together, a local vLLM).
-		return "openai", "OPENAI_API_KEY"
+		// Unknown prefix — assume an OpenAI-compatible endpoint on the
+		// openai scheme. Hosted gateways (openrouter, groq, ...) are
+		// reached by naming their scheme in a URI, which then takes
+		// that scheme's own key.
+		return "openai"
 	}
 }
 
 // modelURI turns a model selection into the provider URI kit's Resolve
-// consumes.
+// consumes, API key included.
 //
-// A value that already spells a scheme out ("openai://gpt-4o",
-// "ollama://llama3") is handed through untouched: re-wrapping it yields
+// A value that already spells a scheme out ("openrouter://openai/gpt-4.1-nano",
+// "ollama://llama3") keeps it: re-wrapping it yields
 // "openai://openai://..." which sends the whole URI as the model name.
 // The "://" test ignores anything after the first "?" because a bare
-// model id may carry a base_url param whose value is itself a URL.
+// model id may carry a base_url param whose value is itself a URL. For
+// a bare id the scheme is guessed (schemeForModel) and base_url from
+// llm.yaml / LLM_BASE_URL is folded in — a caller-supplied base_url on
+// the model string outranks both and is left alone.
 //
-// For a bare id the scheme is derived, the API key is prechecked (a
-// missing key must fail here with an actionable message, not as an
-// opaque 401 from the provider) and base_url from llm.yaml /
-// LLM_BASE_URL is folded in — a caller-supplied base_url on the model
-// string outranks both and is left alone.
-func modelURI(model string) (string, error) {
-	head, _, _ := strings.Cut(model, "?")
-	if strings.Contains(head, "://") {
-		return model, nil
-	}
-
-	scheme, envVar := schemeForModel(model)
-	bare := model
-	if scheme == "routellm" {
-		bare = strings.TrimPrefix(bare, "router-")
-	}
-
-	uri := scheme + "://" + bare
-	if envVar != "" {
-		key := lookupAPIKey(envVar)
-		if key == "" {
-			return "", unauthorizedErrorf(
-				"missing %s for model %q (provider %s); export %s=... and retry, or pick another model with FOO_YOUTUBE_MODEL",
-				envVar, model, scheme, envVar)
+// The key, for either form, is kit's llm.ApplyAPIKey: an api_key
+// already on the URI, llm.yaml providers.<scheme>.api_key /
+// api_key_env, the scheme's own variables (OPENROUTER_API_KEY, ...,
+// aliases and aim catalog providers included), then LLM_API_KEY for a
+// provider that requires one. A local runtime (ollama, routellm) needs
+// none. A required key found nowhere fails here with an actionable
+// message and exit 4 rather than as an opaque 401 from the provider;
+// any other error passes through unchanged.
+//
+// The returned URI holds the key: never log or print it.
+func modelURI(ctx context.Context, model string) (string, error) {
+	uri := model
+	if head, _, _ := strings.Cut(model, "?"); !strings.Contains(head, "://") {
+		scheme := schemeForModel(model)
+		bare := model
+		if scheme == "routellm" {
+			bare = strings.TrimPrefix(bare, "router-")
 		}
-		uri += querySep(uri) + "api_key=" + key
+		uri = applyConfiguredBaseURL(scheme + "://" + bare)
 	}
-	return applyConfiguredBaseURL(uri), nil
+
+	keyed, err := kitllm.ApplyAPIKey(ctx, nil, uri)
+	var missing *kitllm.MissingKeyError
+	if errors.As(err, &missing) && len(missing.EnvVars) > 0 {
+		envVar := missing.EnvVars[0]
+		return "", unauthorizedErrorf(
+			"missing %s for model %q (provider %s); export %s=... and retry, or pick another model with FOO_YOUTUBE_MODEL",
+			envVar, model, missing.Scheme, envVar)
+	}
+	if err != nil {
+		return "", err
+	}
+	return keyed, nil
 }
 
 // querySep returns the separator that appends a param to s.
@@ -219,23 +228,6 @@ func applyConfiguredBaseURL(uri string) string {
 	return uri + querySep(uri) + "base_url=" + cfg.Provider.BaseURL
 }
 
-// lookupAPIKey resolves a provider key through kit's secret store rather
-// than reading the environment directly, so a machine configured with a
-// keychain or vault backend resolves the same way the host does. The
-// default "env" backend preserves the plain behavior:
-// `openai_api_key` → OPENAI_API_KEY. A direct os.Getenv is the
-// last-resort fallback so a store-open failure never regresses a
-// working env setup.
-func lookupAPIKey(envVar string) string {
-	key := strings.ToLower(envVar)
-	if store, err := secret.Open(secret.Config{Backend: "env"}); err == nil {
-		if got, getErr := store.Get(context.Background(), key); getErr == nil && len(got.Value) > 0 {
-			return string(got.Value)
-		}
-	}
-	return os.Getenv(envVar)
-}
-
 // answerFunc is the seam between the assembled prompt and the provider
 // call. Production resolves a kit client and completes; tests swap it
 // for a cassette- or httptest-backed client so the outbound request is
@@ -245,7 +237,7 @@ var answerFunc = answer
 
 // answer resolves the provider for model and completes one turn.
 func answer(ctx context.Context, model, prompt string) (string, error) {
-	uri, err := modelURI(model)
+	uri, err := modelURI(ctx, model)
 	if err != nil {
 		return "", err
 	}
