@@ -16,8 +16,9 @@ running a natural-language query through `foo embed search`.
 
 You need:
 
-- `OPENAI_API_KEY` exported (the query is embedded the same way
-  the stored content was).
+- An OpenAI key, found the same way as for
+  [`foo embed add`](embed-content.md#before-you-begin) (the query is
+  embedded the same way the stored content was).
 - At least one row in the target collection — verify with
   `foo embed collection list`.
 

@@ -56,8 +56,9 @@ secrets:
 
 `secrets:` configures where foo looks for provider API keys. One
 store serves every key lookup: a run's key check and its fallback
-entries, `foo provider show` and `foo model list`. A key the
-listing reports as configured is the key a run uses.
+entries, `foo provider show`, `foo model list` and the `foo embed`
+commands' OpenAI key. A key the listing reports as configured is
+the key a run uses.
 
 A provider's key is stored under its env var's name in lowercase
 (`openrouter_api_key` for `OPENROUTER_API_KEY`). The store is

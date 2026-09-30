@@ -35,6 +35,28 @@ func applyKey(ctx context.Context, store secret.Store, uri string) (string, erro
 	return keyed, err
 }
 
+// APIKey returns the key a request to uri would carry, resolved the
+// way a run resolves it: the same kitllm.ApplyAPIKey call over foo's
+// configured store (nil for none) under its documented names. It is
+// for callers that talk to a provider without a kit client, such as
+// the embedder.
+//
+// A required key found nowhere is kit's *kitllm.MissingKeyError
+// (errors.Is kitllm.ErrMissingKey), left for the caller to word. A
+// scheme that needs no key returns "".
+func APIKey(ctx context.Context, store secret.Store, uri string) (string, error) {
+	keyed, err := kitllm.ApplyAPIKey(ctx, &namedStore{inner: store}, uri)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := kitllm.ParseURI(keyed)
+	if err != nil {
+		// ParseURI quotes its input, which now carries the key.
+		return "", errors.New("llm: provider URI must be scheme://model")
+	}
+	return parsed.Params["api_key"], nil
+}
+
 // missingKeyError is the precheck failure every path shares, so a bare
 // id, a URI and a pool pick all name the variable to set the same way:
 // the first one kit consulted, the highest-precedence name.
