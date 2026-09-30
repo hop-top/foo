@@ -150,9 +150,5 @@ func (c filteredAimCatalog) ListModels(ctx context.Context) ([]ModelEntry, error
 	if err != nil {
 		return nil, fmt.Errorf("foo: read model catalog: %w", err)
 	}
-	out := make([]ModelEntry, 0, len(models))
-	for _, m := range models {
-		out = append(out, entryFromAim(m))
-	}
-	return out, nil
+	return entriesFromAim(models), nil
 }

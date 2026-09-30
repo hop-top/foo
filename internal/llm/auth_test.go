@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 )
 
-// TestSecretName pins the env-name → secret-name mapping. aim publishes
+// TestSecretName pins the env-name → secret-name mapping. Kit asks for
 // upstream env var names (OPENAI_API_KEY); foo's store is keyed
 // lowercase and the env backend uppercases on read, so lowercasing is
 // the whole translation. Getting it backwards reports every configured
@@ -50,11 +49,11 @@ func TestAuthIndex_KeyedProviderNeedsItsKey(t *testing.T) {
 	}
 }
 
-// TestAuthIndex_AnyAlternativeSatisfies covers a catalog provider that
-// accepts several interchangeable spellings of one key. Requiring all
-// of them would report every user of it as unconfigured. (An adapter
-// scheme such as google is answered by its precheck instead, which
-// reads one variable — see TestAuthIndex_GoogleNeedsThePrecheckKey.)
+// TestAuthIndex_AnyAlternativeSatisfies covers a catalog provider no
+// adapter serves that accepts several interchangeable spellings of one
+// key. Requiring all of them would report every user of it as
+// unconfigured. (A provider an adapter serves is answered by kit's key
+// plan instead — see TestAuthIndex_GoogleTakesEitherKey.)
 func TestAuthIndex_AnyAlternativeSatisfies(t *testing.T) {
 	unsetKeyEnv(t)
 	env := map[string][]string{
@@ -198,69 +197,10 @@ func TestFilterReachable_NilIndexKeepsEverythingRoutable(t *testing.T) {
 	}
 }
 
-// TestAuthIndex_SchemeSpellingsExistInCatalog is the completeness check
-// the stubbed alias test cannot make: it reads the real catalog and
-// reports every kit scheme that resolves to no provider record.
-//
-// A scheme in that state is reported "available" — needs no credential
-// — which is how `foo provider show fireworks` came to bless a provider
-// that will 401. Two of these are legitimate (a local runtime publishes
-// no models.dev entry), so this cannot simply fail on a non-empty set;
-// it fails when a scheme that *does* have a catalog twin under another
-// spelling is missing its alias, which is detectable by looking for a
-// provider id the scheme is a prefix of.
-//
-// Skipped when the catalog has never been fetched: a cold CI box has no
-// business failing a test about credential spelling.
-func TestAuthIndex_SchemeSpellingsExistInCatalog(t *testing.T) {
-	ctx := context.Background()
-	reg := ensureRegistry()
-	if !ReadCatalogProvenance(reg).Fetched {
-		t.Skip("catalog never fetched; nothing to check spellings against")
-	}
-	providers, err := reg.Providers(ctx)
-	if err != nil {
-		t.Skipf("catalog unreadable: %v", err)
-	}
-	known := make(map[string]bool, len(providers))
-	for _, p := range providers {
-		known[p.ID] = true
-	}
-
-	for scheme := range routableProviders() {
-		if known[scheme] || schemeProviderAliases[scheme] != "" {
-			continue
-		}
-		// A local runtime declared keyless in schemeKeyEnv is not the
-		// hosted twin a prefix match finds (ollama vs ollama-cloud).
-		if env, declared := schemeKeyEnv[scheme]; declared && env == "" {
-			continue
-		}
-		// No exact record and no alias. If some catalog id merely
-		// spells the same provider differently, an alias is missing and
-		// foo will claim the provider needs no key.
-		for id := range known {
-			if id != scheme && strings.HasPrefix(id, scheme) {
-				t.Errorf("kit scheme %q has no catalog record but %q looks like the same provider; "+
-					"without an entry in schemeProviderAliases, `foo provider show %s` reports "+
-					"it needs no credential", scheme, id, scheme)
-				break
-			}
-		}
-	}
-
-	// The other direction: an alias must name a provider the catalog
-	// actually has, or it silently does nothing.
-	for scheme, provider := range schemeProviderAliases {
-		if !known[provider] {
-			t.Errorf("alias %q -> %q names no catalog provider; the mapping is dead", scheme, provider)
-		}
-	}
-}
-
-// TestAuthIndex_LookupSchemeResolvesAliases pins the translation itself,
-// against a fixture rather than the live catalog.
-func TestAuthIndex_LookupSchemeResolvesAliases(t *testing.T) {
+// TestAuthIndex_LookupResolvesAliases: a kit scheme and the catalog id
+// kit serves it under both resolve to the provider's key, each under the
+// name the caller passed.
+func TestAuthIndex_LookupResolvesAliases(t *testing.T) {
 	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"google":       {"GOOGLE_API_KEY"},
@@ -269,23 +209,24 @@ func TestAuthIndex_LookupSchemeResolvesAliases(t *testing.T) {
 	}, stubStore("google_api_key"))
 
 	for scheme, want := range map[string]string{
-		"gemini":    "configured",
-		"google":    "configured",
-		"fireworks": "missing",
-		"together":  "missing",
+		"gemini":       "configured",
+		"google":       "configured",
+		"fireworks":    "missing",
+		"fireworks-ai": "missing",
+		"together":     "missing",
+		"togetherai":   "missing",
 	} {
-		got := idx.LookupScheme(scheme)
+		got := idx.Lookup(scheme)
 		if got.Status() != want {
-			t.Errorf("LookupScheme(%q).Status() = %q, want %q", scheme, got.Status(), want)
+			t.Errorf("Lookup(%q).Status() = %q, want %q", scheme, got.Status(), want)
 		}
-		// Reported under the name the caller passed, not the alias.
 		if got.Provider != scheme {
-			t.Errorf("LookupScheme(%q).Provider = %q, want the scheme as passed", scheme, got.Provider)
+			t.Errorf("Lookup(%q).Provider = %q, want the name as passed", scheme, got.Provider)
 		}
 	}
 
-	// A scheme with no alias and no record stays "needs nothing".
-	if got := idx.LookupScheme("routellm"); got.Status() != "available" {
+	// A local router takes no key of its own.
+	if got := idx.Lookup("routellm"); got.Status() != "available" {
 		t.Errorf("routellm status = %q, want available", got.Status())
 	}
 }

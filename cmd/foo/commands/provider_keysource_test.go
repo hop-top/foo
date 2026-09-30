@@ -42,9 +42,10 @@ func providerShowJSON(t *testing.T, scheme string) (string, map[string]any) {
 }
 
 // TestProviderShow_HonoursEveryPrecheckSource: a key a run would use —
-// from llm.yaml or LLM_API_KEY — is "configured", with key_source naming
-// where it came from and secret_key still naming the scheme's own key.
-// The key value never appears.
+// from llm.yaml, the provider's own names or LLM_API_KEY — is
+// "configured", with key_source naming the source that wins (kit's
+// order) and secret_key the provider's key name that resolved, else its
+// first. The key value never appears.
 func TestProviderShow_HonoursEveryPrecheckSource(t *testing.T) {
 	for _, tc := range []struct {
 		name, scheme, status, source, secret string
@@ -72,6 +73,32 @@ func TestProviderShow_HonoursEveryPrecheckSource(t *testing.T) {
 		{
 			name: "local scheme the catalog lists a key for", scheme: "lmstudio", status: "available", source: "", secret: "",
 			setup: func(*testing.T) {},
+		},
+		{
+			name: "llm.yaml outranks the env var", scheme: "openai", status: "configured", source: "llm.yaml", secret: "openai_api_key",
+			setup: func(t *testing.T) {
+				t.Setenv("OPENAI_API_KEY", "fake-env-key")
+				writeLLMYAML(t, "providers:\n  openai:\n    api_key: fake-yaml-key\npool: []\n")
+			},
+			value: "fake-yaml-key",
+		},
+		{
+			name: "env var outranks LLM_API_KEY", scheme: "groq", status: "configured", source: "secret_key", secret: "groq_api_key",
+			setup: func(t *testing.T) {
+				t.Setenv("LLM_API_KEY", "fake-llm-key")
+				t.Setenv("GROQ_API_KEY", "fake-groq-key")
+			},
+			value: "fake-groq-key",
+		},
+		{
+			name: "catalog id spelled otherwise", scheme: "fireworks-ai", status: "configured", source: "secret_key", secret: "fireworks_api_key",
+			setup: func(t *testing.T) { t.Setenv("FIREWORKS_API_KEY", "fake-fw-key") },
+			value: "fake-fw-key",
+		},
+		{
+			name: "google takes GEMINI_API_KEY", scheme: "google", status: "configured", source: "secret_key", secret: "gemini_api_key",
+			setup: func(t *testing.T) { t.Setenv("GEMINI_API_KEY", "fake-gemini-key") },
+			value: "fake-gemini-key",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

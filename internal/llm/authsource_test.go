@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"hop.top/kit/go/storage/secret"
 )
 
 // keyEnvVars is every variable that can satisfy a key check, catalog
@@ -15,7 +17,8 @@ var keyEnvVars = []string{
 	"GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
 	"GROQ_API_KEY", "XAI_API_KEY", "TOGETHER_API_KEY", "FIREWORKS_API_KEY",
 	"DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "LMSTUDIO_API_KEY",
-	"LLM_API_KEY",
+	"OLLAMA_API_KEY", "ROUTELLM_API_KEY", "TRITON_API_KEY",
+	"DIGITALOCEAN_ACCESS_TOKEN", "LLM_API_KEY",
 }
 
 // unsetKeyEnv removes every key variable for the test (t.Setenv first,
@@ -46,7 +49,8 @@ func writeLLMConfig(t *testing.T, xdg, body string) {
 // catalogEnv is the requirement aim publishes for the kit schemes, in
 // its own shape: google lists three spellings, lmstudio declares a key
 // the local server does not need, fireworks and together are spelled
-// otherwise.
+// otherwise. Kit's key plan answers for all of them; the lists matter
+// only to a provider no adapter serves.
 var catalogEnv = map[string][]string{
 	"openai":       {"OPENAI_API_KEY"},
 	"anthropic":    {"ANTHROPIC_API_KEY"},
@@ -62,54 +66,10 @@ var catalogEnv = map[string][]string{
 }
 
 // precheckPasses reports whether a run's key precheck would accept a
-// model on scheme — the verdict the index must reproduce.
-func precheckPasses(scheme string) bool {
-	envVar := envVarForScheme(scheme)
-	if envVar == "" {
-		return true
-	}
-	_, err := buildURI(context.Background(), nil, scheme, "some-model", envVar)
+// model on scheme with store — the verdict the index must reproduce.
+func precheckPasses(store secret.Store, scheme string) bool {
+	_, _, err := resolveURIForModel(context.Background(), store, scheme+"://some-model")
 	return err == nil
-}
-
-// TestAuthIndex_AgreesWithPrecheck is the invariant: for every scheme
-// foo links an adapter for, `provider show` and the model-list filter
-// report "has a key" exactly when a run's precheck would pass — under
-// each source the precheck honours and under none.
-func TestAuthIndex_AgreesWithPrecheck(t *testing.T) {
-	for name, setup := range map[string]func(t *testing.T, xdg string){
-		"no key":            func(*testing.T, string) {},
-		"LLM_API_KEY":       func(t *testing.T, _ string) { t.Setenv("LLM_API_KEY", "fake-llm-key") },
-		"scheme env var":    func(t *testing.T, _ string) { t.Setenv("GROQ_API_KEY", "fake-groq-key") },
-		"catalog alt only":  func(t *testing.T, _ string) { t.Setenv("GEMINI_API_KEY", "fake-gemini-key") },
-		"local catalog key": func(t *testing.T, _ string) { t.Setenv("LMSTUDIO_API_KEY", "fake-lms-key") },
-		"llm.yaml": func(t *testing.T, xdg string) {
-			writeLLMConfig(t, xdg, "providers:\n  openai:\n    api_key: fake-yaml-key\n  gemini:\n    api_key: fake-yaml-gemini\n  fireworks:\n    api_key: fake-yaml-fw\n")
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			xdg := unsetKeyEnv(t)
-			setup(t, xdg)
-			idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
-
-			for scheme := range schemeKeyEnv {
-				want := precheckPasses(scheme)
-				if got := idx.LookupScheme(scheme).Satisfied(); got != want {
-					t.Errorf("LookupScheme(%q).Satisfied() = %v, precheck passes = %v", scheme, got, want)
-				}
-			}
-			// The listing holds catalog ids, not schemes.
-			for id, scheme := range map[string]string{
-				"openai": "openai", "google": "google", "groq": "groq",
-				"fireworks-ai": "fireworks", "togetherai": "together", "lmstudio": "lmstudio",
-			} {
-				want := precheckPasses(scheme)
-				if got := idx.Satisfied(id); got != want {
-					t.Errorf("Satisfied(%q) = %v, precheck for %s passes = %v", id, got, scheme, want)
-				}
-			}
-		})
-	}
 }
 
 // TestAuthIndex_LLMAPIKeySatisfiesKeyedSchemes: LLM_API_KEY alone makes
@@ -120,7 +80,7 @@ func TestAuthIndex_LLMAPIKeySatisfiesKeyedSchemes(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "fake-llm-key")
 	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
-	got := idx.LookupScheme("openai")
+	got := idx.Lookup("openai")
 	if got.Status() != "configured" {
 		t.Fatalf("openai status = %q, want configured via LLM_API_KEY", got.Status())
 	}
@@ -147,14 +107,14 @@ func TestAuthIndex_LLMConfigKeyBelongsToItsScheme(t *testing.T) {
 	writeLLMConfig(t, xdg, "providers:\n  openai:\n    api_key: fake-yaml-key\n")
 	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
-	got := idx.LookupScheme("openai")
+	got := idx.Lookup("openai")
 	if got.Status() != "configured" || got.Source != KeySourceLLMConfig {
 		t.Errorf("openai = %q via %q, want configured via %q", got.Status(), got.Source, KeySourceLLMConfig)
 	}
 	if !idx.Satisfied("openai") {
 		t.Error("listing must keep openai rows: the llm.yaml key satisfies the precheck")
 	}
-	if got := idx.LookupScheme("openrouter"); got.Status() != "missing" || got.Source != "" {
+	if got := idx.Lookup("openrouter"); got.Status() != "missing" || got.Source != "" {
 		t.Errorf("openrouter = %q via %q; the openai file key must not be lent to it", got.Status(), got.Source)
 	}
 }
@@ -166,7 +126,7 @@ func TestAuthIndex_SchemeKeySource(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "fake-llm-key") // outranked, as in the precheck
 	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore("groq_api_key"))
 
-	got := idx.LookupScheme("groq")
+	got := idx.Lookup("groq")
 	if got.Source != KeySourceSecret || got.SecretKey != "groq_api_key" {
 		t.Errorf("groq = %q / %q, want %q / groq_api_key", got.Source, got.SecretKey, KeySourceSecret)
 	}
@@ -180,7 +140,7 @@ func TestAuthIndex_LocalSchemesNeedNoKey(t *testing.T) {
 	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
 	for _, scheme := range localSchemes {
-		got := idx.LookupScheme(scheme)
+		got := idx.Lookup(scheme)
 		if got.Status() != "available" || got.AuthType() != "local" {
 			t.Errorf("%s = %q/%q, want available/local", scheme, got.Status(), got.AuthType())
 		}
@@ -190,19 +150,19 @@ func TestAuthIndex_LocalSchemesNeedNoKey(t *testing.T) {
 	}
 }
 
-// TestAuthIndex_GoogleNeedsThePrecheckKey: a run reads GOOGLE_API_KEY for
-// google, not the catalog's other spellings, so GEMINI_API_KEY alone is
-// not "configured".
-func TestAuthIndex_GoogleNeedsThePrecheckKey(t *testing.T) {
+// TestAuthIndex_GoogleTakesEitherKey: kit reads GOOGLE_API_KEY, then
+// GEMINI_API_KEY, for google, so either one alone is "configured", and
+// the index names the one that resolved.
+func TestAuthIndex_GoogleTakesEitherKey(t *testing.T) {
 	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore("gemini_api_key"))
-	if got := idx.Lookup("google"); got.Status() != "missing" || got.SecretKey != "google_api_key" {
-		t.Errorf("google = %q / %q, want missing / google_api_key", got.Status(), got.SecretKey)
+	if got := idx.Lookup("google"); got.Status() != "configured" || got.SecretKey != "gemini_api_key" {
+		t.Errorf("google = %q / %q, want configured / gemini_api_key", got.Status(), got.SecretKey)
 	}
 
-	idx = NewAuthIndexFrom(context.Background(), catalogEnv, stubStore("google_api_key"))
-	if got := idx.Lookup("google"); got.Status() != "configured" {
-		t.Errorf("google status = %q, want configured", got.Status())
+	idx = NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
+	if got := idx.Lookup("google"); got.Status() != "missing" || got.SecretKey != "google_api_key" {
+		t.Errorf("google = %q / %q, want missing / google_api_key (the first name)", got.Status(), got.SecretKey)
 	}
 }
 
@@ -214,10 +174,10 @@ func TestAuthIndex_GeminiReadsItsOwnConfigBlock(t *testing.T) {
 	writeLLMConfig(t, xdg, "providers:\n  gemini:\n    api_key: fake-yaml-gemini\n")
 	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
-	if got := idx.LookupScheme("gemini"); got.Status() != "configured" || got.Provider != "gemini" {
+	if got := idx.Lookup("gemini"); got.Status() != "configured" || got.Provider != "gemini" {
 		t.Errorf("gemini = %q (provider %q), want configured under gemini", got.Status(), got.Provider)
 	}
-	if got := idx.LookupScheme("google"); got.Status() != "missing" {
+	if got := idx.Lookup("google"); got.Status() != "missing" {
 		t.Errorf("google = %q, want missing: providers.gemini is not providers.google", got.Status())
 	}
 }

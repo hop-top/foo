@@ -87,7 +87,7 @@ func TestRun_ReadsConfiguredStore(t *testing.T) {
 		t.Errorf("bare id = %q, want the store's key appended", uri)
 	}
 
-	uri, err = buildURI(ctx, store, "openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	uri, err = applyKey(ctx, store, "openrouter://openai/gpt-4.1-nano")
 	if err != nil {
 		t.Fatalf("pool pick with its key in the store: %v", err)
 	}
@@ -129,49 +129,66 @@ func TestNewClient_PickerPathReadsConfiguredStore(t *testing.T) {
 	}
 }
 
-// TestSchemeKey_StoreBeforeEnv pins tier 1's order: the configured store,
-// then the scheme's env var — kit's SecretFor order.
-func TestSchemeKey_StoreBeforeEnv(t *testing.T) {
+// TestApplyKey_StoreBeforeEnv pins the order kit applies to a
+// provider's own key: the configured store under foo's lowercase
+// secret name, then the env var.
+func TestApplyKey_StoreBeforeEnv(t *testing.T) {
 	unsetKeyEnv(t)
 	t.Setenv("OPENROUTER_API_KEY", "sk-or-env")
 	ctx := context.Background()
 	uri := "openrouter://openai/gpt-4.1-nano"
+	sent := func(store secret.Store) string {
+		t.Helper()
+		got, err := applyKey(ctx, store, uri)
+		if err != nil {
+			t.Fatalf("applyKey: %v", err)
+		}
+		return parseOrFatal(t, got).Params["api_key"]
+	}
 
-	key, src := resolveSchemeKey(ctx, newFakeStore("openrouter_api_key", "sk-or-store"), uri, "OPENROUTER_API_KEY")
-	if key != "sk-or-store" || src != KeySourceSecret {
-		t.Errorf("store and env both set: got %q via %q, want the store's key via %q", key, src, KeySourceSecret)
+	if k := sent(newFakeStore("openrouter_api_key", "sk-or-store")); k != "sk-or-store" {
+		t.Errorf("store and env both set: got %q, want the store's key", k)
 	}
 
 	// A store without the key falls through to the env var.
-	key, src = resolveSchemeKey(ctx, newFakeStore(), uri, "OPENROUTER_API_KEY")
-	if key != "sk-or-env" || src != KeySourceSecret {
-		t.Errorf("store empty: got %q via %q, want the env key", key, src)
+	if k := sent(newFakeStore()); k != "sk-or-env" {
+		t.Errorf("store empty: got %q, want the env key", k)
 	}
 
 	// A backend error is a miss, not a failure: the env var still counts.
 	failing := newFakeStore()
 	failing.errs["openrouter_api_key"] = errors.New("keyring locked")
-	if key, _ = resolveSchemeKey(ctx, failing, uri, "OPENROUTER_API_KEY"); key != "sk-or-env" {
-		t.Errorf("store errors: got %q, want the env key", key)
+	if k := sent(failing); k != "sk-or-env" {
+		t.Errorf("store errors: got %q, want the env key", k)
 	}
 
 	// An empty stored value is no key.
-	if key, _ = resolveSchemeKey(ctx, newFakeStore("openrouter_api_key", ""), uri, "OPENROUTER_API_KEY"); key != "sk-or-env" {
-		t.Errorf("store holds empty value: got %q, want the env key", key)
+	if k := sent(newFakeStore("openrouter_api_key", "")); k != "sk-or-env" {
+		t.Errorf("store holds empty value: got %q, want the env key", k)
+	}
+
+	// The documented lowercase name is what the store is asked for.
+	if k := sent(newFakeStore("OPENROUTER_API_KEY", "sk-or-upper")); k != "sk-or-env" {
+		t.Errorf("store asked under the upper-case name: got %q, want the lowercase name only", k)
 	}
 }
 
-// TestSchemeKey_NilStoreIsEnvOnly: with no store configured the lookup
-// is the scheme's env var and nothing else, as before stores existed.
-func TestSchemeKey_NilStoreIsEnvOnly(t *testing.T) {
+// TestApplyKey_NilStoreIsEnvOnly: with no store configured the lookup
+// is the environment (and llm.yaml), as before stores existed.
+func TestApplyKey_NilStoreIsEnvOnly(t *testing.T) {
 	unsetKeyEnv(t)
 	ctx := context.Background()
-	if key := lookupAPIKey(ctx, nil, "OPENROUTER_API_KEY"); key != "" {
-		t.Errorf("nothing set: got %q, want empty", key)
+	const uri = "openrouter://openai/gpt-4.1-nano"
+	if _, err := applyKey(ctx, nil, uri); err == nil {
+		t.Error("nothing set: want the missing-key precheck")
 	}
 	t.Setenv("OPENROUTER_API_KEY", "sk-or-env")
-	if key := lookupAPIKey(ctx, nil, "OPENROUTER_API_KEY"); key != "sk-or-env" {
-		t.Errorf("env set: got %q, want sk-or-env", key)
+	got, err := applyKey(ctx, nil, uri)
+	if err != nil {
+		t.Fatalf("env set: %v", err)
+	}
+	if k := parseOrFatal(t, got).Params["api_key"]; k != "sk-or-env" {
+		t.Errorf("env set: got %q, want sk-or-env", k)
 	}
 }
 
@@ -224,18 +241,13 @@ func TestAuthIndex_AgreesWithPrecheckUnderStore(t *testing.T) {
 				t.Setenv(k, v)
 			}
 			idx := NewAuthIndexFrom(context.Background(), catalogEnv, tc.store)
-			for scheme := range schemeKeyEnv {
-				envVar := envVarForScheme(scheme)
-				want := true
-				if envVar != "" {
-					_, err := buildURI(context.Background(), tc.store, scheme, "some-model", envVar)
-					want = err == nil
-				}
-				if got := idx.LookupScheme(scheme).Satisfied(); got != want {
-					t.Errorf("LookupScheme(%q).Satisfied() = %v, precheck passes = %v", scheme, got, want)
+			for _, scheme := range schemesUnderTest() {
+				want := precheckPasses(tc.store, scheme)
+				if got := idx.Lookup(scheme).Satisfied(); got != want {
+					t.Errorf("Lookup(%q).Satisfied() = %v, precheck passes = %v", scheme, got, want)
 				}
 			}
-			if name == "store only" && !idx.LookupScheme("groq").Satisfied() {
+			if name == "store only" && !idx.Lookup("groq").Satisfied() {
 				t.Error("groq key is in the store; want configured")
 			}
 		})

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 
@@ -18,7 +17,6 @@ import (
 	_ "hop.top/kit/go/ai/llm/ollama"
 	_ "hop.top/kit/go/ai/llm/openai"
 	_ "hop.top/kit/go/ai/llm/routellm"
-	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/storage/secret"
 )
 
@@ -61,8 +59,9 @@ type ClientOpts struct {
 
 	// Secrets is foo's configured secret store (config `secrets:`).
 	// Every key lookup this client makes — the primary's precheck and
-	// each fallback entry — reads the scheme's own key from it before
-	// the scheme's env var. Nil means no store: env var only.
+	// each fallback entry — hands it to kit, which asks it for the
+	// provider's key names (under SecretName) before the environment.
+	// Nil means no store: llm.yaml and env vars only.
 	Secrets secret.Store
 }
 
@@ -80,6 +79,19 @@ func ensureRegistry() *aim.Registry {
 		defaultRegistry = aim.NewRegistry()
 	})
 	return defaultRegistry
+}
+
+// sharedRegistry hands kit foo's registry.
+func sharedRegistry(context.Context) (*aim.Registry, error) {
+	return ensureRegistry(), nil
+}
+
+// Kit reads provider facts (key variables, aliases, protocol routes)
+// from its default registry's on-disk catalog cache; it never fetches
+// it. Handing kit foo's registry means a run, `foo model list` and the
+// pool picker all read one catalog.
+func init() {
+	kitllm.SetDefaultRegistry(sharedRegistry)
 }
 
 // NewClient resolves a kit LLM client. Three code paths:
@@ -150,13 +162,12 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 				// "pool matched nothing".
 				return nil, fmt.Errorf("pool picker found no qualifying model under budget %q: %w", opts.Budget.String(), pickErr)
 			}
-			// picked.Provider is the URI scheme; picked.ID is the
-			// model name kit's adapter expects. Bypass the
-			// prefix-based scheme guess (schemeForModel) by going
-			// through envVarForScheme which trusts the registry value.
-			scheme := picked.Provider
-			envVar := envVarForScheme(scheme)
-			return buildClient(ctx, opts.Secrets, scheme, picked.ID, envVar, opts.MaxTokens)
+			// picked.Provider is the catalog provider id, used as the
+			// URI scheme as is (kit resolves "fireworks-ai" to its
+			// adapter); picked.ID is the model name kit's adapter
+			// expects. The prefix-based scheme guess (schemeForModel)
+			// is bypassed: the registry already names the provider.
+			return buildClient(ctx, opts.Secrets, picked.Provider, picked.ID, opts.MaxTokens)
 		}
 	}
 
@@ -189,7 +200,7 @@ func modelIsURI(model string) bool {
 // Resolve already reads api_key and base_url out of the URI's query
 // params, so the caller keeps full control of both; foo only appends
 // the scheme's key and configured endpoint when the URI names none (see
-// injectURIKey, applyConfiguredBaseURL).
+// applyKey, applyConfiguredBaseURL).
 func newClientFromModel(ctx context.Context, store secret.Store, model string, maxTokens int) (*Client, error) {
 	uri, guessed, err := resolveURIForModel(ctx, store, model)
 	if err != nil {
@@ -205,90 +216,15 @@ func newClientFromModel(ctx context.Context, store secret.Store, model string, m
 	return client, nil
 }
 
-// buildClient is the common URI-build + fallback-wiring step shared by
-// every NewClient code path. Centralizes the API-key precheck so any
-// future scheme picked up by the pool picker honors the same error
-// shape.
-func buildClient(ctx context.Context, store secret.Store, scheme, model, envVar string, maxTokens int) (*Client, error) {
-	uri, err := buildURI(ctx, store, scheme, model, envVar)
+// buildClient is the common URI-build + fallback-wiring step for a
+// pool pick. Key and endpoint are applied as for any other path, so
+// every scheme the picker can return honors the same precheck.
+func buildClient(ctx context.Context, store secret.Store, scheme, model string, maxTokens int) (*Client, error) {
+	uri, err := applyKey(ctx, store, scheme+"://"+model)
 	if err != nil {
 		return nil, err
 	}
 	return buildClientFromURI(ctx, store, applyConfiguredBaseURL(uri, scheme), maxTokens)
-}
-
-// buildURI assembles the provider URI for a bare model id, running the
-// API-key precheck for keyed schemes.
-//
-// A bare model id may already carry query params
-// ("qwen3.6-colibri?base_url=..."), so the api_key separator is "&" in
-// that case. Always emitting "?" produced a second question mark, which
-// kit's parser folds into the preceding value.
-func buildURI(ctx context.Context, store secret.Store, scheme, model, envVar string) (string, error) {
-	if envVar == "" {
-		return fmt.Sprintf("%s://%s", scheme, model), nil
-	}
-	key := schemeKey(ctx, store, fmt.Sprintf("%s://%s", scheme, model), envVar)
-	if key == "" {
-		return "", missingKeyError(envVar, model, scheme)
-	}
-	return fmt.Sprintf("%s://%s%sapi_key=%s", scheme, model, querySep(model), key), nil
-}
-
-// injectURIKey appends the scheme's API key to a URI-form --model value
-// that names none.
-//
-// Kit's Resolve takes the key from the URI's api_key param and nowhere
-// else, so a URI passed through bare reached the provider with no
-// Authorization header ("openrouter://..." → 401 "Missing
-// Authentication header"). The key comes from the same lookup and the
-// same precheck as a bare id's, so the two spellings of one model
-// behave alike.
-//
-// Left untouched: a URI that already carries api_key (the caller's
-// choice outranks the environment), a local scheme (no credential), and
-// a scheme foo has no entry for or a URI kit cannot parse — kit reports
-// those itself, more accurately than a missing-key error would.
-func injectURIKey(ctx context.Context, store secret.Store, uri string) (string, error) {
-	keyed, missing := keyURI(ctx, store, uri)
-	if missing != nil {
-		return "", missingKeyError(missing.envVar, missing.model, missing.scheme)
-	}
-	return keyed, nil
-}
-
-// missingKey describes a keyed URI whose API key could not be found.
-type missingKey struct {
-	envVar, model, scheme string
-}
-
-// keyURI is injectURIKey's resolution without the error policy: it
-// returns uri with the scheme's key appended, or the missing key's
-// description. The primary model turns a miss into a precheck failure;
-// a fallback entry turns it into a dropped entry (fallbackURIs).
-func keyURI(ctx context.Context, store secret.Store, uri string) (string, *missingKey) {
-	parsed, err := kitllm.ParseURI(uri)
-	if err != nil {
-		return uri, nil
-	}
-	if _, explicit := parsed.Params["api_key"]; explicit {
-		return uri, nil
-	}
-	envVar := envVarForScheme(parsed.Scheme)
-	if envVar == "" {
-		return uri, nil
-	}
-	key := schemeKey(ctx, store, uri, envVar)
-	if key == "" {
-		return "", &missingKey{envVar: envVar, model: parsed.Model, scheme: parsed.Scheme}
-	}
-	return uri + querySep(uri) + "api_key=" + key, nil
-}
-
-// missingKeyError is the precheck failure every path shares, so a bare
-// id, a URI and a pool pick all name the variable to set the same way.
-func missingKeyError(envVar, model, scheme string) error {
-	return output.UnauthorizedError(fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar))
 }
 
 // querySep returns the separator that appends a param to s: "?" when s
@@ -310,15 +246,19 @@ func querySep(s string) string {
 // guessed forwards schemeForModel's report that the scheme was assumed
 // rather than matched. A URI-shaped value is never a guess: the caller
 // spelled the scheme out.
+//
+// Either way the key is kit's (applyKey): a URI-form value keeps a
+// caller-supplied ?api_key=, and a bare id is first given the scheme
+// schemeForModel maps it to.
 func resolveURIForModel(ctx context.Context, store secret.Store, model string) (uri string, guessed bool, err error) {
 	if modelIsURI(model) {
-		uri, err := injectURIKey(ctx, store, model)
+		uri, err := applyKey(ctx, store, model)
 		if err != nil {
 			return "", false, err
 		}
 		return applyConfiguredBaseURL(uri, schemeOf(uri)), false, nil
 	}
-	scheme, envVar, guessed := schemeForModel(model)
+	scheme, guessed := schemeForModel(model)
 	if scheme == "routellm" {
 		// router- prefix: strip the marker so the URI ends up as
 		// routellm://<router>:<threshold>. The pool picker is
@@ -332,7 +272,7 @@ func resolveURIForModel(ctx context.Context, store secret.Store, model string) (
 		// docs/how-to/route-across-models.md#pool-routing-vs-router-x
 		model = strings.TrimPrefix(model, "router-")
 	}
-	built, err := buildURI(ctx, store, scheme, model, envVar)
+	built, err := applyKey(ctx, store, scheme+"://"+model)
 	if err != nil {
 		return "", false, err
 	}
@@ -342,7 +282,7 @@ func resolveURIForModel(ctx context.Context, store secret.Store, model string) (
 // resolvedURIForModel is the URI-only view of resolveURIForModel, kept
 // for call sites (tests, provenance) that assert on the URI and have no
 // use for the guess flag. It resolves with no secret store configured:
-// keys come from env vars and llm.yaml only.
+// keys come from llm.yaml and env vars only.
 func resolvedURIForModel(model string) (string, error) {
 	uri, _, err := resolveURIForModel(context.Background(), nil, model)
 	return uri, err
@@ -382,15 +322,17 @@ func buildClientFromURI(ctx context.Context, store secret.Store, uri string, max
 //
 // Kit's Resolve takes a key and an endpoint from the URI and nowhere
 // else, so an entry passed through bare reached its provider's public
-// endpoint unauthenticated. Each entry gets the same key resolution as
-// a URI-form --model (keyURI) and the same endpoint resolution as the
+// endpoint unauthenticated. Each entry gets its key from kit the same
+// way a URI-form --model does and the same endpoint resolution as the
 // primary (applyConfiguredBaseURL, with LLM_BASE_URL scoped to the
 // primary's scheme).
 //
 // An entry whose key cannot be found is dropped, not fatal: the primary
 // may be healthy, and failing the run over a backup that is never
 // needed would be worse than running without it. The drop is announced
-// once per process on stderr, naming the variable to set.
+// once per process on stderr, naming the variable to set. An entry kit
+// cannot key for another reason (a key a URI cannot carry) is dropped
+// the same way.
 //
 // store is the primary's: a fallback's key comes from the same
 // configured secret store as the primary's.
@@ -402,9 +344,9 @@ func fallbackURIs(ctx context.Context, store secret.Store, uri string) []string 
 	primaryScheme := schemeOf(uri)
 	out := make([]string, 0, len(cfg.Fallbacks))
 	for _, fb := range cfg.Fallbacks {
-		keyed, missing := keyURI(ctx, store, fb)
-		if missing != nil {
-			warnDroppedFallback(missing)
+		keyed, err := kitllm.ApplyAPIKey(ctx, &namedStore{inner: store}, fb)
+		if err != nil {
+			warnDroppedFallback(fb, err)
 			continue
 		}
 		out = append(out, applyConfiguredBaseURL(keyed, primaryScheme))
@@ -419,8 +361,16 @@ var (
 	droppedFallbacks   = map[string]struct{}{}
 )
 
-func warnDroppedFallback(m *missingKey) {
-	id := m.scheme + "://" + m.model
+// warnDroppedFallback announces a dropped fallback entry once. A
+// missing key names the variable to set; any other kit error is
+// reported as is (kit's errors carry names, never key values). The
+// entry is identified by scheme and model only: its query may carry a
+// key.
+func warnDroppedFallback(fb string, err error) {
+	id := "(unparsable entry)"
+	if parsed, perr := kitllm.ParseURI(fb); perr == nil {
+		id = parsed.Scheme + "://" + parsed.Model
+	}
 	droppedFallbacksMu.Lock()
 	_, seen := droppedFallbacks[id]
 	droppedFallbacks[id] = struct{}{}
@@ -428,186 +378,52 @@ func warnDroppedFallback(m *missingKey) {
 	if seen {
 		return
 	}
+	var missing *kitllm.MissingKeyError
+	if !errors.As(err, &missing) {
+		slog.Warn(
+			"llm.fallback.dropped: fallback cannot be used; skipping it",
+			slog.String("fallback", id),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	envVar := firstEnvVar(missing)
 	slog.Warn(
 		"llm.fallback.dropped: fallback has no API key; skipping it",
 		slog.String("fallback", id),
-		slog.String("missing", m.envVar),
-		slog.String("hint", "export "+m.envVar+"=... to enable it, or remove it from LLM_FALLBACK / llm.yaml fallback:"),
+		slog.String("missing", envVar),
+		slog.String("hint", "export "+envVar+"=... to enable it, or remove it from LLM_FALLBACK / llm.yaml fallback:"),
 	)
 }
 
-// schemeKey resolves the API key for uri, a keyed scheme's URI that
-// names no ?api_key= (an explicit param outranks everything and is
-// never replaced). Precedence, highest first:
-//
-//  1. the scheme's own key: the configured secret store, then its env
-//     var (lookupAPIKey)
-//  2. LLM_API_KEY, kit's universal key
-//  3. llm.yaml providers.<scheme>.api_key
-//
-// 1 before 2 is kit's SecretFor order (the google adapter likewise
-// reads GEMINI_API_KEY before LLM_API_KEY). 2 before 3 is kit's
-// LoadConfig merge, which layers LLM_API_KEY over the file — so tiers
-// 2 and 3 are read through LoadConfig itself rather than a second
-// parse of llm.yaml. LLM_API_KEY is scheme-agnostic by design, so it
-// is sent to whichever keyed provider lacks its own key — fallbacks
-// included, as LoadConfig applies it to every URI. That is the user's
-// explicit choice; per-scheme variables avoid it. A file key belongs
-// to its own scheme and is never lent to another.
-//
-// Kit's Resolve reads the key from the URI alone, so the key returned
-// here is exactly the one kit sends: the precheck and the request
-// cannot disagree.
-func schemeKey(ctx context.Context, store secret.Store, uri, envVar string) string {
-	key, _ := resolveSchemeKey(ctx, store, uri, envVar)
-	return key
-}
-
-// KeySource names the tier of [schemeKey]'s chain a key came from.
-type KeySource string
-
-const (
-	// KeySourceSecret: the scheme's own key, under its secret name
-	// (the store, or the env var the name maps to).
-	KeySourceSecret KeySource = "secret_key"
-	// KeySourceLLMAPIKey: kit's universal LLM_API_KEY.
-	KeySourceLLMAPIKey KeySource = "LLM_API_KEY"
-	// KeySourceLLMConfig: providers.<scheme>.api_key in llm.yaml.
-	KeySourceLLMConfig KeySource = "llm.yaml"
-)
-
-// resolveSchemeKey is schemeKey's chain, and the one place it lives:
-// the run precheck and the credential index (auth.go) both call it with
-// the same configured store, so "is there a key" has one answer. The
-// source is reported alongside the key so a caller can say where it
-// came from without ever printing it.
-func resolveSchemeKey(ctx context.Context, store secret.Store, uri, envVar string) (string, KeySource) {
-	if key := lookupAPIKey(ctx, store, envVar); key != "" {
-		return key, KeySourceSecret
-	}
-	universal := os.Getenv(kitllm.FallbackEnvKey)
-	cfg, err := kitllm.LoadConfig(uri)
-	if err != nil {
-		if universal != "" {
-			return universal, KeySourceLLMAPIKey
-		}
-		return "", ""
-	}
-	switch key := cfg.Provider.APIKey; {
-	case key == "":
-		return "", ""
-	case universal != "":
-		// LoadConfig layers LLM_API_KEY over the file, so a set
-		// LLM_API_KEY is the key it returned.
-		return key, KeySourceLLMAPIKey
-	default:
-		return key, KeySourceLLMConfig
-	}
-}
-
-// lookupAPIKey is tier 1 of schemeKey's chain: the scheme's own key,
-// read from store — foo's configured secret store — and then from the
-// env var itself, kit's SecretFor order.
-//
-// envVar is the canonical env-var spelling (e.g. "OPENAI_API_KEY"); the
-// store is asked for its SecretName (`openai_api_key`), the name
-// `foo provider show` reports. On the default env backend that name maps
-// straight back to OPENAI_API_KEY; a prefixed env backend, a keychain or
-// a vault each answer for it in their own way.
-//
-// store nil means no store is configured: the env var alone. A store
-// miss, an empty value or a backend error falls through to the env var,
-// so an unreachable backend never breaks a working env-based setup.
-func lookupAPIKey(ctx context.Context, store secret.Store, envVar string) string {
-	if store != nil {
-		if got, err := store.Get(ctx, SecretName(envVar)); err == nil && got != nil && len(got.Value) > 0 {
-			return string(got.Value)
-		}
-	}
-	return os.Getenv(envVar)
-}
-
-// schemeForModel maps a model id to its kit URI scheme and the env var
-// that holds the provider's key. Empty envVar = local provider (no
-// precheck). The router- prefix returns "routellm" so the caller knows
-// to strip the marker before building the URI.
+// schemeForModel maps a bare model id to its kit URI scheme. The
+// router- prefix returns "routellm" so the caller knows to strip the
+// marker before building the URI. The scheme's key is kit's business
+// (applyKey).
 //
 // guessed reports that no prefix matched and the openai-compatible
 // default arm answered. The scheme is the same either way; the flag
 // only records *why*, so a later "model not available" can say foo
 // assumed the provider instead of implying the user picked it.
-func schemeForModel(model string) (scheme, envVar string, guessed bool) {
+func schemeForModel(model string) (scheme string, guessed bool) {
 	switch {
 	case strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3"):
-		return "openai", "OPENAI_API_KEY", false
+		return "openai", false
 	case strings.HasPrefix(model, "claude-"):
-		return "anthropic", "ANTHROPIC_API_KEY", false
+		return "anthropic", false
 	case strings.HasPrefix(model, "gemini-"):
-		return "google", "GOOGLE_API_KEY", false
+		return "google", false
 	case strings.HasPrefix(model, "llama") || strings.HasPrefix(model, "mistral") || strings.HasPrefix(model, "deepseek-r1"):
-		return "ollama", "", false
+		return "ollama", false
 	case strings.HasPrefix(model, "router-"):
-		return "routellm", "", false
+		return "routellm", false
 	default:
 		// Unknown prefix — assume an OpenAI-compatible endpoint on the
 		// openai scheme, so OPENAI_API_KEY is the key it takes. Hosted
 		// gateways (openrouter, groq, ...) are reached by naming their
 		// scheme in a URI, which uses that scheme's own key.
-		return "openai", "OPENAI_API_KEY", true
+		return "openai", true
 	}
-}
-
-// schemeKeyEnv maps every kit scheme foo links an adapter for to the env
-// var holding that provider's API key. "" marks a local runtime that
-// takes no credential. Names are each provider's documented variable
-// (the same ones the aim catalog lists). lookupAPIKey lowercases them
-// into the secret-store key (openrouter_api_key), so a configured
-// secret backend and a plain `export OPENROUTER_API_KEY=` both resolve.
-//
-// The OpenAI-compatible gateways get their own variables. They used to
-// fall through to OPENAI_API_KEY, which made an OpenRouter user store an
-// OpenRouter key where a real OpenAI key belongs — and sent a real
-// OpenAI key to OpenRouter when both were meant to coexist.
-//
-// google and gemini are one adapter under two names; foo has always
-// read GOOGLE_API_KEY for it. lmstudio is a local server and, like
-// ollama, is not prechecked.
-//
-// [TestEnvVarForScheme_CoversEveryKitScheme] fails when kit registers a
-// scheme missing here, so a new adapter gets a deliberate entry rather
-// than a silent default.
-var schemeKeyEnv = map[string]string{
-	"openai":     "OPENAI_API_KEY",
-	"anthropic":  "ANTHROPIC_API_KEY",
-	"google":     "GOOGLE_API_KEY",
-	"gemini":     "GOOGLE_API_KEY",
-	"openrouter": "OPENROUTER_API_KEY",
-	"groq":       "GROQ_API_KEY",
-	"xai":        "XAI_API_KEY",
-	"together":   "TOGETHER_API_KEY",
-	"fireworks":  "FIREWORKS_API_KEY",
-	"deepseek":   "DEEPSEEK_API_KEY",
-	"mistral":    "MISTRAL_API_KEY",
-	"lmstudio":   "",
-	"ollama":     "",
-	"routellm":   "",
-}
-
-// envVarForScheme returns the env var holding the API key for a scheme
-// the caller named — a pool pick, or a URI-form --model. "" means no
-// precheck.
-//
-// A scheme absent from schemeKeyEnv gets "", not OPENAI_API_KEY: foo
-// cannot know that provider's credential, and lending it the OpenAI key
-// would send that key to a host that is not OpenAI. Such a scheme is one
-// kit does not register either, so Resolve rejects it with a
-// provider-not-found error that names the real problem.
-//
-// Only the *guessed* bare-id arm of schemeForModel uses OPENAI_API_KEY
-// for an unrecognised id, and that is correct there: the request goes
-// to the openai scheme.
-func envVarForScheme(scheme string) string {
-	return schemeKeyEnv[scheme]
 }
 
 // PickFromPool exposes the pool picker behind foo's package boundary

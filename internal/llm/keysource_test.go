@@ -7,11 +7,13 @@ import (
 	kitllm "hop.top/kit/go/ai/llm"
 )
 
-// Key precedence, highest first, for a keyed scheme:
+// Key precedence, highest first, for a keyed scheme (kit's
+// ApplyAPIKey):
 //
 //  1. ?api_key= on the URI (the caller's explicit choice)
-//  2. the scheme's own key: secret store, then its env var
-//  3. LLM_API_KEY (kit's universal key)
+//  2. llm.yaml providers.<scheme>.api_key, then api_key_env's variable
+//  3. the provider's own key names: secret store, then env var
+//  4. LLM_API_KEY (kit's universal key)
 //
 // Kit's Resolve reads the key from the URI alone, so whatever foo
 // appends is exactly what kit sends; these tests assert on that URI.
@@ -47,9 +49,9 @@ func TestLLMAPIKey_PickerPath(t *testing.T) {
 	clearProviderKeys(t)
 	t.Setenv("LLM_API_KEY", "fake-llm-key")
 
-	got, err := buildURI(context.Background(), nil, "openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	got, err := applyKey(context.Background(), nil, "openrouter://openai/gpt-4.1-nano")
 	if err != nil {
-		t.Fatalf("buildURI with LLM_API_KEY set: %v", err)
+		t.Fatalf("applyKey with LLM_API_KEY set: %v", err)
 	}
 	if k := parseOrFatal(t, got).Params["api_key"]; k != "fake-llm-key" {
 		t.Errorf("api_key = %q, want fake-llm-key", k)
@@ -57,8 +59,7 @@ func TestLLMAPIKey_PickerPath(t *testing.T) {
 }
 
 // TestLLMAPIKey_SchemeKeyWins: LLM_API_KEY is a fallback, not an
-// override. A scheme's own key outranks it (kit's SecretFor order, and
-// the google adapter's GEMINI_API_KEY > LLM_API_KEY).
+// override. A scheme's own key outranks it.
 func TestLLMAPIKey_SchemeKeyWins(t *testing.T) {
 	clearProviderKeys(t)
 	t.Setenv("LLM_API_KEY", "fake-llm-key")
@@ -89,8 +90,8 @@ func TestLLMAPIKey_ExplicitURIKeyWins(t *testing.T) {
 	}
 }
 
-// TestLLMAPIKey_LocalSchemesUntouched: local runtimes take no key; a
-// universal key is not sprayed onto them.
+// TestLLMAPIKey_LocalSchemesUntouched: a local runtime's key is optional
+// and its own; the universal key is never lent to it.
 func TestLLMAPIKey_LocalSchemesUntouched(t *testing.T) {
 	clearProviderKeys(t)
 	t.Setenv("LLM_API_KEY", "fake-llm-key")
@@ -162,9 +163,9 @@ func TestConfigFileKey_PickerAndFallback(t *testing.T) {
 	warnings := captureWarnings(t)
 	writeLLMYAML(t, "providers:\n  openrouter:\n    api_key: fake-file-or\nfallback:\n  - openrouter://openai/gpt-4.1-mini\n")
 
-	got, err := buildURI(context.Background(), nil, "openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	got, err := applyKey(context.Background(), nil, "openrouter://openai/gpt-4.1-nano")
 	if err != nil {
-		t.Fatalf("buildURI with a config-file key: %v", err)
+		t.Fatalf("applyKey with a config-file key: %v", err)
 	}
 	if k := parseOrFatal(t, got).Params["api_key"]; k != "fake-file-or" {
 		t.Errorf("picker api_key = %q, want fake-file-or", k)
@@ -189,15 +190,13 @@ func TestConfigFileKey_OtherSchemeNeverLent(t *testing.T) {
 	assertMissingKeyError(t, err, "OPENROUTER_API_KEY", "openrouter")
 }
 
-// TestKeyPrecedence_Matrix pins the full order and checks the rows kit
-// itself defines against kit. Highest first: URI ?api_key=, the
-// scheme's own key (secret store / env), LLM_API_KEY, llm.yaml
-// providers.<scheme>.api_key.
+// TestKeyPrecedence_Matrix pins the full order. Highest first: URI
+// ?api_key=, llm.yaml providers.<scheme>.api_key, the scheme's own key
+// (secret store / env), LLM_API_KEY.
 //
 // Kit's Resolve reads the key from the URI's api_key param alone, so
-// the param on the URI foo builds is exactly what kit sends. For the
-// rows with no scheme key, kit's LoadConfig merge (file < URI <
-// LLM_API_KEY) must pick the same key foo did.
+// the param on the URI foo builds is exactly what kit sends, and it
+// must be the key kit's ApplyAPIKey resolves.
 func TestKeyPrecedence_Matrix(t *testing.T) {
 	const model = "openrouter://openai/gpt-4.1-nano"
 	cases := []struct {
@@ -206,8 +205,9 @@ func TestKeyPrecedence_Matrix(t *testing.T) {
 		want                   string
 	}{
 		{name: "explicit beats all", explicit: "k-uri", env: "k-env", llm: "k-llm", fs: "k-file", want: "k-uri"},
-		{name: "scheme env beats LLM_API_KEY and file", env: "k-env", llm: "k-llm", fs: "k-file", want: "k-env"},
-		{name: "LLM_API_KEY beats file", llm: "k-llm", fs: "k-file", want: "k-llm"},
+		{name: "file beats scheme env and LLM_API_KEY", env: "k-env", llm: "k-llm", fs: "k-file", want: "k-file"},
+		{name: "scheme env beats LLM_API_KEY", env: "k-env", llm: "k-llm", want: "k-env"},
+		{name: "file beats LLM_API_KEY", llm: "k-llm", fs: "k-file", want: "k-file"},
 		{name: "file alone", fs: "k-file", want: "k-file"},
 		{name: "scheme env alone", env: "k-env", want: "k-env"},
 		{name: "LLM_API_KEY alone", llm: "k-llm", want: "k-llm"},
@@ -236,14 +236,12 @@ func TestKeyPrecedence_Matrix(t *testing.T) {
 				t.Errorf("api_key sent = %q, want %q", sent, tc.want)
 			}
 
-			if tc.explicit == "" && tc.env == "" {
-				cfg, err := kitllm.LoadConfig(model)
-				if err != nil {
-					t.Fatalf("kit LoadConfig: %v", err)
-				}
-				if cfg.Provider.APIKey != sent {
-					t.Errorf("foo sent %q but kit's LoadConfig resolves %q", sent, cfg.Provider.APIKey)
-				}
+			kitURI, err := kitllm.ApplyAPIKey(context.Background(), nil, uri)
+			if err != nil {
+				t.Fatalf("kit ApplyAPIKey: %v", err)
+			}
+			if k := parseOrFatal(t, kitURI).Params["api_key"]; k != sent {
+				t.Errorf("foo sent %q but kit's ApplyAPIKey resolves %q", sent, k)
 			}
 		})
 	}
