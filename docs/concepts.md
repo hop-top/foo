@@ -108,7 +108,7 @@ order:
 |------|----------|------|---------------|
 | Go built-ins | `foo_time`, `foo_version` | In foo | No paths |
 | OS tools from specs | `ls`, `cat`, `grep`, `rm`, `sed`, … and your own | The pinned OS binary, started by foo | Yes, against `scope.yaml` |
-| Plugins | `foo-tool-<name>` on `$PATH` | The plugin binary | No: the plugin opens what it likes |
+| Plugins | `foo-tool-<name>` on `$PATH` | The plugin binary | Only the paths it declares under `foo_tool`; otherwise none |
 
 **OS tools.** Thirteen ship with foo (read: `ls`, `cat`, `head`,
 `tail`, `wc`, `find`, `grep`, `stat`; write: `cp`, `mv`, `mkdir`,
@@ -128,8 +128,11 @@ them to other hosts as `foo-tool-<name>` links
 metadata protocol as plugin commands, plus an optional `parameters`
 JSON Schema that tells the model which arguments to pass
 ([Write plugins](how-to/write-plugins.md#--ext-info-for-tool-plugins)).
-foo cannot see what a plugin does with its arguments, so it applies
-no path scope to it; `--tools-approve` is the only gate.
+foo cannot see what a plugin does with its arguments, so it gates
+only what the plugin declares: path arguments and side effect under
+`foo_tool` are checked like an OS tool's, and the plugin receives the
+canonical paths. A plugin that declares nothing is ungated;
+`--tools-approve` is its only gate.
 
 ## Plugins via PATH discovery
 

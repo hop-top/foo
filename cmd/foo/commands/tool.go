@@ -44,9 +44,11 @@ read from /etc/xdg/foo/tools or foo's config dir (marked "(overrides
 builtin)" when it replaces one of foo's); or the absolute path of the
 foo-tool-<name> binary found on $PATH. PARAMS is true when the tool
 declares arguments for the model to fill in. SIDE-EFFECT is what a spec
-tool does (read, write, destructive); "unknown" for a plugin. PATHS
-lists a spec tool's path arguments with their operations (src:r
-dst:w); plugins are "ungated".
+tool, or a plugin that declares foo_tool annotations, does (read,
+write, destructive); "unknown" for a plugin that declares none. PATHS
+lists the path arguments foo checks, with their operations (src:r
+dst:w); "ungated" for a plugin that declares none: foo cannot check
+paths a plugin does not declare.
 
 STATUS is "active" for every tool -T accepts. A name has one owner:
 foo's built-ins, then specs, then $PATH plugins; a later claimant is
@@ -56,8 +58,9 @@ out with a warning and still owns its name.
 A binary's name, description and parameters come from its --ext-info
 output, so listing runs each foo-tool-* binary once with --ext-info
 (links to foo itself and shadowed names are skipped). A binary whose
-"parameters" is not a JSON Schema object of type "object" is left out,
-with a warning on stderr; -T warns only when it names that tool.`,
+"parameters" is not a JSON Schema object of type "object", or whose
+"foo_tool" annotations foo cannot enforce, is left out, with a warning
+on stderr; -T warns only when it names that tool.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ts, err := discoverTools(nil, cmd.ErrOrStderr())
@@ -165,6 +168,9 @@ func toolRowOf(t tool.Tool) toolRow {
 		row.SideEffect, row.Paths = v.SideEffect(), v.PathSummary()
 	case *tool.ExternalTool:
 		row.SideEffect, row.Paths = sideEffectUnknown, pathsUngated
+		if v.Gated() {
+			row.SideEffect, row.Paths = v.SideEffect(), v.PathSummary()
+		}
 	default:
 		row.SideEffect = string(kitcli.SideEffectRead)
 	}

@@ -72,7 +72,12 @@ sed          builtin  Replace t…   true    destructive  path:rw       active
 Thirteen OS tools ship with foo. Read: `ls`, `cat`, `head`, `tail`,
 `wc`, `find`, `grep`, `stat`. Write: `cp`, `mv`, `mkdir`, `rm`, `sed`.
 PATHS lists each path argument with the operations foo checks on it
-(`r` read, `w` write). Enable tools by name with `-T` (repeat it, or
+(`r` read, `w` write). A `foo-tool-<name>` plugin on `$PATH` is
+checked the same way when it declares its paths under `foo_tool`
+([Gate your plugin](write-plugins.md#gate-your-plugin-declare-foo_tool));
+one that declares none shows `ungated`: foo cannot check paths a
+plugin does not declare, so only `--tools-approve` stands between the
+model and it. Enable tools by name with `-T` (repeat it, or
 comma-separate). Per-tool arguments:
 [Read tools](../reference/commands.md#read-tools) and
 [Write tools](../reference/commands.md#write-tools).
