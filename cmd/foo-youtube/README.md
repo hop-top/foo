@@ -49,6 +49,7 @@ else that is not a supported URL is a usage error (exit 2).
 | `--timestamps` | `false` | Prefix transcript lines with timestamps |
 | `--comments` | `false` | Include up to 20 top comments |
 | `--no-cache` | `false` | Bypass the yt-dlp output cache for this run |
+| `--raw` | `false` | Print the markdown even when a prompt is configured |
 | `-v`, `--debug` | `false` | Pass yt-dlp's raw stderr through for diagnosis |
 | `--quiet` | `false` | Suppress progress output on stderr |
 | `--format` | `table` | Output format for kit-rendered output (`csv`, `human`, `json`, `table`, `text`, `yaml`) |
@@ -83,6 +84,56 @@ Diagnostics and progress go to stderr; data goes to stdout. This
 markdown-on-stdout convention is what foo's stdin reader treats as the
 user prompt — see
 [Concepts](../../docs/concepts.md#plugins-via-path-discovery).
+
+## Ask a question
+
+A second positional is a question about the video. The transcript and
+metadata go to a model and stdout carries the answer alone:
+
+```sh
+foo youtube dQw4w9WgXcQ "what are the main claims?"
+```
+
+| Setting | Precedence, highest first |
+|---------|---------------------------|
+| Question | second positional, `FOO_YOUTUBE_PROMPT`, `FOO_PROMPT`; none emits the markdown |
+| Model | `FOO_YOUTUBE_MODEL`, `FOO_MODEL`, `model:` in `$XDG_CONFIG_HOME/foo/config.yaml`, `claude-3-5-sonnet-latest` |
+
+`--raw` ignores any question and prints the markdown.
+
+A model is a bare id (`gpt-4o`, `claude-3-5-sonnet-latest`) or a kit
+provider URI (`openrouter://openai/gpt-4.1-nano`). A bare id's provider
+comes from its prefix: `gpt-`/`o1`/`o3` openai, `claude-` anthropic,
+`gemini-` google, `llama`/`mistral`/`deepseek-r1` ollama, `router-`
+routellm; anything else openai. `llm.yaml` `providers.<scheme>.base_url`
+or `LLM_BASE_URL` sets a bare id's endpoint; `?base_url=` on the model
+outranks both.
+
+### Provider keys
+
+Keys resolve through kit (`llm.ApplyAPIKey`), the same for bare ids and
+URIs, highest precedence first:
+
+1. `api_key` on the model URI
+2. `$XDG_CONFIG_HOME/hop/llm.yaml` `providers.<scheme>.api_key`, then
+   the variable `api_key_env` names
+3. the scheme's own variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+   `GOOGLE_API_KEY` then `GEMINI_API_KEY`, `OPENROUTER_API_KEY`,
+   `GROQ_API_KEY`, ... (aliases such as `fireworks-ai` and aim catalog
+   providers included)
+4. `LLM_API_KEY`
+
+A provider never receives another provider's key: an OpenRouter model
+with only `OPENAI_API_KEY` set is a missing key. Local runtimes (ollama,
+routellm) need none and never get `LLM_API_KEY`. The full precedence is
+kit's: [`llm.ApplyAPIKey`](https://pkg.go.dev/hop.top/kit/go/ai/llm#ApplyAPIKey).
+
+A missing key fails before any request, with exit 4:
+
+```
+$ FOO_YOUTUBE_MODEL=openrouter://openai/gpt-4.1-nano foo youtube dQw4w9WgXcQ "summary?"
+UNAUTHORIZED: missing OPENROUTER_API_KEY for model "openrouter://openai/gpt-4.1-nano" (provider openrouter); export OPENROUTER_API_KEY=... and retry, or pick another model with FOO_YOUTUBE_MODEL
+```
 
 ## Progress on stderr
 
@@ -155,8 +206,9 @@ Follows the kit cross-tool convention (§8.1):
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Fetch failure (metadata/transcript against a valid request) |
+| `1` | Fetch failure (metadata/transcript against a valid request), or the model call failed |
 | `2` | Usage error (missing/invalid URL or video ID, bad flags) |
+| `4` | Missing provider API key for the model answering a question |
 | `5` | Missing dependency (`yt-dlp` not on `$PATH`) |
 
 Comments are best-effort: a fetch failure there warns on stderr and

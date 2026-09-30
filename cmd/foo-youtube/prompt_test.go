@@ -242,10 +242,10 @@ func writeFooConfig(t *testing.T, xdgHome, body string) {
 // --- provider URI ------------------------------------------------------------
 
 func TestModelURI_SchemeDerivation(t *testing.T) {
+	isolateLLMEnv(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "an-test")
 	t.Setenv("GOOGLE_API_KEY", "gg-test")
-	t.Setenv("LLM_BASE_URL", "")
 
 	tests := []struct {
 		model string
@@ -262,7 +262,7 @@ func TestModelURI_SchemeDerivation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			got, err := modelURI(tt.model)
+			got, err := modelURI(context.Background(), tt.model)
 			if err != nil {
 				t.Fatalf("modelURI(%q): %v", tt.model, err)
 			}
@@ -278,8 +278,9 @@ func TestModelURI_SchemeDerivation(t *testing.T) {
 // which sends the whole URI as the model name and drops the key, and the
 // provider then 404s with a misleading "model not available".
 func TestModelURI_PassesThroughSpelledScheme(t *testing.T) {
+	isolateLLMEnv(t)
 	const uri = "openai://gpt-4o?api_key=abc&base_url=http://127.0.0.1:1/v1"
-	got, err := modelURI(uri)
+	got, err := modelURI(context.Background(), uri)
 	if err != nil {
 		t.Fatalf("modelURI: %v", err)
 	}
@@ -292,8 +293,9 @@ func TestModelURI_PassesThroughSpelledScheme(t *testing.T) {
 // param value: a bare model id may carry ?base_url=http://host/v1, and
 // the scheme test must look only at the head.
 func TestModelURI_BareIDWithBaseURLParamIsNotAURI(t *testing.T) {
+	isolateLLMEnv(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
-	got, err := modelURI("qwen3-coder?base_url=http://127.0.0.1:9/v1")
+	got, err := modelURI(context.Background(), "qwen3-coder?base_url=http://127.0.0.1:9/v1")
 	if err != nil {
 		t.Fatalf("modelURI: %v", err)
 	}
@@ -307,8 +309,8 @@ func TestModelURI_BareIDWithBaseURLParamIsNotAURI(t *testing.T) {
 // structured envelope rather than letting an unauthenticated request
 // reach the provider and come back as an opaque 401.
 func TestModelURI_MissingKeyIsUnauthorized(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "")
-	_, err := modelURI("gpt-4o")
+	isolateLLMEnv(t)
+	_, err := modelURI(context.Background(), "gpt-4o")
 	if err == nil {
 		t.Fatal("expected an error with no API key configured")
 	}
@@ -331,8 +333,8 @@ func TestModelURI_MissingKeyIsUnauthorized(t *testing.T) {
 // with no credential at all — a precheck applied to every scheme would
 // make local endpoints unusable.
 func TestModelURI_LocalProviderNeedsNoKey(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "")
-	if _, err := modelURI("llama3"); err != nil {
+	isolateLLMEnv(t)
+	if _, err := modelURI(context.Background(), "llama3"); err != nil {
 		t.Errorf("a local provider must need no API key, got %v", err)
 	}
 }
@@ -417,6 +419,7 @@ func (s *openAIStub) lastBody() string {
 // end to end against the stub endpoint: URI assembly, key precheck,
 // kit Resolve and the completion request all run as written.
 func TestAnswer_SendsPromptOverTheWire(t *testing.T) {
+	isolateLLMEnv(t)
 	stub := newOpenAIStub(t, "Three claims: one, two, three.")
 	t.Setenv("OPENAI_API_KEY", "sk-live-test")
 
@@ -454,6 +457,7 @@ func TestAnswer_SendsPromptOverTheWire(t *testing.T) {
 // the other half of the no-truncation decision: the model is allowed to
 // say the transcript is too long, and foo must say so too.
 func TestAnswer_SurfacesProviderError(t *testing.T) {
+	isolateLLMEnv(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
