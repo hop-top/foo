@@ -51,7 +51,7 @@ func TestFallbackURIs_FileBaseURL(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	writeLLMYAML(t, "providers:\n  openai:\n    base_url: "+fileOpenAIBase+"\nfallback:\n  - openai://fb-model\n")
 
-	got := fallbackURIs("ollama://llama3.2")
+	got := fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 	if len(got) != 1 {
 		t.Fatalf("fallbackURIs = %q, want 1 entry", got)
 	}
@@ -74,7 +74,7 @@ func TestFallbackURIs_EnvBaseURLSameScheme(t *testing.T) {
 	t.Setenv("LLM_FALLBACK", "openai://fb-model")
 	writeLLMYAML(t, "providers:\n  openai:\n    base_url: "+fileOpenAIBase+"\n")
 
-	got := fallbackURIs("openai://primary-model")
+	got := fallbackURIs(context.Background(), nil, "openai://primary-model")
 	if len(got) != 1 {
 		t.Fatalf("fallbackURIs = %q, want 1 entry", got)
 	}
@@ -97,7 +97,7 @@ func TestFallbackURIs_EnvBaseURLOtherSchemeIgnored(t *testing.T) {
 	t.Setenv("LLM_FALLBACK", "anthropic://claude-fb,groq://groq-fb")
 	writeLLMYAML(t, "providers:\n  anthropic:\n    base_url: "+fileAnthropicBase+"\n")
 
-	got := fallbackURIs("openai://primary-model")
+	got := fallbackURIs(context.Background(), nil, "openai://primary-model")
 	if len(got) != 2 {
 		t.Fatalf("fallbackURIs = %q, want 2 entries", got)
 	}
@@ -120,7 +120,7 @@ func TestFallbackURIs_ExplicitBaseURLKept(t *testing.T) {
 	t.Setenv("LLM_FALLBACK", "openai://fb-model?base_url="+explicit)
 	writeLLMYAML(t, "providers:\n  openai:\n    base_url: "+fileOpenAIBase+"\n")
 
-	got := fallbackURIs("openai://primary-model")
+	got := fallbackURIs(context.Background(), nil, "openai://primary-model")
 	if len(got) != 1 {
 		t.Fatalf("fallbackURIs = %q, want 1 entry", got)
 	}
@@ -142,7 +142,7 @@ func TestFallbackURIs_LocalSchemeDefaultKept(t *testing.T) {
 	t.Setenv("LLM_BASE_URL", envBase)
 	t.Setenv("LLM_FALLBACK", "ollama://llama3.2,lmstudio://local-model")
 
-	got := fallbackURIs("openai://primary-model")
+	got := fallbackURIs(context.Background(), nil, "openai://primary-model")
 	want := []string{"ollama://llama3.2", "lmstudio://local-model"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("local fallbacks rewritten:\n got  %q\n want %q", got, want)
@@ -335,7 +335,7 @@ func TestBuildClient_PoolPickReachesConfiguredEndpoint(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	writeLLMYAML(t, "providers:\n  openai:\n    base_url: "+ep.srv.URL+"/v1\n")
 
-	client, err := buildClient("openai", "picked-model", "OPENAI_API_KEY", 0)
+	client, err := buildClient(context.Background(), nil, "openai", "picked-model", "OPENAI_API_KEY", 0)
 	if err != nil {
 		t.Fatalf("buildClient: %v", err)
 	}

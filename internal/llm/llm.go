@@ -20,7 +20,6 @@ import (
 	_ "hop.top/kit/go/ai/llm/routellm"
 	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/storage/secret"
-	_ "hop.top/kit/go/storage/secret/env"
 )
 
 type Client struct {
@@ -59,6 +58,12 @@ type ClientOpts struct {
 	// MaxTokens caps completion length. Zero means unset (provider
 	// default). Threaded onto every request the client issues.
 	MaxTokens int
+
+	// Secrets is foo's configured secret store (config `secrets:`).
+	// Every key lookup this client makes — the primary's precheck and
+	// each fallback entry — reads the scheme's own key from it before
+	// the scheme's env var. Nil means no store: env var only.
+	Secrets secret.Store
 }
 
 // defaultRegistry is the process-wide aim registry foo lends to the
@@ -151,12 +156,12 @@ func NewClient(ctx context.Context, opts ClientOpts) (*Client, error) {
 			// through envVarForScheme which trusts the registry value.
 			scheme := picked.Provider
 			envVar := envVarForScheme(scheme)
-			return buildClient(scheme, picked.ID, envVar, opts.MaxTokens)
+			return buildClient(ctx, opts.Secrets, scheme, picked.ID, envVar, opts.MaxTokens)
 		}
 	}
 
 	// Paths 1 and 2: explicit model.
-	return newClientFromModel(model, opts.MaxTokens)
+	return newClientFromModel(ctx, opts.Secrets, model, opts.MaxTokens)
 }
 
 // modelIsURI reports whether a --model value is already a
@@ -185,12 +190,12 @@ func modelIsURI(model string) bool {
 // params, so the caller keeps full control of both; foo only appends
 // the scheme's key and configured endpoint when the URI names none (see
 // injectURIKey, applyConfiguredBaseURL).
-func newClientFromModel(model string, maxTokens int) (*Client, error) {
-	uri, guessed, err := resolveURIForModel(model)
+func newClientFromModel(ctx context.Context, store secret.Store, model string, maxTokens int) (*Client, error) {
+	uri, guessed, err := resolveURIForModel(ctx, store, model)
 	if err != nil {
 		return nil, err
 	}
-	client, err := buildClientFromURI(uri, maxTokens)
+	client, err := buildClientFromURI(ctx, store, uri, maxTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -204,12 +209,12 @@ func newClientFromModel(model string, maxTokens int) (*Client, error) {
 // every NewClient code path. Centralizes the API-key precheck so any
 // future scheme picked up by the pool picker honors the same error
 // shape.
-func buildClient(scheme, model, envVar string, maxTokens int) (*Client, error) {
-	uri, err := buildURI(scheme, model, envVar)
+func buildClient(ctx context.Context, store secret.Store, scheme, model, envVar string, maxTokens int) (*Client, error) {
+	uri, err := buildURI(ctx, store, scheme, model, envVar)
 	if err != nil {
 		return nil, err
 	}
-	return buildClientFromURI(applyConfiguredBaseURL(uri, scheme), maxTokens)
+	return buildClientFromURI(ctx, store, applyConfiguredBaseURL(uri, scheme), maxTokens)
 }
 
 // buildURI assembles the provider URI for a bare model id, running the
@@ -219,11 +224,11 @@ func buildClient(scheme, model, envVar string, maxTokens int) (*Client, error) {
 // ("qwen3.6-colibri?base_url=..."), so the api_key separator is "&" in
 // that case. Always emitting "?" produced a second question mark, which
 // kit's parser folds into the preceding value.
-func buildURI(scheme, model, envVar string) (string, error) {
+func buildURI(ctx context.Context, store secret.Store, scheme, model, envVar string) (string, error) {
 	if envVar == "" {
 		return fmt.Sprintf("%s://%s", scheme, model), nil
 	}
-	key := schemeKey(fmt.Sprintf("%s://%s", scheme, model), envVar)
+	key := schemeKey(ctx, store, fmt.Sprintf("%s://%s", scheme, model), envVar)
 	if key == "" {
 		return "", missingKeyError(envVar, model, scheme)
 	}
@@ -244,8 +249,8 @@ func buildURI(scheme, model, envVar string) (string, error) {
 // choice outranks the environment), a local scheme (no credential), and
 // a scheme foo has no entry for or a URI kit cannot parse — kit reports
 // those itself, more accurately than a missing-key error would.
-func injectURIKey(uri string) (string, error) {
-	keyed, missing := keyURI(uri)
+func injectURIKey(ctx context.Context, store secret.Store, uri string) (string, error) {
+	keyed, missing := keyURI(ctx, store, uri)
 	if missing != nil {
 		return "", missingKeyError(missing.envVar, missing.model, missing.scheme)
 	}
@@ -261,7 +266,7 @@ type missingKey struct {
 // returns uri with the scheme's key appended, or the missing key's
 // description. The primary model turns a miss into a precheck failure;
 // a fallback entry turns it into a dropped entry (fallbackURIs).
-func keyURI(uri string) (string, *missingKey) {
+func keyURI(ctx context.Context, store secret.Store, uri string) (string, *missingKey) {
 	parsed, err := kitllm.ParseURI(uri)
 	if err != nil {
 		return uri, nil
@@ -273,7 +278,7 @@ func keyURI(uri string) (string, *missingKey) {
 	if envVar == "" {
 		return uri, nil
 	}
-	key := schemeKey(uri, envVar)
+	key := schemeKey(ctx, store, uri, envVar)
 	if key == "" {
 		return "", &missingKey{envVar: envVar, model: parsed.Model, scheme: parsed.Scheme}
 	}
@@ -305,9 +310,9 @@ func querySep(s string) string {
 // guessed forwards schemeForModel's report that the scheme was assumed
 // rather than matched. A URI-shaped value is never a guess: the caller
 // spelled the scheme out.
-func resolveURIForModel(model string) (uri string, guessed bool, err error) {
+func resolveURIForModel(ctx context.Context, store secret.Store, model string) (uri string, guessed bool, err error) {
 	if modelIsURI(model) {
-		uri, err := injectURIKey(model)
+		uri, err := injectURIKey(ctx, store, model)
 		if err != nil {
 			return "", false, err
 		}
@@ -327,7 +332,7 @@ func resolveURIForModel(model string) (uri string, guessed bool, err error) {
 		// docs/how-to/route-across-models.md#pool-routing-vs-router-x
 		model = strings.TrimPrefix(model, "router-")
 	}
-	built, err := buildURI(scheme, model, envVar)
+	built, err := buildURI(ctx, store, scheme, model, envVar)
 	if err != nil {
 		return "", false, err
 	}
@@ -336,16 +341,17 @@ func resolveURIForModel(model string) (uri string, guessed bool, err error) {
 
 // resolvedURIForModel is the URI-only view of resolveURIForModel, kept
 // for call sites (tests, provenance) that assert on the URI and have no
-// use for the guess flag.
+// use for the guess flag. It resolves with no secret store configured:
+// keys come from env vars and llm.yaml only.
 func resolvedURIForModel(model string) (string, error) {
-	uri, _, err := resolveURIForModel(model)
+	uri, _, err := resolveURIForModel(context.Background(), nil, model)
 	return uri, err
 }
 
 // buildClientFromURI resolves a fully-formed provider URI and wires the
 // fallback chain. Shared by the bare-id path (which assembles the URI)
 // and the URI passthrough path (which received one from --model).
-func buildClientFromURI(uri string, maxTokens int) (*Client, error) {
+func buildClientFromURI(ctx context.Context, store secret.Store, uri string, maxTokens int) (*Client, error) {
 	p, err := kitllm.Resolve(uri)
 	if err != nil {
 		return nil, err
@@ -354,7 +360,7 @@ func buildClientFromURI(uri string, maxTokens int) (*Client, error) {
 	// Per-URI Resolve errors skip just that one entry so one bad
 	// fallback can't disable the rest.
 	var clientOpts []kitllm.Option
-	for _, fbURI := range fallbackURIs(uri) {
+	for _, fbURI := range fallbackURIs(ctx, store, uri) {
 		fb, fbErr := kitllm.Resolve(fbURI)
 		if fbErr != nil {
 			continue
@@ -385,7 +391,10 @@ func buildClientFromURI(uri string, maxTokens int) (*Client, error) {
 // may be healthy, and failing the run over a backup that is never
 // needed would be worse than running without it. The drop is announced
 // once per process on stderr, naming the variable to set.
-func fallbackURIs(uri string) []string {
+//
+// store is the primary's: a fallback's key comes from the same
+// configured secret store as the primary's.
+func fallbackURIs(ctx context.Context, store secret.Store, uri string) []string {
 	cfg, err := kitllm.LoadConfig(uri)
 	if err != nil {
 		return nil
@@ -393,7 +402,7 @@ func fallbackURIs(uri string) []string {
 	primaryScheme := schemeOf(uri)
 	out := make([]string, 0, len(cfg.Fallbacks))
 	for _, fb := range cfg.Fallbacks {
-		keyed, missing := keyURI(fb)
+		keyed, missing := keyURI(ctx, store, fb)
 		if missing != nil {
 			warnDroppedFallback(missing)
 			continue
@@ -431,7 +440,8 @@ func warnDroppedFallback(m *missingKey) {
 // names no ?api_key= (an explicit param outranks everything and is
 // never replaced). Precedence, highest first:
 //
-//  1. the scheme's own key: secret store, then its env var (lookupAPIKey)
+//  1. the scheme's own key: the configured secret store, then its env
+//     var (lookupAPIKey)
 //  2. LLM_API_KEY, kit's universal key
 //  3. llm.yaml providers.<scheme>.api_key
 //
@@ -448,8 +458,8 @@ func warnDroppedFallback(m *missingKey) {
 // Kit's Resolve reads the key from the URI alone, so the key returned
 // here is exactly the one kit sends: the precheck and the request
 // cannot disagree.
-func schemeKey(uri, envVar string) string {
-	key, _ := resolveSchemeKey(uri, envVar, lookupAPIKey)
+func schemeKey(ctx context.Context, store secret.Store, uri, envVar string) string {
+	key, _ := resolveSchemeKey(ctx, store, uri, envVar)
 	return key
 }
 
@@ -467,13 +477,12 @@ const (
 )
 
 // resolveSchemeKey is schemeKey's chain, and the one place it lives:
-// the run precheck and the credential index (auth.go) both call it, so
-// "is there a key" has one answer. own is tier 1 — the scheme's own key
-// by env var name; the precheck passes lookupAPIKey. The source is
-// reported alongside the key so a caller can say where it came from
-// without ever printing it.
-func resolveSchemeKey(uri, envVar string, own func(envVar string) string) (string, KeySource) {
-	if key := own(envVar); key != "" {
+// the run precheck and the credential index (auth.go) both call it with
+// the same configured store, so "is there a key" has one answer. The
+// source is reported alongside the key so a caller can say where it
+// came from without ever printing it.
+func resolveSchemeKey(ctx context.Context, store secret.Store, uri, envVar string) (string, KeySource) {
+	if key := lookupAPIKey(ctx, store, envVar); key != "" {
 		return key, KeySourceSecret
 	}
 	universal := os.Getenv(kitllm.FallbackEnvKey)
@@ -496,23 +505,22 @@ func resolveSchemeKey(uri, envVar string, own func(envVar string) string) (strin
 	}
 }
 
-// lookupAPIKey resolves a provider API key through the kit secret store
-// rather than reading the process environment directly. The store is
-// opened with the default "env" backend, so the historical behavior is
-// preserved: secret key `openai_api_key` maps to env var
-// `OPENAI_API_KEY` (the env backend uppercases and swaps `/`→`_`).
-// Configuring a different backend (keychain, vault) in foo's config
-// transparently redirects the lookup without touching this call site.
+// lookupAPIKey is tier 1 of schemeKey's chain: the scheme's own key,
+// read from store — foo's configured secret store — and then from the
+// env var itself, kit's SecretFor order.
 //
-// envVar is the canonical env-var spelling (e.g. "OPENAI_API_KEY"); it
-// is lowercased to form the backend-neutral secret key. A direct
-// os.Getenv read is the last-resort fallback so a store-open failure
-// never regresses a working env-based setup.
-func lookupAPIKey(envVar string) string {
-	key := strings.ToLower(envVar)
-	store, err := secret.Open(secret.Config{Backend: "env"})
-	if err == nil {
-		if got, getErr := store.Get(context.Background(), key); getErr == nil {
+// envVar is the canonical env-var spelling (e.g. "OPENAI_API_KEY"); the
+// store is asked for its SecretName (`openai_api_key`), the name
+// `foo provider show` reports. On the default env backend that name maps
+// straight back to OPENAI_API_KEY; a prefixed env backend, a keychain or
+// a vault each answer for it in their own way.
+//
+// store nil means no store is configured: the env var alone. A store
+// miss, an empty value or a backend error falls through to the env var,
+// so an unreachable backend never breaks a working env-based setup.
+func lookupAPIKey(ctx context.Context, store secret.Store, envVar string) string {
+	if store != nil {
+		if got, err := store.Get(ctx, SecretName(envVar)); err == nil && got != nil && len(got.Value) > 0 {
 			return string(got.Value)
 		}
 	}

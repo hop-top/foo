@@ -8,21 +8,6 @@ import (
 	"testing"
 )
 
-// stubLookup resolves only the named secrets, so a test states which
-// credentials exist instead of inheriting the operator's environment.
-func stubLookup(present ...string) SecretLookup {
-	have := make(map[string]bool, len(present))
-	for _, k := range present {
-		have[k] = true
-	}
-	return func(_ context.Context, key string) (string, bool, error) {
-		if have[key] {
-			return "value", true, nil
-		}
-		return "", false, nil
-	}
-}
-
 // TestSecretName pins the env-name → secret-name mapping. aim publishes
 // upstream env var names (OPENAI_API_KEY); foo's store is keyed
 // lowercase and the env backend uppercases on read, so lowercasing is
@@ -49,7 +34,7 @@ func TestAuthIndex_KeyedProviderNeedsItsKey(t *testing.T) {
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"groq":   {"GROQ_API_KEY"},
 		"openai": {"OPENAI_API_KEY"},
-	}, stubLookup("openai_api_key"))
+	}, stubStore("openai_api_key"))
 
 	if idx.Satisfied("groq") {
 		t.Error("groq requires GROQ_API_KEY and none is configured; want not satisfied")
@@ -76,7 +61,7 @@ func TestAuthIndex_AnyAlternativeSatisfies(t *testing.T) {
 		"acme": {"ACME_API_KEY", "ACME_TOKEN", "ACME_KEY"},
 	}
 	for _, key := range []string{"acme_api_key", "acme_token", "acme_key"} {
-		idx := NewAuthIndexFrom(context.Background(), env, stubLookup(key))
+		idx := NewAuthIndexFrom(context.Background(), env, stubStore(key))
 		if !idx.Satisfied("acme") {
 			t.Errorf("%s alone must satisfy acme", key)
 		}
@@ -84,7 +69,7 @@ func TestAuthIndex_AnyAlternativeSatisfies(t *testing.T) {
 			t.Errorf("SecretKey = %q, want the alternative that resolved (%q)", got, key)
 		}
 	}
-	none := NewAuthIndexFrom(context.Background(), env, stubLookup())
+	none := NewAuthIndexFrom(context.Background(), env, stubStore())
 	if none.Satisfied("acme") {
 		t.Error("no acme alternative configured; want not satisfied")
 	}
@@ -101,7 +86,7 @@ func TestAuthIndex_NoEnvMeansNoAuth(t *testing.T) {
 	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"ollama": nil,
-	}, stubLookup())
+	}, stubStore())
 	got := idx.Lookup("ollama")
 	if !got.Satisfied() {
 		t.Error("a provider requiring no credential must be satisfied")
@@ -119,7 +104,7 @@ func TestAuthIndex_NoEnvMeansNoAuth(t *testing.T) {
 // models.dev entry. No declared requirement means no requirement.
 func TestAuthIndex_UnknownProviderNeedsNoAuth(t *testing.T) {
 	unsetKeyEnv(t)
-	idx := NewAuthIndexFrom(context.Background(), map[string][]string{"openai": {"OPENAI_API_KEY"}}, stubLookup())
+	idx := NewAuthIndexFrom(context.Background(), map[string][]string{"openai": {"OPENAI_API_KEY"}}, stubStore())
 	if !idx.Satisfied("some-local-runtime") {
 		t.Error("a provider with no declared requirement must be satisfied")
 	}
@@ -141,18 +126,11 @@ func TestAuthIndex_NilIndexSatisfies(t *testing.T) {
 // entry does not make the remaining alternatives unaskable.
 func TestAuthIndex_LookupErrorIsNotFatal(t *testing.T) {
 	unsetKeyEnv(t)
-	lookup := func(_ context.Context, key string) (string, bool, error) {
-		if key == "acme_api_key" {
-			return "", false, errors.New("keyring locked")
-		}
-		if key == "acme_key" {
-			return "value", true, nil
-		}
-		return "", false, nil
-	}
+	store := newFakeStore("acme_key", "value")
+	store.errs["acme_api_key"] = errors.New("keyring locked")
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"acme": {"ACME_API_KEY", "ACME_TOKEN", "ACME_KEY"},
-	}, lookup)
+	}, store)
 	if !idx.Satisfied("acme") {
 		t.Error("a later alternative resolved; the earlier error must not abort the scan")
 	}
@@ -168,7 +146,7 @@ func TestAuthIndex_ConfiguredProviders(t *testing.T) {
 		"groq":    {"GROQ_API_KEY"},
 		"mistral": {"MISTRAL_API_KEY"},
 		"ollama":  nil,
-	}, stubLookup("openai_api_key", "mistral_api_key"))
+	}, stubStore("openai_api_key", "mistral_api_key"))
 
 	want := []string{"mistral", "openai"}
 	if got := idx.ConfiguredProviders(); !reflect.DeepEqual(got, want) {
@@ -185,7 +163,7 @@ func TestFilterReachable_HidesKeylessAndUnroutable(t *testing.T) {
 		"openai": {"OPENAI_API_KEY"},
 		"groq":   {"GROQ_API_KEY"},
 		"google": {"GOOGLE_API_KEY"},
-	}, stubLookup("openai_api_key", "groq_api_key"))
+	}, stubStore("openai_api_key", "groq_api_key"))
 
 	entries := []ModelEntry{
 		{Provider: "openai", ID: "keyed-and-routable", Routable: true},
@@ -283,7 +261,7 @@ func TestAuthIndex_LookupSchemeResolvesAliases(t *testing.T) {
 		"google":       {"GOOGLE_API_KEY"},
 		"fireworks-ai": {"FIREWORKS_API_KEY"},
 		"togetherai":   {"TOGETHER_API_KEY"},
-	}, stubLookup("google_api_key"))
+	}, stubStore("google_api_key"))
 
 	for scheme, want := range map[string]string{
 		"gemini":    "configured",

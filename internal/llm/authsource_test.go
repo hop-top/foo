@@ -68,7 +68,7 @@ func precheckPasses(scheme string) bool {
 	if envVar == "" {
 		return true
 	}
-	_, err := buildURI(scheme, "some-model", envVar)
+	_, err := buildURI(context.Background(), nil, scheme, "some-model", envVar)
 	return err == nil
 }
 
@@ -90,7 +90,7 @@ func TestAuthIndex_AgreesWithPrecheck(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			xdg := unsetKeyEnv(t)
 			setup(t, xdg)
-			idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup())
+			idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
 			for scheme := range schemeKeyEnv {
 				want := precheckPasses(scheme)
@@ -118,7 +118,7 @@ func TestAuthIndex_AgreesWithPrecheck(t *testing.T) {
 func TestAuthIndex_LLMAPIKeySatisfiesKeyedSchemes(t *testing.T) {
 	unsetKeyEnv(t)
 	t.Setenv("LLM_API_KEY", "fake-llm-key")
-	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup())
+	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
 	got := idx.LookupScheme("openai")
 	if got.Status() != "configured" {
@@ -145,7 +145,7 @@ func TestAuthIndex_LLMAPIKeySatisfiesKeyedSchemes(t *testing.T) {
 func TestAuthIndex_LLMConfigKeyBelongsToItsScheme(t *testing.T) {
 	xdg := unsetKeyEnv(t)
 	writeLLMConfig(t, xdg, "providers:\n  openai:\n    api_key: fake-yaml-key\n")
-	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup())
+	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
 	got := idx.LookupScheme("openai")
 	if got.Status() != "configured" || got.Source != KeySourceLLMConfig {
@@ -164,7 +164,7 @@ func TestAuthIndex_LLMConfigKeyBelongsToItsScheme(t *testing.T) {
 func TestAuthIndex_SchemeKeySource(t *testing.T) {
 	unsetKeyEnv(t)
 	t.Setenv("LLM_API_KEY", "fake-llm-key") // outranked, as in the precheck
-	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup("groq_api_key"))
+	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore("groq_api_key"))
 
 	got := idx.LookupScheme("groq")
 	if got.Source != KeySourceSecret || got.SecretKey != "groq_api_key" {
@@ -177,7 +177,7 @@ func TestAuthIndex_SchemeKeySource(t *testing.T) {
 // hide a local server's models behind it.
 func TestAuthIndex_LocalSchemesNeedNoKey(t *testing.T) {
 	unsetKeyEnv(t)
-	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup())
+	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
 	for _, scheme := range localSchemes {
 		got := idx.LookupScheme(scheme)
@@ -195,12 +195,12 @@ func TestAuthIndex_LocalSchemesNeedNoKey(t *testing.T) {
 // not "configured".
 func TestAuthIndex_GoogleNeedsThePrecheckKey(t *testing.T) {
 	unsetKeyEnv(t)
-	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup("gemini_api_key"))
+	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore("gemini_api_key"))
 	if got := idx.Lookup("google"); got.Status() != "missing" || got.SecretKey != "google_api_key" {
 		t.Errorf("google = %q / %q, want missing / google_api_key", got.Status(), got.SecretKey)
 	}
 
-	idx = NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup("google_api_key"))
+	idx = NewAuthIndexFrom(context.Background(), catalogEnv, stubStore("google_api_key"))
 	if got := idx.Lookup("google"); got.Status() != "configured" {
 		t.Errorf("google status = %q, want configured", got.Status())
 	}
@@ -212,7 +212,7 @@ func TestAuthIndex_GoogleNeedsThePrecheckKey(t *testing.T) {
 func TestAuthIndex_GeminiReadsItsOwnConfigBlock(t *testing.T) {
 	xdg := unsetKeyEnv(t)
 	writeLLMConfig(t, xdg, "providers:\n  gemini:\n    api_key: fake-yaml-gemini\n")
-	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubLookup())
+	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
 
 	if got := idx.LookupScheme("gemini"); got.Status() != "configured" || got.Provider != "gemini" {
 		t.Errorf("gemini = %q (provider %q), want configured under gemini", got.Status(), got.Provider)
