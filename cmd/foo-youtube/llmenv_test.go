@@ -71,6 +71,16 @@ func runIsolated(m *testing.M) int {
 	for _, name := range llmEnvNames {
 		os.Unsetenv(name)
 	}
+	// A request that misses its local stub (a base_url that failed to
+	// apply) must fail on a closed port, never reach a public provider.
+	// Loopback stubs bypass the proxy; net/http reads these once, so
+	// they are set before any test runs.
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		os.Setenv(name, "http://127.0.0.1:9")
+	}
+	for _, name := range []string{"NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy"} {
+		os.Unsetenv(name)
+	}
 	return m.Run()
 }
 

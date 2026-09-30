@@ -154,9 +154,8 @@ func schemeForModel(model string) string {
 // "openai://openai://..." which sends the whole URI as the model name.
 // The "://" test ignores anything after the first "?" because a bare
 // model id may carry a base_url param whose value is itself a URL. For
-// a bare id the scheme is guessed (schemeForModel) and base_url from
-// llm.yaml / LLM_BASE_URL is folded in — a caller-supplied base_url on
-// the model string outranks both and is left alone.
+// a bare id the scheme is guessed (schemeForModel). Either form then
+// takes the configured endpoint (applyConfiguredBaseURL).
 //
 // The key, for either form, is kit's llm.ApplyAPIKey: an api_key
 // already on the URI, llm.yaml providers.<scheme>.api_key /
@@ -176,8 +175,9 @@ func modelURI(ctx context.Context, model string) (string, error) {
 		if scheme == "routellm" {
 			bare = strings.TrimPrefix(bare, "router-")
 		}
-		uri = applyConfiguredBaseURL(scheme + "://" + bare)
+		uri = scheme + "://" + bare
 	}
+	uri = applyConfiguredBaseURL(uri)
 
 	keyed, err := kitllm.ApplyAPIKey(ctx, nil, uri)
 	var missing *kitllm.MissingKeyError
@@ -201,15 +201,25 @@ func querySep(s string) string {
 	return "?"
 }
 
-// applyConfiguredBaseURL folds the base_url resolved by kit's LoadConfig
-// (llm.yaml `providers.<scheme>.base_url`, overridden by LLM_BASE_URL)
-// onto the URI.
+// applyConfiguredBaseURL folds the configured endpoint onto uri as a
+// base_url param, for a bare id and a URI-form model alike.
 //
 // kit's Resolve reads the URI and nothing else, so without this step
 // neither documented lever reaches the provider and every request goes
-// to the provider's public endpoint. An explicit base_url already on the
-// URI came from the caller and outranks both file and env; a host-form
-// URI already encodes its endpoint, so LoadConfig only echoes it back.
+// to the provider's public endpoint. Precedence, highest first — the
+// host's own, for its primary model:
+//
+//  1. ?base_url= already on uri: the caller's own choice, never replaced
+//  2. LLM_BASE_URL
+//  3. llm.yaml providers.<scheme>.base_url
+//  4. nothing: the adapter's default
+//
+// The host scopes LLM_BASE_URL to its primary model's scheme so a
+// fallback on another scheme never borrows it. This binary runs one
+// model and no fallbacks, so the model is always the primary and kit's
+// LoadConfig, which layers LLM_BASE_URL over the file, answers tiers
+// 2-3 as they stand. A host-form URI ("scheme://host:port/model")
+// already names its endpoint and is left alone.
 func applyConfiguredBaseURL(uri string) string {
 	parsed, err := kitllm.ParseURI(uri)
 	if err != nil {

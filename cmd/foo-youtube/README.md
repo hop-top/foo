@@ -105,9 +105,28 @@ A model is a bare id (`gpt-4o`, `claude-3-5-sonnet-latest`) or a kit
 provider URI (`openrouter://openai/gpt-4.1-nano`). A bare id's provider
 comes from its prefix: `gpt-`/`o1`/`o3` openai, `claude-` anthropic,
 `gemini-` google, `llama`/`mistral`/`deepseek-r1` ollama, `router-`
-routellm; anything else openai. `llm.yaml` `providers.<scheme>.base_url`
-or `LLM_BASE_URL` sets a bare id's endpoint; `?base_url=` on the model
-outranks both.
+routellm; anything else openai.
+
+### Provider endpoint
+
+The endpoint resolves the same for bare ids and URIs, highest
+precedence first:
+
+1. `?base_url=` on the model, or a host-form URI
+   (`openai://localhost:1234/gpt-4o`)
+2. `LLM_BASE_URL`
+3. `$XDG_CONFIG_HOME/hop/llm.yaml` `providers.<scheme>.base_url`
+4. the provider's default endpoint
+
+```
+$ cat ~/.config/hop/llm.yaml
+providers:
+  openrouter:
+    base_url: http://localhost:4000/v1
+$ FOO_YOUTUBE_MODEL=openrouter://openai/gpt-4.1-nano foo youtube dQw4w9WgXcQ "summary?"
+```
+
+sends the request to `localhost:4000`, with `OPENROUTER_API_KEY`.
 
 ### Provider keys
 
