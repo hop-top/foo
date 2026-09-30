@@ -27,7 +27,8 @@ provider auth.
 You need:
 
 - A provider key exported for the model family you intend to use
-  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, …;
+  [one variable per scheme](../reference/config.md#provider-keys)).
 - foo installed and `foo provider list` working.
 
 ## Outcome
@@ -319,7 +320,7 @@ foo provider show groq --format json
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `Error creating LLM client` | No matching provider key in env | Export `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` |
+| `Error creating LLM client` | No matching provider key in env | Export the key the error names (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, …) |
 | `provider show <X>` returns `status: missing` | Key var is empty | Re-export the key, then re-run `provider show` |
 | `model list` prints only a footer, no rows | No provider key configured, so nothing is reachable | Export a key named by `provider show <scheme>`, or pass `--all` to list the catalog anyway |
 | A model you know exists is absent from `model list` | Its provider has no adapter, or no key configured | Re-run with `--all`; the footer names the count it was hiding |
@@ -336,8 +337,17 @@ Model selection precedence (highest first):
 
 foo dispatches by scheme prefix. Known prefixes route to the
 matching provider; unknown prefixes fall back to the OpenAI
-scheme. With `OPENAI_API_KEY` set, that fallback works with
-OpenAI-compatible endpoints (OpenRouter, Groq, Together, etc.).
+scheme and `OPENAI_API_KEY`. To reach a hosted gateway, name its
+scheme so its own key is used:
+
+```sh
+export OPENROUTER_API_KEY=sk-or-...
+foo -m 'openrouter://openai/gpt-4.1-nano' "hello"
+```
+
+`groq`, `xai`, `together`, `fireworks`, `deepseek` and `mistral`
+work the same way, each with its own
+[key variable](../reference/config.md#provider-keys).
 
 ### Local and self-hosted models
 

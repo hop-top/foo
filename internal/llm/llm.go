@@ -176,13 +176,13 @@ func modelIsURI(model string) bool {
 
 // newClientFromModel handles the explicit-model paths (1 and 2).
 //
-// A URI-shaped value is handed to kit untouched. Re-wrapping it the way
-// the bare-id path does yields "openai://openai://<model>?api_key=...",
-// which sends the whole URI as the model name and drops the api_key —
-// the provider then 404s and kit maps that to the misleading
-// "model not available". Kit's Resolve already reads api_key and
-// base_url out of the URI's query params, so the caller keeps full
-// control of both.
+// A URI-shaped value is never re-wrapped the way the bare-id path is:
+// that yields "openai://openai://<model>?api_key=...", which sends the
+// whole URI as the model name and drops the api_key — the provider then
+// 404s and kit maps that to the misleading "model not available". Kit's
+// Resolve already reads api_key and base_url out of the URI's query
+// params, so the caller keeps full control of both; foo only appends
+// the scheme's key when the URI names none (see injectURIKey).
 func newClientFromModel(model string, maxTokens int) (*Client, error) {
 	uri, guessed, err := resolveURIForModel(model)
 	if err != nil {
@@ -223,9 +223,48 @@ func buildURI(scheme, model, envVar string) (string, error) {
 	}
 	key := lookupAPIKey(envVar)
 	if key == "" {
-		return "", output.UnauthorizedError(fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar))
+		return "", missingKeyError(envVar, model, scheme)
 	}
 	return fmt.Sprintf("%s://%s%sapi_key=%s", scheme, model, querySep(model), key), nil
+}
+
+// injectURIKey appends the scheme's API key to a URI-form --model value
+// that names none.
+//
+// Kit's Resolve takes the key from the URI's api_key param and nowhere
+// else, so a URI passed through bare reached the provider with no
+// Authorization header ("openrouter://..." → 401 "Missing
+// Authentication header"). The key comes from the same lookup and the
+// same precheck as a bare id's, so the two spellings of one model
+// behave alike.
+//
+// Left untouched: a URI that already carries api_key (the caller's
+// choice outranks the environment), a local scheme (no credential), and
+// a scheme foo has no entry for or a URI kit cannot parse — kit reports
+// those itself, more accurately than a missing-key error would.
+func injectURIKey(uri string) (string, error) {
+	parsed, err := kitllm.ParseURI(uri)
+	if err != nil {
+		return uri, nil
+	}
+	if _, explicit := parsed.Params["api_key"]; explicit {
+		return uri, nil
+	}
+	envVar := envVarForScheme(parsed.Scheme)
+	if envVar == "" {
+		return uri, nil
+	}
+	key := lookupAPIKey(envVar)
+	if key == "" {
+		return "", missingKeyError(envVar, parsed.Model, parsed.Scheme)
+	}
+	return uri + querySep(uri) + "api_key=" + key, nil
+}
+
+// missingKeyError is the precheck failure every path shares, so a bare
+// id, a URI and a pool pick all name the variable to set the same way.
+func missingKeyError(envVar, model, scheme string) error {
+	return output.UnauthorizedError(fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, model, scheme, envVar))
 }
 
 // querySep returns the separator that appends a param to s: "?" when s
@@ -281,7 +320,8 @@ func applyConfiguredBaseURL(uri string) string {
 // spelled the scheme out.
 func resolveURIForModel(model string) (uri string, guessed bool, err error) {
 	if modelIsURI(model) {
-		return model, false, nil
+		uri, err := injectURIKey(model)
+		return uri, false, err
 	}
 	scheme, envVar, guessed := schemeForModel(model)
 	if scheme == "routellm" {
@@ -387,30 +427,65 @@ func schemeForModel(model string) (scheme, envVar string, guessed bool) {
 	case strings.HasPrefix(model, "router-"):
 		return "routellm", "", false
 	default:
-		// Unknown prefix — assume openai-compatible (openrouter, groq, etc.).
+		// Unknown prefix — assume an OpenAI-compatible endpoint on the
+		// openai scheme, so OPENAI_API_KEY is the key it takes. Hosted
+		// gateways (openrouter, groq, ...) are reached by naming their
+		// scheme in a URI, which uses that scheme's own key.
 		return "openai", "OPENAI_API_KEY", true
 	}
 }
 
-// envVarForScheme returns the env var holding the API key for a scheme.
-// Used on the picker path, where the scheme comes from the registry
-// rather than a model-id prefix guess.
+// schemeKeyEnv maps every kit scheme foo links an adapter for to the env
+// var holding that provider's API key. "" marks a local runtime that
+// takes no credential. Names are each provider's documented variable
+// (the same ones the aim catalog lists). lookupAPIKey lowercases them
+// into the secret-store key (openrouter_api_key), so a configured
+// secret backend and a plain `export OPENROUTER_API_KEY=` both resolve.
+//
+// The OpenAI-compatible gateways get their own variables. They used to
+// fall through to OPENAI_API_KEY, which made an OpenRouter user store an
+// OpenRouter key where a real OpenAI key belongs — and sent a real
+// OpenAI key to OpenRouter when both were meant to coexist.
+//
+// google and gemini are one adapter under two names; foo has always
+// read GOOGLE_API_KEY for it. lmstudio is a local server and, like
+// ollama, is not prechecked.
+//
+// [TestEnvVarForScheme_CoversEveryKitScheme] fails when kit registers a
+// scheme missing here, so a new adapter gets a deliberate entry rather
+// than a silent default.
+var schemeKeyEnv = map[string]string{
+	"openai":     "OPENAI_API_KEY",
+	"anthropic":  "ANTHROPIC_API_KEY",
+	"google":     "GOOGLE_API_KEY",
+	"gemini":     "GOOGLE_API_KEY",
+	"openrouter": "OPENROUTER_API_KEY",
+	"groq":       "GROQ_API_KEY",
+	"xai":        "XAI_API_KEY",
+	"together":   "TOGETHER_API_KEY",
+	"fireworks":  "FIREWORKS_API_KEY",
+	"deepseek":   "DEEPSEEK_API_KEY",
+	"mistral":    "MISTRAL_API_KEY",
+	"lmstudio":   "",
+	"ollama":     "",
+	"routellm":   "",
+}
+
+// envVarForScheme returns the env var holding the API key for a scheme
+// the caller named — a pool pick, or a URI-form --model. "" means no
+// precheck.
+//
+// A scheme absent from schemeKeyEnv gets "", not OPENAI_API_KEY: foo
+// cannot know that provider's credential, and lending it the OpenAI key
+// would send that key to a host that is not OpenAI. Such a scheme is one
+// kit does not register either, so Resolve rejects it with a
+// provider-not-found error that names the real problem.
+//
+// Only the *guessed* bare-id arm of schemeForModel uses OPENAI_API_KEY
+// for an unrecognised id, and that is correct there: the request goes
+// to the openai scheme.
 func envVarForScheme(scheme string) string {
-	switch scheme {
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	case "google":
-		return "GOOGLE_API_KEY"
-	case "ollama", "routellm":
-		return ""
-	default:
-		// Unknown scheme registered in the pool — assume openai-
-		// compatible. Most aggregators (openrouter, groq, together)
-		// fall through here.
-		return "OPENAI_API_KEY"
-	}
+	return schemeKeyEnv[scheme]
 }
 
 // PickFromPool exposes the pool picker behind foo's package boundary

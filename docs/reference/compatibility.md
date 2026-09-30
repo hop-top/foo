@@ -84,10 +84,13 @@ at the endpoint with `providers.<scheme>.base_url` in `llm.yaml`,
 the `LLM_BASE_URL` env var, or a `?base_url=` param on `--model`
 — in that order of increasing precedence.
 
-Unknown model schemes fall back to the OpenAI scheme, so the same
-path serves hosted gateways such as OpenRouter, Groq, and
-Together. `OPENAI_API_KEY` must be non-empty; servers that do not
-authenticate ignore its value.
+Bare model ids that match no known prefix fall back to the OpenAI
+scheme, which is how a self-hosted server is reached.
+`OPENAI_API_KEY` must be non-empty; servers that do not
+authenticate ignore its value. Hosted gateways such as OpenRouter,
+Groq and Together have their own schemes and keys
+(`openrouter://…` with `OPENROUTER_API_KEY`, …); see
+[provider keys](config.md#provider-keys).
 
 See [use a local endpoint](../how-to/use-a-local-endpoint.md).
 

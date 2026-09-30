@@ -26,7 +26,9 @@ You need:
 - foo built from a recent commit with kit's pool routing primitives
   (`hop.top/kit v0.4.0-alpha.7` or later).
 - A provider key per model you plan to route to
-  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`).
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`,
+  `OPENROUTER_API_KEY`, …; a pool entry uses its scheme's
+  [own variable](../reference/config.md#provider-keys)).
 - For RouteLLM only: a RouteLLM server reachable at
   `http://localhost:6060` or wherever `ROUTELLM_BASE_URL` points.
 
