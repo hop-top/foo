@@ -231,6 +231,11 @@ func TestAuthIndex_SchemeSpellingsExistInCatalog(t *testing.T) {
 		if known[scheme] || schemeProviderAliases[scheme] != "" {
 			continue
 		}
+		// A local runtime declared keyless in schemeKeyEnv is not the
+		// hosted twin a prefix match finds (ollama vs ollama-cloud).
+		if env, declared := schemeKeyEnv[scheme]; declared && env == "" {
+			continue
+		}
 		// No exact record and no alias. If some catalog id merely
 		// spells the same provider differently, an alias is missing and
 		// foo will claim the provider needs no key.
