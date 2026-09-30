@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"hop.top/aim"
+	kitllm "hop.top/kit/go/ai/llm"
 )
 
 // fixtureCatalog is a CatalogSource that returns canned rows, so ranking
@@ -228,16 +229,15 @@ func TestEntryFromAim_ProjectsFields(t *testing.T) {
 	})
 }
 
-// TestRoutableProviders_DerivedFromKit guards against the set being
-// hardcoded: it must track kit's registered schemes.
-func TestRoutableProviders_DerivedFromKit(t *testing.T) {
-	got := routableProviders()
-	for _, want := range []string{"openai", "anthropic", "google"} {
-		if !got[want] {
-			t.Errorf("scheme %q registered in kit but missing from routable set", want)
+// TestRoutable_DerivedFromKit guards against the set being hardcoded:
+// it must track kit's registered schemes and the aliases kit resolves.
+func TestRoutable_DerivedFromKit(t *testing.T) {
+	for _, want := range append(kitllm.Schemes(), "fireworks-ai", "togetherai") {
+		if !routable(want) {
+			t.Errorf("kit serves %q but it is not routable", want)
 		}
 	}
-	if got["definitely-not-a-scheme"] {
+	if routable("definitely-not-a-scheme") {
 		t.Error("unregistered scheme reported routable")
 	}
 }

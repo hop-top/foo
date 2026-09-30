@@ -335,7 +335,7 @@ func TestBuildClient_PoolPickReachesConfiguredEndpoint(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	writeLLMYAML(t, "providers:\n  openai:\n    base_url: "+ep.srv.URL+"/v1\n")
 
-	client, err := buildClient(context.Background(), nil, "openai", "picked-model", "OPENAI_API_KEY", 0)
+	client, err := buildClient(context.Background(), nil, "openai", "picked-model", 0)
 	if err != nil {
 		t.Fatalf("buildClient: %v", err)
 	}

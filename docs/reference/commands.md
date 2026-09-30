@@ -226,16 +226,17 @@ credential (a local runtime) or have an API key a run would find.
 Everything else is hidden, and a stderr footer reports the count and
 names `--all`.
 
-For a provider foo has an adapter for, "a key a run would find" is
-the run's own key check: the scheme's variable (through the secret
-store, then the environment), `LLM_API_KEY`, or
-`providers.<scheme>.api_key` in llm.yaml
-([key precedence](config.md#key-precedence)). The check reads one
-variable per scheme — `GOOGLE_API_KEY` for `google`, not the
-catalog's `GEMINI_API_KEY` alternative — and asks nothing of a local
-runtime (`ollama`, `lmstudio`, `routellm`), even where the catalog
-lists a key for it. Other catalog providers use the env var names the
-catalog publishes, any one of which is enough.
+A provider has an adapter when kit serves its id as a scheme:
+registered (`openai`), under an alias (`fireworks-ai`,
+`togetherai`), or, for a provider in the cached catalog, through the
+protocol it speaks (most are OpenAI-compatible). "A key a run would
+find" is the run's own key check, made through kit:
+`providers.<scheme>.api_key` in llm.yaml, the provider's key names
+(through the secret store, then the environment — `GOOGLE_API_KEY`
+then `GEMINI_API_KEY` for `google`), or `LLM_API_KEY`
+([key precedence](config.md#key-precedence)). A local runtime
+(`ollama`, `lmstudio`, `routellm`) needs no key, even where the
+catalog lists one for it.
 
 `--all` disables that filtering. It widens the candidate set rather
 than replacing the narrowing filters, so it combines with
@@ -291,22 +292,25 @@ Inspect configured LLM providers.
 | Status | Meaning |
 |--------|---------|
 | `available` | The provider needs no credential (a local runtime). |
-| `configured` | A run would find a key: the scheme's own, `LLM_API_KEY`, or llm.yaml. |
+| `configured` | A run would find a key: llm.yaml, the scheme's own, or `LLM_API_KEY`. |
 | `missing` | No key from any of those sources. |
 
-The verdict is the one `foo model list` filters on, and for a scheme
-foo links an adapter for it is the run's own key check, so a
+The verdict is the one `foo model list` filters on, and for a
+provider an adapter serves it is the run's own key check, so a
 `missing` provider is one whose models the default listing hides and
-whose runs fail the key check. `secret_key` names the provider's own
-secret-store key — the one to set to give it a key of its own. With
+whose runs fail the key check. `<scheme>` may be a kit scheme
+(`gemini`) or a catalog provider id (`fireworks-ai`). `secret_key`
+names the provider's own secret-store key — the one that resolved,
+else the first to set to give it a key of its own. With
 `--format json` or `yaml`, `key_source` says where a `configured`
-key was found; the key itself is never printed:
+key was found (the source a run uses, highest precedence first);
+the key itself is never printed:
 
 | `key_source` | Key found in |
 |--------------|--------------|
+| `llm.yaml` | `providers.<scheme>.api_key` in `$XDG_CONFIG_HOME/hop/llm.yaml` |
 | `secret_key` | The secret store, or the env var `secret_key` maps to |
 | `LLM_API_KEY` | The universal `LLM_API_KEY` variable |
-| `llm.yaml` | `providers.<scheme>.api_key` in `$XDG_CONFIG_HOME/hop/llm.yaml` |
 
 ## `tool`
 

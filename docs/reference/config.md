@@ -61,10 +61,11 @@ listing reports as configured is the key a run uses.
 
 A provider's key is stored under its env var's name in lowercase
 (`openrouter_api_key` for `OPENROUTER_API_KEY`). The store is
-asked first, then the env var itself
-([key precedence](#key-precedence)). The default `env` backend
-maps the name straight back to `OPENROUTER_API_KEY`. With
-`prefix: FOO_` it reads `FOO_OPENROUTER_API_KEY` first.
+asked under each of the provider's key names first, then the env
+vars of those names ([key precedence](#key-precedence)). The default `env`
+backend maps the name straight back to `OPENROUTER_API_KEY`. With
+`prefix: FOO_` it reads `FOO_OPENROUTER_API_KEY` first. A backend
+error counts as "not in the store": the env var still answers.
 
 If foo cannot open the configured backend, it warns on stderr
 (`secrets.store.unavailable`) and reads keys from env vars only.
@@ -121,7 +122,8 @@ fallback:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `default` | string | URI used when no model is specified. Overridden by `LLM_PROVIDER` env. |
-| `providers.<scheme>.api_key` | string | Provider key for that scheme only; satisfies foo's key precheck. Lowest precedence: the scheme's env var (e.g. `OPENAI_API_KEY`) and `LLM_API_KEY` override it ([key precedence](#key-precedence)). |
+| `providers.<scheme>.api_key` | string | Provider key for that scheme only; satisfies foo's key precheck. Outranks the scheme's env var (e.g. `OPENAI_API_KEY`), the secret store and `LLM_API_KEY`; only `?api_key=` on the URI beats it ([key precedence](#key-precedence)). |
+| `providers.<scheme>.api_key_env` | string | Name of the variable holding that scheme's key, for a key kept under another name (`MY_OR_KEY`). Looked up before the scheme's own names, in the secret store and the environment ([key precedence](#key-precedence)). |
 | `providers.<scheme>.base_url` | string | Custom base URL for that scheme: bare id, URI-form `--model`, pool pick and fallback entries alike. Overridden by `LLM_BASE_URL` (primary's scheme only) and by a `?base_url=` param on the URI ([base URL precedence](#base-url-precedence)). See [use a local endpoint](../how-to/use-a-local-endpoint.md). |
 | `providers.<scheme>.model` | string | Default model for this scheme; URI model wins when set. |
 | `providers.routellm.routellm.base_url` | string | RouteLLM server URL. Overridden by `ROUTELLM_BASE_URL`. |
@@ -134,7 +136,7 @@ fallback:
 | `pool[].model` | string | Model id as it appears on models.dev. |
 | `pool[].enabled` | bool | Default `true`. Set `false` to keep the entry but mute it. |
 | `pool[].weight` | float | Default `1.0`. Reserved for future load-distribution policy. |
-| `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. Each entry gets its own scheme's key, resolved as for the primary model ([key precedence](#provider-keys)); an entry whose key is missing is dropped with one stderr warning, and the run continues. Each entry also gets its scheme's configured base URL ([base URL precedence](#base-url-precedence)). |
+| `fallback` | list of URIs | Tried in order on retriable primary failure. Overridden by `LLM_FALLBACK` env. Each entry gets its own scheme's key, resolved as for the primary model ([key precedence](#key-precedence)); an entry whose key is missing is dropped with one stderr warning, and the run continues. Each entry also gets its scheme's configured base URL ([base URL precedence](#base-url-precedence)). |
 
 End-to-end walkthrough:
 [how-to: route across models](../how-to/route-across-models.md).
@@ -147,51 +149,71 @@ End-to-end walkthrough:
 |----------|--------|--------------|
 | `ANTHROPIC_API_KEY` | `anthropic` | Claude models |
 | `OPENAI_API_KEY` | `openai` | GPT/o-series models, all embeddings, and bare model ids foo does not recognise (sent to the `openai` scheme, e.g. a [local endpoint](../how-to/use-a-local-endpoint.md)) |
-| `GOOGLE_API_KEY` | `google`, `gemini` | Gemini models |
+| `GOOGLE_API_KEY`, then `GEMINI_API_KEY` | `google`, `gemini` | Gemini models |
 | `OPENROUTER_API_KEY` | `openrouter` | OpenRouter models (`openrouter://<vendor>/<model>`) |
 | `GROQ_API_KEY` | `groq` | Groq models |
 | `XAI_API_KEY` | `xai` | xAI (Grok) models |
-| `TOGETHER_API_KEY` | `together` | Together AI models |
-| `FIREWORKS_API_KEY` | `fireworks` | Fireworks AI models |
+| `TOGETHER_API_KEY` | `together`, `togetherai` | Together AI models |
+| `FIREWORKS_API_KEY` | `fireworks`, `fireworks-ai` | Fireworks AI models |
 | `DEEPSEEK_API_KEY` | `deepseek` | DeepSeek hosted models |
 | `MISTRAL_API_KEY` | `mistral` | Mistral hosted models |
+| `OLLAMA_API_KEY`, `ROUTELLM_API_KEY` | `ollama`, `routellm` | Optional: sent when set (an authenticating proxy), never required |
 
-Each scheme reads its own variable. An OpenRouter or Groq
-model never borrows `OPENAI_API_KEY`, so a real OpenAI key is
-never sent to another provider. `ollama`, `lmstudio` and
-`routellm` are local and take no key.
+Kit decides which variables a scheme reads (`kitllm.ApplyAPIKey`);
+foo passes the scheme through. Each scheme reads its own
+variables. An OpenRouter or Groq model never borrows
+`OPENAI_API_KEY`, so a real OpenAI key is never sent to another
+provider. `ollama`, `lmstudio` and `routellm` are local and need
+no key.
+
+A models.dev provider id works as a scheme too, with the
+provider's own key: `fireworks-ai://...` and `togetherai://...`
+reach the `fireworks` and `together` adapters, and any other
+catalog provider speaking an OpenAI-compatible protocol reaches
+the `openai` adapter at the catalog's base URL, reading the key
+variable the catalog lists (`digitalocean://...` reads
+`DIGITALOCEAN_ACCESS_TOKEN`). Catalog facts come from the cached
+catalog only (`foo model list` fetches it when stale, `--refresh`
+forces it); a run never fetches it. Without a cached catalog, only the schemes above and
+their aliases resolve.
 
 #### Key precedence
 
-For a keyed scheme, foo resolves the key in this order and stops
-at the first hit:
+For a keyed scheme, foo resolves the key through kit
+(`kitllm.ApplyAPIKey`) in this order and stops at the first hit:
 
 | # | Source | Example |
 |---|--------|---------|
 | 1 | `?api_key=` on the URI | `-m 'openrouter://openai/gpt-4.1-nano?api_key=sk-or-...'` |
-| 2 | The scheme's own key: secret store, then env var | `OPENROUTER_API_KEY` |
-| 3 | `LLM_API_KEY` | universal key |
-| 4 | `providers.<scheme>.api_key` in `$XDG_CONFIG_HOME/hop/llm.yaml` | `providers: {openrouter: {api_key: sk-or-...}}` |
+| 2 | `providers.<scheme>.api_key` in `$XDG_CONFIG_HOME/hop/llm.yaml` | `providers: {openrouter: {api_key: sk-or-...}}` |
+| 3 | The scheme's key names — the variable `providers.<scheme>.api_key_env` names first, then the scheme's own — looked up in the secret store, then in the environment | `OPENROUTER_API_KEY`; `GOOGLE_API_KEY` then `GEMINI_API_KEY`; `providers: {openrouter: {api_key_env: MY_OR_KEY}}` |
+| 4 | `LLM_API_KEY` | universal key |
 
-This mirrors kit: kit's `Resolve` sends only the URI's
-`api_key`, so foo appends the resolved key to the URI and the
-key it prechecks is the key sent. Tiers 2–3 follow kit's
-`SecretFor` order (provider key before `LLM_API_KEY`); tiers 3–4
-are read through kit's `LoadConfig`, whose merge layers
-`LLM_API_KEY` over the file. A file key belongs to its scheme:
+Kit's `Resolve` sends only the URI's `api_key`, so foo appends
+the resolved key to the URI and the key it prechecks is the key
+sent. A file key belongs to its scheme:
 `providers.openai.api_key` never satisfies an `openrouter` model.
+An alias scheme without a block of its own uses its adapter's
+(`fireworks-ai://` reads `providers.fireworks`).
 
 `LLM_API_KEY` is not tied to a provider: it goes to every keyed
-scheme that has no key of its own, fallback entries included
-(kit's `LoadConfig` applies it to every URI). With more than one
-provider in play, prefer per-scheme variables so one provider's
-key is never sent to another host.
+scheme that has no key of its own, fallback entries included. It
+is never sent to a local runtime (`ollama`, `lmstudio`,
+`routellm`). With more than one provider in play, prefer
+per-scheme variables so one provider's key is never sent to
+another host.
+
+Earlier foo versions ranked the llm.yaml key last, below the env
+var and `LLM_API_KEY`; it now outranks both. `google`/`gemini`
+also accept `GEMINI_API_KEY`, and a set `OLLAMA_API_KEY` /
+`ROUTELLM_API_KEY` is sent to that runtime.
 
 The same key applies whether you pick the model by bare id, by
 pool, or as a URI: `-m 'openrouter://openai/gpt-4.1-nano'` gets
 `OPENROUTER_API_KEY` appended. A URI that already carries
 `?api_key=` is sent as written. A missing key fails before any
-request with `missing OPENROUTER_API_KEY for model "..."`.
+request (exit 5) with `missing OPENROUTER_API_KEY for model
+"..."`, naming the highest-precedence variable.
 
 Fallback entries (`LLM_FALLBACK`, llm.yaml `fallback:`) get their
 own scheme's key the same way. A fallback whose key is missing is
@@ -201,7 +223,8 @@ and foo warns once on stderr:
 fallback=openrouter://... missing=OPENROUTER_API_KEY`.
 
 `foo provider show <scheme>` reports each scheme's expected key
-and whether foo can see it.
+and whether a run would find it; it takes a catalog provider id
+(`fireworks-ai`) as well as a scheme.
 
 #### Base URL precedence
 

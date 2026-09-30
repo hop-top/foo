@@ -347,7 +347,13 @@ foo -m 'openrouter://openai/gpt-4.1-nano' "hello"
 
 `groq`, `xai`, `together`, `fireworks`, `deepseek` and `mistral`
 work the same way, each with its own
-[key variable](../reference/config.md#provider-keys).
+[key variable](../reference/config.md#provider-keys). So does a
+provider id from `foo model list`, used as the scheme:
+
+```sh
+export FIREWORKS_API_KEY=fw-...
+foo -m 'fireworks-ai://accounts/fireworks/models/<id>' "hello"
+```
 
 ### Local and self-hosted models
 

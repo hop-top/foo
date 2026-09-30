@@ -735,8 +735,8 @@ func providerCmd() *cobra.Command {
 		Use:   "provider",
 		Short: "Inspect configured LLM providers",
 		Long: `Inspect which LLM providers are compiled in and whether a run would
-find the API key they expect: the scheme's own key (secret store, then
-env var), LLM_API_KEY, or providers.<scheme>.api_key in llm.yaml.`,
+find the API key they expect: providers.<scheme>.api_key in llm.yaml,
+the provider's own key (secret store, then env var), or LLM_API_KEY.`,
 	}
 
 	listCmd := &cobra.Command{
@@ -1132,10 +1132,9 @@ func newUpgradeChecker() *upgrade.Checker {
 // providerAuthRequirement reports what credential a provider scheme
 // needs and whether this machine has it.
 //
-// The requirement comes from aim's provider census, the same source
-// `foo model list` filters on — not from a hand-maintained switch over
-// scheme names — and for a scheme foo links an adapter for, the run's
-// own key precheck has the final say (see llm.AuthIndex). The switch
+// The answer is the run's own key resolution (kit's, see
+// llm.AuthIndex), the same one `foo model list` filters on — not a
+// hand-maintained switch over scheme names. The switch
 // this replaced enumerated four providers and answered "available",
 // i.e. needs no auth, for everything else, so
 // `foo provider show groq` reported a provider that will 401 on first
@@ -1148,17 +1147,16 @@ func providerAuthRequirement(ctx context.Context, scheme string) (llm.ProviderAu
 	if err != nil {
 		return llm.ProviderAuth{}, err
 	}
-	// LookupScheme, not Lookup: kit's scheme names and models.dev's
-	// provider ids disagree for a few providers, and a bare lookup
-	// would find no record and report a provider that plainly needs a
-	// key as needing none.
-	return auth.LookupScheme(scheme), nil
+	// A kit scheme ("gemini", "fireworks") or a catalog provider id
+	// ("fireworks-ai") alike: the index answers as a run naming it as
+	// its scheme would.
+	return auth.Lookup(scheme), nil
 }
 
 // providerAuthIndex is the shared credential resolver, and a package
 // var so a test can pin it without a models.dev fetch or a real secret
 // store. `foo model list` reaches the same construction through
-// modelAuthIndex; both read the requirement from aim and the key from
+// modelAuthIndex; both resolve keys through kit, as a run does, with
 // secretStore — the store a run's precheck reads — so neither surface
 // can call a key configured that a run would refuse, or missing one it
 // would use.
@@ -1230,8 +1228,9 @@ type providerStatus struct {
 	Scheme    string `json:"scheme" yaml:"scheme" table:"SCHEME,priority=9"`
 	AuthType  string `json:"auth_type" yaml:"auth_type" table:"AUTH,priority=7"`
 	SecretKey string `json:"secret_key,omitempty" yaml:"secret_key,omitempty"`
-	// KeySource names where a configured key was found: secret_key
-	// (the store, or the env var it maps to), LLM_API_KEY, or llm.yaml.
+	// KeySource names where a configured key was found: llm.yaml,
+	// secret_key (the store, or the env var of that name), or
+	// LLM_API_KEY.
 	// Never the key itself.
 	KeySource string `json:"key_source,omitempty" yaml:"key_source,omitempty"`
 	Status    string `json:"status" yaml:"status" table:"STATUS,priority=8"`

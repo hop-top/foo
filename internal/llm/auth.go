@@ -11,71 +11,42 @@
 // require an API key and were all told they needed none. A filter built
 // on that switch would keep exactly the providers it is wrong about.
 //
-// aim already carries the authoritative data. Every provider in the
-// models.dev census declares the env var names it accepts
-// (aim.Provider.Env), including the multi-alternative cases — google
-// accepts GOOGLE_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY or
-// GEMINI_API_KEY, any one of which is enough. So the requirement is read
-// from the catalog rather than restated here, and a provider foo has
-// never heard of is described correctly the day models.dev adds it.
+// The answer is now the run's own: for any provider a kit adapter
+// serves — registered scheme, catalog alias ("fireworks-ai") or catalog
+// protocol route — the index makes the same kitllm.ApplyAPIKey call a
+// run makes, against the same secret store, and reports its outcome.
+// Key variables, their order, llm.yaml's api_key / api_key_env,
+// LLM_API_KEY and local runtimes are all kit's; the listing and
+// `foo provider show` therefore cannot call "missing" a key a run would
+// use, nor "configured" one it would refuse.
 //
-// The one thing aim cannot answer is whether the key is *present*, since
-// foo's secret store may be a keyring rather than the environment. That
-// half reads the secret store the caller supplies — the same store a
-// run is handed — so a user with a keyring backend is never told their
-// configured key is missing.
-//
-// For a scheme foo links an adapter for, the catalog is not the last
-// word: a run's key precheck is. It reads one variable per scheme (not
-// the catalog's alternatives), also accepts LLM_API_KEY and llm.yaml's
-// providers.<scheme>.api_key, and asks nothing of a local runtime the
-// catalog lists a key for (lmstudio). Those schemes are therefore
-// answered by the precheck's own chain, resolveSchemeKey, so the
-// listing and `foo provider show` cannot call "missing" a key a run
-// would use, nor "configured" one it would refuse.
+// A catalog provider no adapter serves cannot be run at all; for it the
+// index reads the variables aim lists, so `provider show` still names
+// what that provider would want.
 
 package llm
 
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"hop.top/aim"
 	"hop.top/kit/go/storage/secret"
 )
-
-// SecretName maps an aim env var name onto the key foo's secret store
-// knows it by.
-//
-// aim publishes upstream env var names in upstream form: OPENAI_API_KEY.
-// foo's secret store is keyed in lowercase — `openai_api_key` — which is
-// what root.go's provider switch has always used and what
-// `foo secret set` writes. The env backend closes the loop by
-// uppercasing on read (prefix + strings.ToUpper(key)), so the lowercase
-// name round-trips to the same OPENAI_API_KEY an operator exported,
-// while a keyring backend sees the lowercase name the rest of foo uses.
-// Lowercasing is therefore the whole mapping, and doing it in one named
-// function is what keeps the two directions from drifting.
-func SecretName(envVar string) string {
-	return strings.ToLower(strings.TrimSpace(envVar))
-}
 
 // ProviderAuth describes one provider's credential requirement and
 // whether this machine satisfies it.
 type ProviderAuth struct {
 	// Provider is the provider id ("openai", "groq").
 	Provider string
-	// EnvVars are the env var names the provider's key is read from:
-	// for a scheme foo links an adapter for, the one its precheck
-	// reads; otherwise the alternatives aim lists, in its order. Empty
-	// means the provider needs no credential at all.
+	// EnvVars are the env var names the provider's key is read from,
+	// highest precedence first: kit's for a provider an adapter serves,
+	// otherwise the alternatives aim lists. Empty when the provider
+	// takes no key of its own.
 	EnvVars []string
 	// SecretKey is the secret-store name of the provider's own key:
-	// for an adapter scheme, the one its precheck reads, whatever
-	// source satisfied it (see Source); for a catalog-only provider,
-	// the alternative that resolved, or the first one when none did.
-	// Either way it names something concrete to set. Empty when no
+	// the name that resolved when one did, otherwise the first one, so
+	// it always names something concrete to set. Empty when no
 	// credential is required.
 	SecretKey string
 	// Required reports whether any credential is needed. False for a
@@ -135,19 +106,24 @@ func (a ProviderAuth) AuthType() string {
 	return "local"
 }
 
-// AuthIndex answers the credential question for any provider id.
+// AuthIndex answers the credential question for any provider id or kit
+// scheme.
 //
 // It is built once per command run rather than queried per row: a
 // listing touches thousands of rows across hundreds of providers, and a
 // keyring-backed secret store charges real latency per lookup. The index
-// resolves each distinct provider exactly once.
+// resolves each distinct name exactly once.
 type AuthIndex struct {
-	// byProvider is keyed by catalog provider id.
-	byProvider map[string]ProviderAuth
-	// byScheme holds the adapter schemes with a catalog record, each
-	// resolved under its own scheme name — gemini reads
-	// providers.gemini in llm.yaml, not the google record's block.
-	byScheme map[string]ProviderAuth
+	// byName holds every catalog provider id, each resolved under its
+	// own name as a run naming it as its scheme would: fireworks-ai
+	// reads providers.fireworks-ai in llm.yaml, then (kit's alias rule)
+	// providers.fireworks.
+	byName map[string]ProviderAuth
+	// catalog marks the catalog provider ids, the names listing rows
+	// carry.
+	catalog map[string]bool
+	// store answers names the catalog does not list (Lookup).
+	store secret.Store
 }
 
 // NewAuthIndex resolves every catalog provider's credential state.
@@ -155,10 +131,8 @@ type AuthIndex struct {
 // reg nil means foo's shared aim registry — the same one the listing
 // reads, so the providers described here are exactly the providers the
 // rows came from. store is foo's configured secret store, the one a
-// run's precheck reads (ClientOpts.Secrets). store nil means "no secret
-// store": a catalog-only provider's credential reports missing, which
-// is the correct reading of "foo cannot consult a store"; an adapter
-// scheme still resolves through the rest of the precheck's chain.
+// run's precheck reads (ClientOpts.Secrets); nil means none, and keys
+// then come from llm.yaml and the environment, as for a run.
 //
 // A registry read failure is returned rather than swallowed. Guessing
 // that nothing is configured would hide every model in the default view
@@ -179,63 +153,55 @@ func NewAuthIndex(ctx context.Context, reg *aim.Registry, store secret.Store) (*
 }
 
 // NewAuthIndexFrom builds an index from an explicit provider→env-vars
-// map, bypassing aim. It is the seam tests use to pin the predicate
-// without a models.dev fetch, and the constructor a future non-aim
-// provider source would call.
-//
-// An adapter scheme is resolved through the precheck's chain only when
-// the map carries its provider record, so a provider absent from the
-// map keeps meaning "declares no requirement".
+// map, bypassing the aim registry. It is the seam tests use to pin the
+// catalog without a models.dev fetch, and the constructor a future
+// non-aim provider source would call. The env vars are consulted only
+// for a provider no kit adapter serves; kit's key plan answers for the
+// rest.
 func NewAuthIndexFrom(ctx context.Context, envByProvider map[string][]string, store secret.Store) *AuthIndex {
 	idx := &AuthIndex{
-		byProvider: make(map[string]ProviderAuth, len(envByProvider)),
-		byScheme:   make(map[string]ProviderAuth, len(schemeKeyEnv)),
-	}
-	for scheme := range schemeKeyEnv {
-		if _, listed := envByProvider[catalogProviderFor(scheme)]; listed {
-			idx.byScheme[scheme] = resolveSchemeAuth(ctx, scheme, store)
-		}
+		byName:  make(map[string]ProviderAuth, len(envByProvider)),
+		catalog: make(map[string]bool, len(envByProvider)),
+		store:   store,
 	}
 	for id, env := range envByProvider {
-		if scheme, ok := adapterSchemeFor(id); ok {
-			got := idx.byScheme[scheme]
-			got.Provider = id
-			idx.byProvider[id] = got
-			continue
-		}
-		idx.byProvider[id] = resolveAuth(ctx, id, env, store)
+		idx.catalog[id] = true
+		idx.byName[id] = resolveProviderAuth(ctx, id, env, store)
 	}
 	return idx
 }
 
-// resolveSchemeAuth decides an adapter scheme's state the way a run's
-// precheck does: the scheme's one env var (none for a local runtime),
-// then resolveSchemeKey's chain over the same store, so a key the run
-// would find is never reported missing, nor one it would refuse
-// reported configured. Only the source is kept; the key value is
-// dropped here.
-func resolveSchemeAuth(ctx context.Context, scheme string, store secret.Store) ProviderAuth {
-	a := ProviderAuth{Provider: scheme}
-	envVar := envVarForScheme(scheme)
-	if envVar == "" {
+// resolveProviderAuth decides name's state. For a name a kit adapter
+// serves, that is the outcome of the key resolution a run on name would
+// make (resolveKeyStatus); only the source is kept, never the key.
+// Otherwise catalogEnv, aim's list, answers (resolveCatalogAuth).
+func resolveProviderAuth(ctx context.Context, name string, catalogEnv []string, store secret.Store) ProviderAuth {
+	st := resolveKeyStatus(ctx, store, name)
+	if !st.routed {
+		return resolveCatalogAuth(ctx, name, catalogEnv, store)
+	}
+	a := ProviderAuth{
+		Provider: name,
+		EnvVars:  st.key.EnvVars,
+		Required: !st.key.Optional && len(st.key.EnvVars) > 0,
+	}
+	if !a.Required {
 		return a
 	}
-	a.EnvVars = []string{envVar}
-	a.Required = true
-	a.SecretKey = SecretName(envVar)
-	if key, src := resolveSchemeKey(ctx, store, scheme+"://", envVar); key != "" {
+	a.SecretKey = st.secretKey
+	if st.found {
 		a.Configured = true
-		a.Source = src
+		a.Source = st.source
 	}
 	return a
 }
 
-// resolveAuth decides a catalog-only provider's state (adapter schemes
-// go through resolveSchemeAuth). A provider is satisfied when
-// *any one* of its env vars resolves: aim lists alternatives, not a
-// conjunction — google's three names are three spellings of one key, and
-// requiring all three would report every google user as unconfigured.
-func resolveAuth(ctx context.Context, provider string, envVars []string, store secret.Store) ProviderAuth {
+// resolveCatalogAuth decides the state of a catalog provider no kit
+// adapter serves. It is satisfied when *any one* of its env vars
+// resolves in the store: aim lists alternatives, not a conjunction —
+// three spellings of one key, and requiring all three would report
+// every user of it as unconfigured.
+func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, store secret.Store) ProviderAuth {
 	a := ProviderAuth{Provider: provider, EnvVars: envVars, Required: len(envVars) > 0}
 	if !a.Required {
 		return a
@@ -262,22 +228,24 @@ func resolveAuth(ctx context.Context, provider string, envVars []string, store s
 	return a
 }
 
-// Lookup returns the provider's credential state.
+// Lookup returns the credential state of a catalog provider id or a kit
+// scheme, as a run naming it as its scheme would find it. A name the
+// catalog does not list (a kit scheme such as gemini, whatever
+// `foo provider show` was given) is resolved on the spot.
 //
-// A provider the index has never heard of — one absent from the catalog,
-// such as a local ollama or llama.cpp that publishes no models.dev
-// entry — reports no requirement, and therefore Satisfied. That is the
-// deliberate reading: foo has no evidence a key is needed, and hiding a
-// locally served model behind a credential nobody asked for is the worse
-// error of the two.
+// A provider neither kit nor the catalog knows — a local ollama or
+// llama.cpp that publishes no models.dev entry — reports no requirement,
+// and therefore Satisfied. That is the deliberate reading: foo has no
+// evidence a key is needed, and hiding a locally served model behind a
+// credential nobody asked for is the worse error of the two.
 func (a *AuthIndex) Lookup(provider string) ProviderAuth {
 	if a == nil {
 		return ProviderAuth{Provider: provider}
 	}
-	if got, ok := a.byProvider[provider]; ok {
+	if got, ok := a.byName[provider]; ok {
 		return got
 	}
-	return ProviderAuth{Provider: provider}
+	return resolveProviderAuth(context.Background(), provider, nil, a.store)
 }
 
 // Satisfied is the row-level predicate: can foo authenticate to this
@@ -286,89 +254,17 @@ func (a *AuthIndex) Satisfied(provider string) bool {
 	return a.Lookup(provider).Satisfied()
 }
 
-// schemeProviderAliases maps a kit scheme name onto the catalog provider
-// id that carries its credential requirement, for the schemes where the
-// two spell the same provider differently.
-//
-// Without an entry a scheme finds no catalog record, which reads as "no
-// declared requirement" and reports "available" — the exact wrong answer
-// the hand-maintained switch used to give, re-introduced for a handful
-// of providers instead of two hundred. Each mapping below is a scheme
-// foo links an adapter for whose catalog id is spelled otherwise: kit
-// says "gemini", "fireworks", "together"; models.dev says "google",
-// "fireworks-ai", "togetherai".
-//
-// Schemes genuinely absent from the catalog need no entry and must not
-// get one. "routellm" is a local router with no upstream provider
-// record, and "available" is the truthful answer for it.
-// [TestAuthIndex_SchemeSpellingsExistInCatalog] is what keeps the two
-// cases apart as kit links new adapters.
-var schemeProviderAliases = map[string]string{
-	"gemini":    "google",
-	"fireworks": "fireworks-ai",
-	"together":  "togetherai",
-}
-
-// LookupScheme answers the credential question for a kit *scheme* name
-// rather than a catalog provider id, resolving the spellings where the
-// two disagree.
-//
-// It is a separate method from [Lookup] because the two callers hold
-// different things. A listing holds catalog rows, whose Provider is
-// already the catalog's own id, so translating would be a no-op at best
-// and a corruption at worst. `foo provider show` holds whatever the user
-// typed, which is a kit scheme.
-//
-// The result is reported under the name the caller passed. The alias is
-// an implementation detail of where the requirement was found, and
-// echoing "google" back at someone who asked about "gemini" would look
-// like a typo in foo rather than an answer.
-func (a *AuthIndex) LookupScheme(scheme string) ProviderAuth {
-	if a != nil {
-		if got, ok := a.byScheme[scheme]; ok {
-			return got
-		}
-	}
-	got := a.Lookup(catalogProviderFor(scheme))
-	got.Provider = scheme
-	return got
-}
-
-// catalogProviderFor returns the catalog provider id carrying a kit
-// scheme's record: its alias, or the scheme itself.
-func catalogProviderFor(scheme string) string {
-	if alias, ok := schemeProviderAliases[scheme]; ok {
-		return alias
-	}
-	return scheme
-}
-
-// adapterSchemeFor maps a catalog provider id onto the adapter scheme
-// whose precheck decides its key, if foo links one. An id that is itself
-// a scheme wins over an alias naming it (google is google, not gemini).
-func adapterSchemeFor(provider string) (string, bool) {
-	if _, ok := schemeKeyEnv[provider]; ok {
-		return provider, true
-	}
-	for scheme, alias := range schemeProviderAliases {
-		if alias == provider {
-			return scheme, true
-		}
-	}
-	return "", false
-}
-
-// ConfiguredProviders lists, sorted, the providers whose credential
-// requirement is met, from whichever source. It backs the "nothing is
-// reachable" guidance, which needs to distinguish "no keys at all" from
-// "keys, but none for the providers you filtered to".
+// ConfiguredProviders lists, sorted, the catalog providers whose
+// credential requirement is met, from whichever source. It backs the
+// "nothing is reachable" guidance, which needs to distinguish "no keys
+// at all" from "keys, but none for the providers you filtered to".
 func (a *AuthIndex) ConfiguredProviders() []string {
 	if a == nil {
 		return nil
 	}
 	var out []string
-	for id, auth := range a.byProvider {
-		if auth.Required && auth.Configured {
+	for id := range a.catalog {
+		if auth := a.byName[id]; auth.Required && auth.Configured {
 			out = append(out, id)
 		}
 	}

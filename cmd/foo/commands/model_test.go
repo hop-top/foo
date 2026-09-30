@@ -50,10 +50,10 @@ func withCatalog(t *testing.T, src llm.CatalogSource) {
 	withAuth(t, nil)
 }
 
-// withAuth pins the credential index for one test. envByProvider maps a
-// provider id to the env var names it accepts; a provider absent from
-// the map declares no requirement and is therefore satisfied. nil means
-// "no provider requires a credential", i.e. nothing is ever hidden.
+// withAuth pins the credential index for one test. envByProvider is the
+// catalog the index is built over (provider id to the env var names aim
+// lists); keys resolve through kit, as for a run. nil means "credentials
+// unknown" — a nil index — so nothing is ever hidden.
 //
 // Keys resolve from an explicit set rather than the process environment,
 // so a test says which credentials exist instead of inheriting the
@@ -85,6 +85,9 @@ func withAuth(t *testing.T, envByProvider map[string][]string, configured ...str
 	}
 	prev := providerAuthIndex
 	providerAuthIndex = func(ctx context.Context) (*llm.AuthIndex, error) {
+		if envByProvider == nil {
+			return nil, nil
+		}
 		return llm.NewAuthIndexFrom(ctx, envByProvider, store), nil
 	}
 	t.Cleanup(func() { providerAuthIndex = prev })
@@ -96,7 +99,8 @@ var keyEnvVars = []string{
 	"GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
 	"GROQ_API_KEY", "XAI_API_KEY", "TOGETHER_API_KEY", "FIREWORKS_API_KEY",
 	"DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "LMSTUDIO_API_KEY",
-	"LLM_API_KEY",
+	"OLLAMA_API_KEY", "ROUTELLM_API_KEY", "TRITON_API_KEY",
+	"DIGITALOCEAN_ACCESS_TOKEN", "LLM_API_KEY",
 }
 
 // sampleEntries returns n routable rows across two providers.
@@ -1534,9 +1538,9 @@ func TestProviderShow_AgreesWithModelList(t *testing.T) {
 	}
 }
 
-// TestProviderShow_GeminiAliasResolvesToGoogle covers the one scheme
-// whose kit name differs from its catalog id. A bare lookup would find
-// no record and call a provider that plainly needs a key "available".
+// TestProviderShow_GeminiAliasResolvesToGoogle covers a scheme whose kit
+// name differs from its catalog id. A bare catalog lookup would find no
+// record and call a provider that plainly needs a key "available".
 func TestProviderShow_GeminiAliasResolvesToGoogle(t *testing.T) {
 	withAuth(t, reachabilityEnv, "GOOGLE_API_KEY")
 
@@ -1601,14 +1605,13 @@ func runProviderShow(t *testing.T, scheme string) providerStatus {
 	return got
 }
 
-// TestProviderShow_ResolvesSchemeAliases proves `provider show` goes
-// through LookupScheme rather than a bare provider lookup.
+// TestProviderShow_ResolvesSchemeAliases proves `provider show` answers
+// for a kit scheme whose catalog id is spelled differently.
 //
-// A scheme whose catalog id is spelled differently would otherwise find
-// no record, read as "no declared requirement", and print "available" —
-// the same wrong answer the old four-case switch gave, just for fewer
-// providers. The alias table itself, and its completeness against the
-// live catalog, are pinned in internal/llm.
+// Such a scheme would otherwise find no record, read as "no declared
+// requirement", and print "available" — the same wrong answer the old
+// four-case switch gave, just for fewer providers. The aliases are
+// kit's (from aim); the index resolves each name as a run would.
 func TestProviderShow_ResolvesSchemeAliases(t *testing.T) {
 	withAuth(t, map[string][]string{
 		"google":       {"GOOGLE_API_KEY"},

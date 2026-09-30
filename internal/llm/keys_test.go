@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -29,7 +30,8 @@ var keyedSchemes = map[string]string{
 	"mistral":    "MISTRAL_API_KEY",
 }
 
-// localSchemes need no credential; foo must neither precheck nor inject.
+// localSchemes need no credential: no precheck, and nothing injected
+// unless the runtime's own optional key (OLLAMA_API_KEY, ...) is set.
 var localSchemes = []string{"ollama", "lmstudio", "routellm"}
 
 // clearProviderKeys empties every provider key variable so a developer's
@@ -39,44 +41,26 @@ func clearProviderKeys(t *testing.T) {
 	for _, v := range keyedSchemes {
 		t.Setenv(v, "")
 	}
+	for _, v := range keyEnvVars {
+		t.Setenv(v, "")
+		_ = os.Unsetenv(v)
+	}
 	t.Setenv("LLM_BASE_URL", "")
 	t.Setenv("LLM_FALLBACK", "")
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 }
 
-func TestEnvVarForScheme_PerProvider(t *testing.T) {
-	for scheme, want := range keyedSchemes {
-		if got := envVarForScheme(scheme); got != want {
-			t.Errorf("envVarForScheme(%q) = %q, want %q", scheme, got, want)
-		}
-	}
-	for _, scheme := range localSchemes {
-		if got := envVarForScheme(scheme); got != "" {
-			t.Errorf("envVarForScheme(%q) = %q, want no key (local)", scheme, got)
-		}
-	}
-}
-
-// TestEnvVarForScheme_NeverLendsOpenAIKey pins the fallback decision: a
-// scheme that is not openai never resolves to OPENAI_API_KEY, known or
-// not. Sending an OpenAI key to another host leaks it and cannot
-// authenticate there anyway.
-func TestEnvVarForScheme_NeverLendsOpenAIKey(t *testing.T) {
+// TestResolveURI_NeverLendsOpenAIKey: a scheme that is not openai never
+// receives OPENAI_API_KEY, known or not. Sending an OpenAI key to
+// another host leaks it and cannot authenticate there anyway.
+func TestResolveURI_NeverLendsOpenAIKey(t *testing.T) {
+	clearProviderKeys(t)
+	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	for _, scheme := range []string{"openrouter", "groq", "together", "no-such-scheme"} {
-		if got := envVarForScheme(scheme); got == "OPENAI_API_KEY" {
-			t.Errorf("envVarForScheme(%q) = OPENAI_API_KEY; a non-openai host must not receive the OpenAI key", scheme)
-		}
-	}
-}
-
-// TestEnvVarForScheme_CoversEveryKitScheme forces a decision for each
-// scheme kit registers. Without an entry a new adapter would get no key
-// at all, and the first sign would be a provider 401.
-func TestEnvVarForScheme_CoversEveryKitScheme(t *testing.T) {
-	for _, scheme := range kitllm.Schemes() {
-		if _, ok := schemeKeyEnv[scheme]; !ok {
-			t.Errorf("kit scheme %q has no entry in schemeKeyEnv; add its key env var (or \"\" for a local runtime)", scheme)
+		got, err := resolvedURIForModel(scheme + "://vendor/model")
+		if err == nil && strings.Contains(got, "fake-openai-key") {
+			t.Errorf("%s:// received OPENAI_API_KEY: %q", scheme, got)
 		}
 	}
 }
@@ -85,11 +69,19 @@ func TestEnvVarForScheme_CoversEveryKitScheme(t *testing.T) {
 // prefix is sent to the openai scheme, so OPENAI_API_KEY is the right
 // key for it — including an OpenRouter-shaped "vendor/model" id.
 func TestSchemeForModel_GuessedArmKeepsOpenAIKey(t *testing.T) {
+	clearProviderKeys(t)
+	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	for _, model := range []string{"openai/gpt-4.1-nano", "qwen3.6-colibri"} {
-		scheme, envVar, guessed := schemeForModel(model)
-		if scheme != "openai" || envVar != "OPENAI_API_KEY" || !guessed {
-			t.Errorf("schemeForModel(%q) = (%q, %q, %v), want (openai, OPENAI_API_KEY, true)",
-				model, scheme, envVar, guessed)
+		scheme, guessed := schemeForModel(model)
+		if scheme != "openai" || !guessed {
+			t.Errorf("schemeForModel(%q) = (%q, %v), want (openai, true)", model, scheme, guessed)
+		}
+		got, err := resolvedURIForModel(model)
+		if err != nil {
+			t.Fatalf("resolvedURIForModel(%q): %v", model, err)
+		}
+		if k := parseOrFatal(t, got).Params["api_key"]; k != "fake-openai-key" {
+			t.Errorf("%s: api_key = %q, want OPENAI_API_KEY's value", model, k)
 		}
 	}
 }
@@ -199,16 +191,16 @@ func TestResolveURI_URIForm_LocalSchemesUntouched(t *testing.T) {
 	}
 }
 
-// TestBuildURI_PickerSchemeUsesOwnKey covers the pool-picker path, where
-// the scheme comes from the registry and envVarForScheme names the key.
-func TestBuildURI_PickerSchemeUsesOwnKey(t *testing.T) {
+// TestApplyKey_PickerSchemeUsesOwnKey covers the pool-picker path, where
+// the scheme comes from the registry.
+func TestApplyKey_PickerSchemeUsesOwnKey(t *testing.T) {
 	clearProviderKeys(t)
 	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	t.Setenv("OPENROUTER_API_KEY", "fake-or-key")
 
-	got, err := buildURI(context.Background(), nil, "openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	got, err := applyKey(context.Background(), nil, "openrouter://openai/gpt-4.1-nano")
 	if err != nil {
-		t.Fatalf("buildURI: %v", err)
+		t.Fatalf("applyKey: %v", err)
 	}
 	parsed, err := kitllm.ParseURI(got)
 	if err != nil {

@@ -69,14 +69,15 @@ type ModelEntry struct {
 	// source publishes one. Lexicographic compare is a valid date
 	// compare for that layout, so ranking never parses it.
 	Released string
-	// Routable reports whether Provider matches a provider scheme
-	// compiled into this build of foo — i.e. whether foo has code
-	// that knows how to speak to it. The catalog lists every provider
-	// models.dev knows; only a minority are wired.
+	// Routable reports whether a kit adapter serves Provider used as a
+	// URI scheme — registered under that name, under a catalog alias
+	// ("fireworks-ai" for fireworks), or through the catalog protocol
+	// the provider speaks — i.e. whether `-m <provider>://<id>` has an
+	// adapter to go to. The catalog lists every provider models.dev
+	// knows; not all are wired.
 	//
-	// Routable is a property of the binary, not of the machine. It
-	// says nothing about credentials: foo is built with a google
-	// adapter whether or not a GOOGLE_API_KEY exists anywhere. The
+	// Routable says nothing about credentials: foo is built with a
+	// google adapter whether or not a GOOGLE_API_KEY exists anywhere. The
 	// credential half of "can I call this" is [AuthIndex], and the
 	// conjunction of the two is what [Reachable] means — see
 	// [FilterReachable] for why the two stayed separate fields.
@@ -157,11 +158,25 @@ func (c aimCatalog) ListModels(ctx context.Context) ([]ModelEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("foo: read model catalog: %w", err)
 	}
+	return entriesFromAim(models), nil
+}
+
+// entriesFromAim projects aim models onto rows, asking kit about each
+// distinct provider once rather than once per row.
+func entriesFromAim(models []aim.Model) []ModelEntry {
+	routes := make(map[string]bool)
 	out := make([]ModelEntry, 0, len(models))
 	for _, m := range models {
-		out = append(out, entryFromAim(m))
+		ok, seen := routes[m.Provider]
+		if !seen {
+			ok = routable(m.Provider)
+			routes[m.Provider] = ok
+		}
+		e := entryFromAim(m)
+		e.Routable = ok
+		out = append(out, e)
 	}
-	return out, nil
+	return out
 }
 
 // entryFromAim projects an aim.Model onto foo's source-neutral row.
@@ -175,7 +190,7 @@ func entryFromAim(m aim.Model) ModelEntry {
 		ToolCall:  m.ToolCall,
 		Reasoning: m.Reasoning,
 		Released:  m.ReleaseDate,
-		Routable:  routableProviders()[m.Provider],
+		Routable:  routable(m.Provider),
 	}
 	// Cost is a pointer in aim: many open-weight entries omit it
 	// entirely, and nil must not be conflated with explicit zero at
@@ -187,20 +202,15 @@ func entryFromAim(m aim.Model) ModelEntry {
 	return e
 }
 
-// routableProviders is the set of provider ids foo has a compiled-in
-// adapter for. Derived from kit's registered scheme list rather than
-// hardcoded, so a build that links a new adapter widens the default
-// view without this file changing.
-//
-// Not every kit scheme is a models.dev provider id ("routellm" and
-// "gemini" are foo/kit-side aliases with no catalog entry); a scheme
-// absent from the catalog simply never matches, which is correct.
-func routableProviders() map[string]bool {
-	out := make(map[string]bool)
-	for _, s := range kitllm.Schemes() {
-		out[s] = true
-	}
-	return out
+// routable reports whether a kit adapter serves provider as a URI
+// scheme. Kit decides, from its registered schemes, aim's curated
+// aliases and the cached catalog's protocols, so a catalog id spelled
+// otherwise than its scheme ("togetherai") needs no table here, and a
+// build that links a new adapter widens the default view without this
+// file changing. The catalog is read from the on-disk cache only.
+func routable(provider string) bool {
+	_, ok := kitllm.ProviderKeyFor(provider)
+	return ok
 }
 
 // Rank orders entries for the default view: grouped by provider, with
