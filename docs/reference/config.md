@@ -37,7 +37,7 @@ ones.
 | `budget` | string | `""` (= `balanced` at use) | Persistent pool routing tier. Env wins. | `FOO_BUDGET` |
 | `secrets.backend` | string | `env` | Secret store backend: `env` or `keyring` ([secret store](#secret-store)) | `FOO_SECRETS_BACKEND` |
 | `secrets.prefix` | string | `""` | Env var prefix for `env` lookups; ignored by `keyring` | `FOO_SECRETS_PREFIX` |
-| `secrets.service` | string | `""` (= `kit` at use) | Keychain service name for `keyring`; `--profile` replaces it; ignored by `env` | `FOO_SECRETS_SERVICE` |
+| `secrets.service` | string | `""` (= `foo` at use) | Keychain service name for `keyring`; `--profile` replaces it; ignored by `env` | `FOO_SECRETS_SERVICE` |
 
 ### Example `config.yaml`
 
@@ -68,10 +68,10 @@ error counts as "not in the store": the env var still answers.
 | Backend | Reads | Settings |
 |---------|-------|----------|
 | `env` (default) | The env var the name maps to: `openrouter_api_key` reads `OPENROUTER_API_KEY`; with `prefix: FOO_`, `FOO_OPENROUTER_API_KEY` | `prefix` |
-| `keyring` | The OS keychain (macOS Keychain, Secret Service on Linux, Windows Credential Manager): item with service `service`, account the key name | `service`; empty uses kit's shared `kit` |
+| `keyring` | The OS keychain (macOS Keychain, Secret Service on Linux, Windows Credential Manager): item with service `service`, account the key name | `service`; empty uses `foo` |
 
-`--profile <name>` sets `service` to `<name>`, so each aps profile
-keeps its own keys; it has no effect on `env`.
+`--profile <name>` sets `service` to `<name>` in place of `foo`, so
+each aps profile keeps its own keys; it has no effect on `env`.
 
 Store a key for the `keyring` backend with the OS tool; foo only
 reads it:
@@ -85,8 +85,7 @@ secret-tool store --label='foo openrouter' service foo username openrouter_api_k
 
 ```yaml
 secrets:
-  backend: keyring
-  service: foo
+  backend: keyring   # service defaults to foo
 ```
 
 If foo cannot open the configured backend — any name other than
@@ -302,7 +301,7 @@ take effect on every `foo` invocation.
 | `FOO_ACCENT` | `accent` | TUI accent color |
 | `FOO_SECRETS_BACKEND` | `secrets.backend` | Secret backend (`env`, `keyring`) |
 | `FOO_SECRETS_PREFIX` | `secrets.prefix` | Env var prefix (`env` backend) |
-| `FOO_SECRETS_SERVICE` | `secrets.service` | Keychain service (`keyring` backend) |
+| `FOO_SECRETS_SERVICE` | `secrets.service` | Keychain service (`keyring` backend; default `foo`) |
 | `FOO_CACHE` | `$XDG_CACHE_HOME/foo` | Directory holding foo's own caches, e.g. `foo model list --endpoint`'s inventory store. |
 | `FOO_CACHE_TTL` | (per-cache default) | Freshness window for foo's own caches, as a Go duration (`30s`, `1h`). `0` disables caching. Does not affect the aim catalog's 24h window, which aim owns. |
 
@@ -336,7 +335,7 @@ foo -c ./ci.foo.yaml "some prompt"
 foo -c secrets.backend=keyring "some prompt"
 
 # YAML-parsed value
-foo -c "secrets={backend: keyring, service: foo}" "some prompt"
+foo -c "secrets={backend: keyring, service: foo-ci}" "some prompt"
 ```
 
 ## Related docs

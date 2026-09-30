@@ -19,6 +19,9 @@ import (
 const (
 	DefaultModel  = "claude-3-5-sonnet-latest"
 	DefaultAccent = "#E040FB"
+	// DefaultKeyringService is the keychain service the keyring secrets
+	// backend uses when `secrets.service` is empty.
+	DefaultKeyringService = "foo"
 )
 
 type Secrets struct {
@@ -107,11 +110,19 @@ func (c Config) Save() error {
 // provider key lookup reads it: the run's precheck and fallbacks
 // (llm.ClientOpts.Secrets) and the credential index behind
 // `foo provider show` and `foo model list`.
+//
+// A keyring store with no service (none in config, no --profile) uses
+// DefaultKeyringService rather than kit's shared "kit", so foo's keys
+// stay under foo's own name.
 func (c Config) SecretStore() (secret.MutableStore, error) {
+	service := c.Secrets.Service
+	if c.Secrets.Backend == "keyring" && service == "" {
+		service = DefaultKeyringService
+	}
 	return secret.Open(secret.Config{
 		Backend: c.Secrets.Backend,
 		Prefix:  c.Secrets.Prefix,
-		Service: c.Secrets.Service,
+		Service: service,
 	})
 }
 
