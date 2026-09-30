@@ -8,12 +8,15 @@ import (
 	llmerrors "hop.top/kit/go/ai/llm/errors"
 	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/core/netpolicy"
+
+	"hop.top/foo/internal/exitcode"
 )
 
 // CodeOffline is the error code of a model call --offline refused
 // because the provider's endpoint is not local. It pairs with
-// output.ExitUnauthorized (5): a policy forbids the call, and running
-// the same invocation again cannot succeed.
+// exitcode.Offline, so scripts can tell it apart from a missing API
+// key (kit's unauthorized class); running the same invocation again
+// cannot succeed.
 const CodeOffline = "OFFLINE"
 
 // offlineRefusal turns a model request kit's network guard refused
@@ -43,7 +46,7 @@ func offlineRefusal(err error) error {
 	if cause != err {
 		retained = errors.Join(err, cause)
 	}
-	e := output.WrapError(retained, CodeOffline, output.ExitUnauthorized).
+	e := output.WrapError(retained, CodeOffline, exitcode.Offline).
 		WithTransience(output.TransiencePermanent)
 	e.Message = fmt.Sprintf("--offline refused %s: only loopback endpoints (localhost, 127.0.0.0/8, ::1) are reachable offline", endpoint)
 	e.Cause = cause.Error()

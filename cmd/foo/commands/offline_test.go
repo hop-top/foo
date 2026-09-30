@@ -7,6 +7,8 @@ import (
 
 	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/core/netpolicy"
+
+	"hop.top/foo/internal/exitcode"
 )
 
 // remoteBaseURL names an endpoint that is not loopback. The .invalid
@@ -48,8 +50,8 @@ func TestOffline_RefusesRemoteProvider(t *testing.T) {
 				t.Fatalf("err %v carries no CLI envelope", err)
 			}
 			e := ce.AsCLIError()
-			if e.Code != "OFFLINE" || e.ExitCode != output.ExitUnauthorized {
-				t.Errorf("envelope = %s/%d; want OFFLINE/%d", e.Code, e.ExitCode, output.ExitUnauthorized)
+			if e.Code != "OFFLINE" || e.ExitCode != exitcode.Offline {
+				t.Errorf("envelope = %s/%d; want OFFLINE/%d", e.Code, e.ExitCode, exitcode.Offline)
 			}
 			if !strings.Contains(e.Message, "model.invalid") || !strings.Contains(e.Message, "--offline") {
 				t.Errorf("message %q should name the endpoint and --offline", e.Message)

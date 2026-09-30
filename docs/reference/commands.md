@@ -96,14 +96,15 @@ foo < /dev/null
 
 `--offline` refuses every request that would leave the machine. A
 model call to a remote endpoint fails before anything is sent, with
-code `OFFLINE` and exit 5; the same run against a model served on
-loopback goes through. The flag works before or after the prompt.
+code `OFFLINE` and exit 10 (foo's own code, so it never reads as a
+missing API key, which is kit's exit 5); the same run against a model
+served on loopback goes through. The flag works before or after the prompt.
 
 | Endpoint | Under `--offline` |
 |----------|-------------------|
 | `localhost`, `127.0.0.0/8`, `[::1]` (as written in `base_url`) | Allowed |
-| Any other host, including a DNS name that resolves to loopback | Refused: `OFFLINE`, exit 5 |
-| Provider defaults (`api.openai.com`, `api.anthropic.com`, …) | Refused: `OFFLINE`, exit 5 |
+| Any other host, including a DNS name that resolves to loopback | Refused: `OFFLINE`, exit 10 |
+| Provider defaults (`api.openai.com`, `api.anthropic.com`, …) | Refused: `OFFLINE`, exit 10 |
 
 It applies to plain prompts, streamed or not, to `-T` tool runs, and
 to fallback providers. foo also skips the upgrade check and bus peers,
@@ -115,7 +116,7 @@ OFFLINE: --offline refused api.example.com: only loopback endpoints (localhost, 
 Cause: Post "https://api.example.com/v1/chat/completions": POST https://api.example.com/v1/chat/completions: network disabled by --offline
 Fix: use a model served on loopback (LLM_BASE_URL=http://127.0.0.1:<port>/v1, providers.<scheme>.base_url, or -m '<model>?base_url=...'), or drop --offline
 $ echo $?
-5
+10
 ```
 
 Exit 5 is kit's class for a call a policy forbids: running the same

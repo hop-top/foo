@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"hop.top/foo/internal/exitcode"
 	"hop.top/foo/internal/tool/gate"
 	kitscope "hop.top/kit/go/console/cli/scope"
 	"hop.top/kit/go/console/output"
@@ -36,8 +37,8 @@ const scopeTool = "foo"
 // not load) come from kit's table; the two verdicts kit has no class
 // for take foo's own codes above kit's 0-7.
 const (
-	exitScopePrompt = 8
-	exitScopeWarn   = 9
+	exitScopePrompt = exitcode.ScopePrompt
+	exitScopeWarn   = exitcode.ScopeWarn
 )
 
 // Error codes paired with the exit codes above in the error envelope.

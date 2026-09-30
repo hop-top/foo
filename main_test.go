@@ -132,7 +132,7 @@ func TestMultiCall_LinkDispatchesOnArgv0(t *testing.T) {
 	}
 }
 
-// --offline refuses a remote model provider with exit 5 and the
+// --offline refuses a remote model provider with exit 10 and the
 // OFFLINE code, whichever side of the prompt the flag sits on. The
 // .invalid endpoint never resolves, so nothing leaves the machine even
 // if the refusal regresses.
@@ -145,8 +145,8 @@ func TestOffline_RemoteProviderExitCode(t *testing.T) {
 		{"-m", "gpt-4o", "-T", "foo_time", "hi", "--offline"},
 	} {
 		_, stderr, code := run(t, env, "", foo, args...)
-		if code != 5 || !strings.Contains(stderr, "OFFLINE") || !strings.Contains(stderr, "model.invalid") {
-			t.Errorf("foo %v: exit %d, stderr %q; want 5 with the OFFLINE refusal naming the endpoint", args, code, stderr)
+		if code != 10 || !strings.Contains(stderr, "OFFLINE") || !strings.Contains(stderr, "model.invalid") {
+			t.Errorf("foo %v: exit %d, stderr %q; want 10 with the OFFLINE refusal naming the endpoint", args, code, stderr)
 		}
 	}
 }
