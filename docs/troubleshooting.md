@@ -16,6 +16,7 @@ cause → fix; the longer sections below give the detail.
 | `missing X_API_KEY for model "..."` | API key env var unset | [Set an API key](#api-key-missing-or-invalid) |
 | `auth error (provider "...")` | API key set but rejected by the provider | [Check your key + provider config](#api-key-missing-or-invalid) |
 | 401 `Missing Authentication header` from OpenRouter, Groq or another gateway | No key reached the provider; its key is in `OPENAI_API_KEY`, or the URI has an empty `?api_key=` | [Export the scheme's own key](#api-key-missing-or-invalid) |
+| `llm.fallback.dropped: fallback has no API key; skipping it fallback=... missing=X_API_KEY` | A fallback entry's scheme has no key; foo runs without that fallback | [Set the fallback's key or remove the entry](#api-key-missing-or-invalid) |
 | `model "..." not available (provider "openai")` for an id you never meant to send to OpenAI | Unrecognised model id; foo assumed an OpenAI-compatible provider | [Point foo at the right endpoint](#unknown-model-id-routed-to-openai) |
 | `pattern ... not found` | Wrong name / wrong scope | `foo pattern list`; check scope |
 | `fragment ... not found` | Wrong alias | `foo fragment list` |
@@ -71,6 +72,12 @@ foo "hello"
 A URI-form `--model` (`-m 'openrouter://openai/gpt-4.1-nano'`)
 gets its scheme's key the same way a bare id does; `?api_key=` on
 the URI overrides it.
+
+Fallback entries (`LLM_FALLBACK`, llm.yaml `fallback:`) get their
+own scheme's key the same way. A fallback whose key is missing does
+not fail the run: foo drops that entry and warns once on stderr
+(`llm.fallback.dropped ... missing=OPENROUTER_API_KEY`). Set the
+named variable, or remove the entry.
 
 `foo provider list` shows registered schemes; `foo provider show
 <scheme>` shows whether the expected key is visible to foo. See
