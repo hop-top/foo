@@ -36,9 +36,9 @@ After this guide you will have:
 ## Quick path
 
 ```sh
-# 1. Grant read on ~/proj (macOS path; Linux: ~/.config/foo)
-mkdir -p ~/Library/Application\ Support/foo
-cat > ~/Library/Application\ Support/foo/scope.yaml <<'EOF'
+# 1. Grant read on ~/proj (XDG_CONFIG_HOME unset? see step 2 for the default)
+mkdir -p "$XDG_CONFIG_HOME/foo"
+cat > "$XDG_CONFIG_HOME/foo/scope.yaml" <<'EOF'
 allow:
   - path: "~/proj/**"
     ops: [read]
@@ -79,13 +79,10 @@ comma-separate). Per-tool arguments:
 
 ### 2. Write `scope.yaml`
 
-`scope.yaml` lives in foo's config directory:
-
-| OS | File |
-|----|------|
-| macOS | `~/Library/Application Support/foo/scope.yaml` |
-| Linux | `~/.config/foo/scope.yaml` |
-| Either, with `XDG_CONFIG_HOME` set | `$XDG_CONFIG_HOME/foo/scope.yaml` |
+`scope.yaml` lives in foo's config directory,
+`$XDG_CONFIG_HOME/foo/scope.yaml`. When `XDG_CONFIG_HOME` is unset it
+defaults to `~/.config` on Linux and `~/Library/Application Support`
+on macOS.
 
 A system-wide `/etc/xdg/foo/scope.yaml` is read first; your file adds
 its rules and, when it sets one, its mode wins. Not sure which path applies? Run
@@ -238,7 +235,7 @@ overrides a denial.
 ### 7. Let writes run without asking (optional)
 
 To auto-allow writes that stay inside your grant, create
-`tool-policy.yaml` next to `scope.yaml`:
+`$XDG_CONFIG_HOME/foo/tool-policy.yaml`, next to `scope.yaml`:
 
 ```yaml
 schema_version: "1.0"
