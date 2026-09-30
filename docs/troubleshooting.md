@@ -13,7 +13,7 @@ cause → fix; the longer sections below give the detail.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `missing X_API_KEY for model "..."` | API key env var unset | [Set an API key](#api-key-missing-or-invalid) |
+| `missing X_API_KEY for model "..."` | No key for that scheme in `X_API_KEY`, the secret store, `LLM_API_KEY` or `providers.<scheme>.api_key` in llm.yaml | [Set an API key](#api-key-missing-or-invalid) |
 | `auth error (provider "...")` | API key set but rejected by the provider | [Check your key + provider config](#api-key-missing-or-invalid) |
 | 401 `Missing Authentication header` from OpenRouter, Groq or another gateway | No key reached the provider; its key is in `OPENAI_API_KEY`, or the URI has an empty `?api_key=` | [Export the scheme's own key](#api-key-missing-or-invalid) |
 | `auth error (provider "...")` from a fallback, or a provider you have no key for, while `LLM_API_KEY` is set | `LLM_API_KEY` goes to every keyed scheme without its own key | [Export that scheme's own key](#api-key-missing-or-invalid) |
@@ -75,8 +75,10 @@ gets its scheme's key the same way a bare id does; `?api_key=` on
 the URI overrides it.
 
 `LLM_API_KEY` also satisfies the check, for any keyed scheme that
-has no key of its own — including fallback entries. A scheme's own
-variable outranks it
+has no key of its own — including fallback entries. So does
+`providers.<scheme>.api_key` in `$XDG_CONFIG_HOME/hop/llm.yaml`,
+for that scheme only. Order: `?api_key=` on the URI, the scheme's
+variable, `LLM_API_KEY`, then the file
 ([key precedence](reference/config.md#key-precedence)).
 
 Fallback entries (`LLM_FALLBACK`, llm.yaml `fallback:`) get their
