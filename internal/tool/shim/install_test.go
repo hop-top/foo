@@ -194,8 +194,8 @@ func TestMultiCall_AuthorizerSetup(t *testing.T) {
 		t.Errorf("--ext-info with a broken policy: exit %d %q", code, out)
 	}
 	out, stderr, code := run(broken, `{"name":"wc","arguments":{"path":["a"]}}`)
-	if code != 1 || out != "" || stderr != "foo-tool-wc: scope: parse \"/cfg/scope.yaml\": bad\n" {
-		t.Errorf("broken policy: exit %d stdout %q stderr %q; want exit 1, the error on stderr only", code, out, stderr)
+	if code != 2 || out != "" || stderr != "foo-tool-wc: scope: parse \"/cfg/scope.yaml\": bad\n" {
+		t.Errorf("broken policy: exit %d stdout %q stderr %q; want exit 2, the error on stderr only", code, out, stderr)
 	}
 	out, _, code = run(func() (gate.Authorizer, error) { return &fakeAuth{cwd: dir}, nil }, `{"name":"wc","arguments":{"path":["a"]}}`)
 	if code != 0 || !strings.Contains(out, `"result":{"exit_code":0`) {

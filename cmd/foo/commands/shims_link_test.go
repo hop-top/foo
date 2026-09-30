@@ -193,13 +193,13 @@ func TestShimLink_Gate(t *testing.T) {
 		}
 	})
 
-	// A broken policy file is a setup failure, not a refusal: exit 1
-	// naming the file, no protocol response.
+	// A broken policy file is a setup failure, not a refusal: exit 2
+	// (usage/config) naming the file, no protocol response.
 	bad := le.writeConfig(t, "scope.yaml", "mode: loose\n")
 	t.Run("broken scope.yaml", func(t *testing.T) {
 		_, stderr, code := le.request(t, inside, false)
-		if code != 1 || !strings.Contains(stderr, bad) || !strings.HasPrefix(stderr, "foo-tool-wc: ") {
-			t.Errorf("exit %d stderr %q; want 1 naming %s", code, stderr, bad)
+		if code != 2 || !strings.Contains(stderr, bad) || !strings.HasPrefix(stderr, "foo-tool-wc: ") {
+			t.Errorf("exit %d stderr %q; want 2 naming %s", code, stderr, bad)
 		}
 		// Discovery does not read the policy: --ext-info still works.
 		info := exec.Command(le.link, "--ext-info")

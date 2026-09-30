@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/tool"
 	"hop.top/kit/go/ai/llm"
+	"hop.top/kit/go/console/output"
 )
 
 // callOnce asks for one call of a tool, then records the tool message
@@ -287,6 +288,10 @@ func TestShimGate_BrokenConfigFailsRun(t *testing.T) {
 			_, err := newShimRun(t, "wc")
 			if err == nil || !strings.Contains(err.Error(), path) {
 				t.Fatalf("-T wc error = %v; want one naming %s", err, path)
+			}
+			var oe *output.Error
+			if !errors.As(err, &oe) || oe.ExitCode != output.ExitUsage {
+				t.Errorf("-T wc error = %#v; want a usage error (exit %d)", err, output.ExitUsage)
 			}
 			if _, err := newShimRun(t, "foo_time"); err != nil {
 				t.Errorf("-T foo_time failed on an unrelated shim config: %v", err)

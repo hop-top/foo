@@ -17,6 +17,7 @@ import (
 	"hop.top/foo/internal/tool/gate"
 	"hop.top/foo/internal/tool/shim"
 	extdiscover "hop.top/kit/go/ai/ext/discover"
+	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/core/xdg"
 )
 
@@ -37,17 +38,24 @@ type shimAccess struct {
 // relative paths resolved against cwd, the directory captured when
 // the run started.
 //
-// A scope.yaml or tool-policy.yaml that cannot be loaded is an error,
-// never a silent deny-all or allow-all: the caller fails the run with
-// it, the way foo fails on a broken config file.
+// A scope.yaml or tool-policy.yaml that cannot be loaded is a usage
+// error (exit 2, as in `foo scope`), never a silent deny-all or
+// allow-all: the caller fails the run with it, the way foo fails on a
+// broken config file.
+// configError reports a tool policy file that does not load as a
+// usage error naming the file, keeping err for errors.Is/As.
+func configError(what string, err error) error {
+	return output.UsageError(fmt.Sprintf("%s: %v", what, err)).Retaining(err)
+}
+
 func newShimAuthorizer(cwd string, access shimAccess) (gate.Authorizer, error) {
 	sc, err := gate.LoadScope(scopeTool)
 	if err != nil {
-		return nil, fmt.Errorf("load tool scope policy: %w", err)
+		return nil, configError("load tool scope policy", err)
 	}
 	tbl, err := gate.LoadPolicy(scopeTool)
 	if err != nil {
-		return nil, fmt.Errorf("load tool side-effect policy: %w", err)
+		return nil, configError("load tool side-effect policy", err)
 	}
 	opts := []gate.Option{
 		gate.WithScope(sc),
