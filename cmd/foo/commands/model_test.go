@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/llm"
+	"hop.top/kit/go/storage/secret/memory"
 )
 
 // stubCatalog feeds runModelList canned rows so the command path is
@@ -59,15 +60,11 @@ func withCatalog(t *testing.T, src llm.CatalogSource) {
 // operator's.
 func withAuth(t *testing.T, envByProvider map[string][]string, configured ...string) {
 	t.Helper()
-	have := make(map[string]bool, len(configured))
+	store := memory.New()
 	for _, key := range configured {
-		have[llm.SecretName(key)] = true
-	}
-	lookup := func(_ context.Context, key string) (string, bool, error) {
-		if have[key] {
-			return "stub-value", true, nil
+		if err := store.Set(context.Background(), llm.SecretName(key), []byte("stub-value")); err != nil {
+			t.Fatal(err)
 		}
-		return "", false, nil
 	}
 	// The index also honours what a run's precheck does — the
 	// scheme's env var, LLM_API_KEY, llm.yaml — so those are cleared
@@ -88,7 +85,7 @@ func withAuth(t *testing.T, envByProvider map[string][]string, configured ...str
 	}
 	prev := providerAuthIndex
 	providerAuthIndex = func(ctx context.Context) (*llm.AuthIndex, error) {
-		return llm.NewAuthIndexFrom(ctx, envByProvider, lookup), nil
+		return llm.NewAuthIndexFrom(ctx, envByProvider, store), nil
 	}
 	t.Cleanup(func() { providerAuthIndex = prev })
 }

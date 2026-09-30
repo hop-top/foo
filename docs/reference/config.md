@@ -52,6 +52,23 @@ secrets:
   service: ""
 ```
 
+### Secret store
+
+`secrets:` configures where foo looks for provider API keys. One
+store serves every key lookup: a run's key check and its fallback
+entries, `foo provider show` and `foo model list`. A key the
+listing reports as configured is the key a run uses.
+
+A provider's key is stored under its env var's name in lowercase
+(`openrouter_api_key` for `OPENROUTER_API_KEY`). The store is
+asked first, then the env var itself
+([key precedence](#key-precedence)). The default `env` backend
+maps the name straight back to `OPENROUTER_API_KEY`. With
+`prefix: FOO_` it reads `FOO_OPENROUTER_API_KEY` first.
+
+If foo cannot open the configured backend, it warns on stderr
+(`secrets.store.unavailable`) and reads keys from env vars only.
+
 ## Kit `llm.yaml` (routing surface)
 
 Model routing lives in kit's config file, not foo's. Path:

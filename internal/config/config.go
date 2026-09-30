@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,27 +99,16 @@ func (c Config) Save() error {
 	return os.WriteFile(userConfig, data, 0644)
 }
 
+// SecretStore opens the store the `secrets:` block configures. Every
+// provider key lookup reads it: the run's precheck and fallbacks
+// (llm.ClientOpts.Secrets) and the credential index behind
+// `foo provider show` and `foo model list`.
 func (c Config) SecretStore() (secret.MutableStore, error) {
 	return secret.Open(secret.Config{
 		Backend: c.Secrets.Backend,
 		Prefix:  c.Secrets.Prefix,
 		Service: c.Secrets.Service,
 	})
-}
-
-func (c Config) LookupSecret(ctx context.Context, key string) (string, bool, error) {
-	store, err := c.SecretStore()
-	if err != nil {
-		return "", false, err
-	}
-	got, err := store.Get(ctx, key)
-	if err == nil {
-		return string(got.Value), true, nil
-	}
-	if err == secret.ErrNotFound {
-		return "", false, nil
-	}
-	return "", false, err
 }
 
 func applyEnv(cfg any) {

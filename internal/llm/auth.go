@@ -21,8 +21,9 @@
 //
 // The one thing aim cannot answer is whether the key is *present*, since
 // foo's secret store may be a keyring rather than the environment. That
-// half goes through a SecretLookup the caller supplies, so a user with a
-// keyring backend is never told their configured key is missing.
+// half reads the secret store the caller supplies — the same store a
+// run is handed — so a user with a keyring backend is never told their
+// configured key is missing.
 //
 // For a scheme foo links an adapter for, the catalog is not the last
 // word: a run's key precheck is. It reads one variable per scheme (not
@@ -41,16 +42,8 @@ import (
 	"strings"
 
 	"hop.top/aim"
+	"hop.top/kit/go/storage/secret"
 )
-
-// SecretLookup reports whether a named secret resolves in foo's
-// configured secret store, and its value if so.
-//
-// The signature is config.Config.LookupSecret's, deliberately: the
-// production caller passes that method value directly, and this package
-// does not import internal/config (which would invert the dependency —
-// config is the lower layer). Tests pass a map-backed stub.
-type SecretLookup func(ctx context.Context, key string) (string, bool, error)
 
 // SecretName maps an aim env var name onto the key foo's secret store
 // knows it by.
@@ -161,15 +154,16 @@ type AuthIndex struct {
 //
 // reg nil means foo's shared aim registry — the same one the listing
 // reads, so the providers described here are exactly the providers the
-// rows came from. lookup nil means "no secret store": a catalog-only
-// provider's credential reports missing, which is the correct reading
-// of "foo cannot consult a store"; an adapter scheme still resolves
-// through the rest of the precheck's chain.
+// rows came from. store is foo's configured secret store, the one a
+// run's precheck reads (ClientOpts.Secrets). store nil means "no secret
+// store": a catalog-only provider's credential reports missing, which
+// is the correct reading of "foo cannot consult a store"; an adapter
+// scheme still resolves through the rest of the precheck's chain.
 //
 // A registry read failure is returned rather than swallowed. Guessing
 // that nothing is configured would hide every model in the default view
 // and blame the user's missing keys for foo's failed catalog read.
-func NewAuthIndex(ctx context.Context, reg *aim.Registry, lookup SecretLookup) (*AuthIndex, error) {
+func NewAuthIndex(ctx context.Context, reg *aim.Registry, store secret.Store) (*AuthIndex, error) {
 	if reg == nil {
 		reg = ensureRegistry()
 	}
@@ -181,7 +175,7 @@ func NewAuthIndex(ctx context.Context, reg *aim.Registry, lookup SecretLookup) (
 	for _, p := range providers {
 		envByProvider[p.ID] = p.Env
 	}
-	return NewAuthIndexFrom(ctx, envByProvider, lookup), nil
+	return NewAuthIndexFrom(ctx, envByProvider, store), nil
 }
 
 // NewAuthIndexFrom builds an index from an explicit provider→env-vars
@@ -192,14 +186,14 @@ func NewAuthIndex(ctx context.Context, reg *aim.Registry, lookup SecretLookup) (
 // An adapter scheme is resolved through the precheck's chain only when
 // the map carries its provider record, so a provider absent from the
 // map keeps meaning "declares no requirement".
-func NewAuthIndexFrom(ctx context.Context, envByProvider map[string][]string, lookup SecretLookup) *AuthIndex {
+func NewAuthIndexFrom(ctx context.Context, envByProvider map[string][]string, store secret.Store) *AuthIndex {
 	idx := &AuthIndex{
 		byProvider: make(map[string]ProviderAuth, len(envByProvider)),
 		byScheme:   make(map[string]ProviderAuth, len(schemeKeyEnv)),
 	}
 	for scheme := range schemeKeyEnv {
 		if _, listed := envByProvider[catalogProviderFor(scheme)]; listed {
-			idx.byScheme[scheme] = resolveSchemeAuth(ctx, scheme, lookup)
+			idx.byScheme[scheme] = resolveSchemeAuth(ctx, scheme, store)
 		}
 	}
 	for id, env := range envByProvider {
@@ -209,18 +203,18 @@ func NewAuthIndexFrom(ctx context.Context, envByProvider map[string][]string, lo
 			idx.byProvider[id] = got
 			continue
 		}
-		idx.byProvider[id] = resolveAuth(ctx, id, env, lookup)
+		idx.byProvider[id] = resolveAuth(ctx, id, env, store)
 	}
 	return idx
 }
 
 // resolveSchemeAuth decides an adapter scheme's state the way a run's
 // precheck does: the scheme's one env var (none for a local runtime),
-// then resolveSchemeKey's chain. Tier 1 asks foo's configured secret
-// store first, then the precheck's own lookup, so a key the run would
-// find is never reported missing. Only the source is kept; the key
-// value is dropped here.
-func resolveSchemeAuth(ctx context.Context, scheme string, lookup SecretLookup) ProviderAuth {
+// then resolveSchemeKey's chain over the same store, so a key the run
+// would find is never reported missing, nor one it would refuse
+// reported configured. Only the source is kept; the key value is
+// dropped here.
+func resolveSchemeAuth(ctx context.Context, scheme string, store secret.Store) ProviderAuth {
 	a := ProviderAuth{Provider: scheme}
 	envVar := envVarForScheme(scheme)
 	if envVar == "" {
@@ -229,15 +223,7 @@ func resolveSchemeAuth(ctx context.Context, scheme string, lookup SecretLookup) 
 	a.EnvVars = []string{envVar}
 	a.Required = true
 	a.SecretKey = SecretName(envVar)
-	own := func(envVar string) string {
-		if lookup != nil {
-			if v, ok, err := lookup(ctx, SecretName(envVar)); err == nil && ok && v != "" {
-				return v
-			}
-		}
-		return lookupAPIKey(envVar)
-	}
-	if key, src := resolveSchemeKey(scheme+"://", envVar, own); key != "" {
+	if key, src := resolveSchemeKey(ctx, store, scheme+"://", envVar); key != "" {
 		a.Configured = true
 		a.Source = src
 	}
@@ -249,7 +235,7 @@ func resolveSchemeAuth(ctx context.Context, scheme string, lookup SecretLookup) 
 // *any one* of its env vars resolves: aim lists alternatives, not a
 // conjunction — google's three names are three spellings of one key, and
 // requiring all three would report every google user as unconfigured.
-func resolveAuth(ctx context.Context, provider string, envVars []string, lookup SecretLookup) ProviderAuth {
+func resolveAuth(ctx context.Context, provider string, envVars []string, store secret.Store) ProviderAuth {
 	a := ProviderAuth{Provider: provider, EnvVars: envVars, Required: len(envVars) > 0}
 	if !a.Required {
 		return a
@@ -257,7 +243,7 @@ func resolveAuth(ctx context.Context, provider string, envVars []string, lookup 
 	// Name the first alternative up front, so a "missing" verdict can
 	// tell the user which variable to set even though none resolved.
 	a.SecretKey = SecretName(envVars[0])
-	if lookup == nil {
+	if store == nil {
 		return a
 	}
 	for _, envVar := range envVars {
@@ -266,7 +252,7 @@ func resolveAuth(ctx context.Context, provider string, envVars []string, lookup 
 		// aborted on: one unreadable backend entry must not make the
 		// other two alternatives unaskable, and the listing has to
 		// render either way.
-		if _, ok, err := lookup(ctx, key); err == nil && ok {
+		if got, err := store.Get(ctx, key); err == nil && got != nil {
 			a.SecretKey = key
 			a.Configured = true
 			a.Source = KeySourceSecret

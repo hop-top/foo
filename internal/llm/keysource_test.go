@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"testing"
 
 	kitllm "hop.top/kit/go/ai/llm"
@@ -46,7 +47,7 @@ func TestLLMAPIKey_PickerPath(t *testing.T) {
 	clearProviderKeys(t)
 	t.Setenv("LLM_API_KEY", "fake-llm-key")
 
-	got, err := buildURI("openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	got, err := buildURI(context.Background(), nil, "openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
 	if err != nil {
 		t.Fatalf("buildURI with LLM_API_KEY set: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestLLMAPIKey_AppliesToFallbacks(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "fake-ant-key")
 	t.Setenv("LLM_FALLBACK", "openrouter://openai/gpt-4.1-nano,anthropic://claude-3-haiku-20240307")
 
-	got := fallbackURIs("ollama://llama3.2")
+	got := fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 	if len(got) != 2 {
 		t.Fatalf("fallbackURIs = %q, want 2 entries", got)
 	}
@@ -161,7 +162,7 @@ func TestConfigFileKey_PickerAndFallback(t *testing.T) {
 	warnings := captureWarnings(t)
 	writeLLMYAML(t, "providers:\n  openrouter:\n    api_key: fake-file-or\nfallback:\n  - openrouter://openai/gpt-4.1-mini\n")
 
-	got, err := buildURI("openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	got, err := buildURI(context.Background(), nil, "openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
 	if err != nil {
 		t.Fatalf("buildURI with a config-file key: %v", err)
 	}
@@ -169,7 +170,7 @@ func TestConfigFileKey_PickerAndFallback(t *testing.T) {
 		t.Errorf("picker api_key = %q, want fake-file-or", k)
 	}
 
-	fbs := fallbackURIs("ollama://llama3.2")
+	fbs := fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 	if len(fbs) != 1 {
 		t.Fatalf("fallbackURIs = %q, want 1 entry\n%s", fbs, warnings.String())
 	}

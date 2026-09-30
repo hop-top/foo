@@ -1030,6 +1030,7 @@ func clientOptsFromFlags(promptText string) llm.ClientOpts {
 	opts := llm.ClientOpts{
 		Model:     selectedModel(),
 		MaxTokens: maxTokens,
+		Secrets:   secretStore(),
 		Profile: llm.DeriveProfile(llm.ProfileOpts{
 			SchemaSelected:       schemaName != "" || schemaMulti != "",
 			ToolNames:            toolNames,
@@ -1158,10 +1159,11 @@ func providerAuthRequirement(ctx context.Context, scheme string) (llm.ProviderAu
 // var so a test can pin it without a models.dev fetch or a real secret
 // store. `foo model list` reaches the same construction through
 // modelAuthIndex; both read the requirement from aim and the key from
-// foo's configured secret store rather than the environment, so a
-// keyring-backed user is never told a stored key is missing.
+// secretStore — the store a run's precheck reads — so neither surface
+// can call a key configured that a run would refuse, or missing one it
+// would use.
 var providerAuthIndex = func(ctx context.Context) (*llm.AuthIndex, error) {
-	return llm.NewAuthIndex(ctx, nil, cfg.LookupSecret)
+	return llm.NewAuthIndex(ctx, nil, secretStore())
 }
 
 // enrichPatternNotFound wraps a "pattern not found" error with an

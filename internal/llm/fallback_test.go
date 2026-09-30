@@ -56,7 +56,7 @@ func TestFallbackURIs_InjectsSchemeKey(t *testing.T) {
 			}
 			t.Setenv("LLM_FALLBACK", scheme+"://vendor/fb-model")
 
-			got := fallbackURIs("ollama://llama3.2")
+			got := fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 			if len(got) != 1 {
 				t.Fatalf("fallbackURIs = %q, want 1 entry", got)
 			}
@@ -80,7 +80,7 @@ func TestFallbackURIs_ConfigFileList(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "fake-ant-key")
 	writeLLMYAML(t, "fallback:\n  - openrouter://openai/gpt-4.1-nano\n  - anthropic://claude-3-haiku-20240307\n")
 
-	got := fallbackURIs("ollama://llama3.2")
+	got := fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 	if len(got) != 2 {
 		t.Fatalf("fallbackURIs = %q, want 2 entries", got)
 	}
@@ -101,7 +101,7 @@ func TestFallbackURIs_MissingKeyDropsEntry(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	t.Setenv("LLM_FALLBACK", "openrouter://openai/gpt-4.1-nano,openai://gpt-4o-mini")
 
-	got := fallbackURIs("ollama://llama3.2")
+	got := fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 	if len(got) != 1 || parseOrFatal(t, got[0]).Scheme != "openai" {
 		t.Fatalf("fallbackURIs = %q, want only the openai entry", got)
 	}
@@ -109,7 +109,7 @@ func TestFallbackURIs_MissingKeyDropsEntry(t *testing.T) {
 		t.Errorf("openai fallback api_key = %q, want fake-openai-key", k)
 	}
 
-	_ = fallbackURIs("ollama://llama3.2")
+	_ = fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 
 	out := warnings.String()
 	if n := strings.Count(out, "llm.fallback.dropped"); n != 1 {
@@ -159,7 +159,7 @@ func TestFallbackURIs_ExplicitAndLocalUntouched(t *testing.T) {
 	}
 	t.Setenv("LLM_FALLBACK", strings.Join(want, ","))
 
-	got := fallbackURIs("ollama://llama3.2")
+	got := fallbackURIs(context.Background(), nil, "ollama://llama3.2")
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("fallbacks rewritten:\n got  %q\n want %q", got, want)
 	}

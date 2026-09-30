@@ -206,7 +206,7 @@ func TestBuildURI_PickerSchemeUsesOwnKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
 	t.Setenv("OPENROUTER_API_KEY", "fake-or-key")
 
-	got, err := buildURI("openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
+	got, err := buildURI(context.Background(), nil, "openrouter", "openai/gpt-4.1-nano", envVarForScheme("openrouter"))
 	if err != nil {
 		t.Fatalf("buildURI: %v", err)
 	}
