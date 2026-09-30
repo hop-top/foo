@@ -91,10 +91,12 @@ func (d *Dispatcher) Run(ctx context.Context, prompt string) (string, error) {
 			return resp.Content, nil
 		}
 
-		// Append the assistant's response (with tool_calls) to messages.
+		// Keep the assistant turn with the calls it made: providers
+		// pair each result below with its call by ID.
 		messages = append(messages, llm.Message{
-			Role:    "assistant",
-			Content: resp.Content,
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
 		})
 
 		// Execute each tool call and feed results back.
@@ -130,8 +132,9 @@ func (d *Dispatcher) Run(ctx context.Context, prompt string) (string, error) {
 			}
 
 			messages = append(messages, llm.Message{
-				Role:    "tool",
-				Content: content,
+				Role:       "tool",
+				Content:    content,
+				ToolCallID: tc.ID,
 			})
 		}
 	}
