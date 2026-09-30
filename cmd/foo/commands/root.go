@@ -402,11 +402,12 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// First-run pool seeding. SeedDefaultPool is idempotent — it
-	// only writes when no pool: block is present. The info line on
-	// stderr surfaces the path so operators discover it and can
-	// edit. Errors are non-fatal: a degraded config is still
-	// better than refusing to launch.
+	// First-run pool seeding. SeedDefaultPool only creates llm.yaml
+	// when nothing is at that path; an existing file is never edited,
+	// with or without a pool: block. The info line on stderr surfaces
+	// the path so operators discover it and can edit. Errors are
+	// non-fatal: a degraded config is still better than refusing to
+	// launch.
 	if wrote, seedErr := llm.SeedDefaultPool(); seedErr != nil {
 		slog.Warn("llm.seed.failed", slog.Any("err", seedErr))
 	} else if wrote {

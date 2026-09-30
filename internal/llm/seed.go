@@ -1,12 +1,12 @@
 // Default-pool seeding. First-run UX: an operator who just installed
 // foo and ran `foo "hi"` shouldn't have to author a pool config block
 // before the picker becomes useful. SeedDefaultPool writes a sensible
-// 3-tier default into ~/.config/hop/llm.yaml when the file has no pool
-// block, preserving any existing keys (default, providers, fallback).
+// 3-tier default to ~/.config/hop/llm.yaml when that file is absent.
 //
-// Idempotent by design: if pool: already exists (even empty), the seed
-// is a no-op. Parsing failures leave the file alone — operator config
-// stays the source of truth.
+// An llm.yaml that exists is the operator's, whatever it holds — no
+// pool block, an empty file, a symlink (even a dangling one), a file
+// foo cannot read or parse. foo never edits it; the seed is a one-time
+// create, not a merge.
 
 package llm
 
@@ -17,13 +17,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
 	"hop.top/kit/go/core/xdg"
 )
 
-// defaultPoolYAML is the YAML block appended/written when no pool: is
-// present. Three tiers × major providers — enough to exercise the
-// picker without overwhelming a first-time user. Operators are
+// defaultPoolYAML is the content of a freshly seeded llm.yaml. Three
+// tiers × major providers — enough to exercise the picker without
+// overwhelming a first-time user. Operators are
 // expected to edit this file (the seed comment says as much).
 //
 // Model IDs are conservative defaults chosen from each provider's
@@ -72,92 +71,54 @@ pool:
   # the model ID against Google's current GA catalog.
 `
 
-// SeedDefaultPool inspects ~/.config/hop/llm.yaml (or
-// $XDG_CONFIG_HOME/hop/llm.yaml) and writes the default pool block
-// when missing. Returns (wrote, err). wrote == true means the file was
-// touched on disk; err signals a hard failure (path resolution,
-// permission). Soft conditions — file unreadable, YAML invalid — are
-// surfaced via wrote=false, err=nil so a corrupt operator config never
-// stops foo from running.
+// SeedDefaultPool creates ~/.config/hop/llm.yaml (or
+// $XDG_CONFIG_HOME/hop/llm.yaml) holding the default pool when nothing
+// is at that path. Returns (wrote, err). wrote == true means foo
+// created the file; err signals a hard failure (path resolution,
+// permission, write). Anything already at the path yields wrote=false,
+// err=nil and is never touched.
 //
 // When wrote == true, callers should print one informational line on
 // stderr so the seeding is discoverable. SeedDefaultPool itself does
 // not write to any stream.
 func SeedDefaultPool() (wrote bool, err error) {
-	dir, err := xdg.ConfigDir("hop")
+	path, err := SeedPath()
 	if err != nil {
 		return false, fmt.Errorf("resolve XDG config dir: %w", err)
 	}
-	path := filepath.Join(dir, "llm.yaml")
-
-	data, readErr := os.ReadFile(path)
-	switch {
-	case errors.Is(readErr, fs.ErrNotExist):
-		// File does not exist — write a fresh one with just the pool
-		// block. Operators can add default/providers/fallback later.
-		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
-			return false, fmt.Errorf("create config dir: %w", mkErr)
+	if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
+		return false, fmt.Errorf("create config dir: %w", mkErr)
+	}
+	if writeErr := writeNew(path, []byte(defaultPoolYAML)); writeErr != nil {
+		if errors.Is(writeErr, fs.ErrExist) {
+			// The operator's file, or a concurrent first run's.
+			return false, nil
 		}
-		if writeErr := atomicWrite(path, []byte(defaultPoolYAML)); writeErr != nil {
-			return false, fmt.Errorf("write seed: %w", writeErr)
-		}
-		return true, nil
-	case readErr != nil:
-		// Unreadable for some other reason (permissions). Leave
-		// alone — the operator's environment is in a weirder state
-		// than we can fix from here.
-		return false, nil
-	}
-
-	// File exists. Check whether a pool: key is already present.
-	// Parse loosely; YAML errors leave the file untouched.
-	var raw map[string]any
-	if unmarshalErr := yaml.Unmarshal(data, &raw); unmarshalErr != nil {
-		return false, nil
-	}
-	if _, has := raw["pool"]; has {
-		// Operator already authored a pool — even an empty one
-		// expresses intent. Respect it.
-		return false, nil
-	}
-
-	// Append the pool block. Always prepend a newline so we don't
-	// smash a key onto the operator's last line; a doubled newline
-	// when the file already ends with one is cosmetic.
-	suffix := "\n" + defaultPoolYAML
-	if writeErr := atomicWrite(path, append(data, []byte(suffix)...)); writeErr != nil {
-		return false, fmt.Errorf("append seed: %w", writeErr)
+		return false, fmt.Errorf("write seed: %w", writeErr)
 	}
 	return true, nil
 }
 
-// atomicWrite writes data to path via a same-directory tempfile + rename.
-// os.Rename within a directory is atomic on POSIX, so concurrent first-
-// run invocations can race the seed without corrupting the destination.
-// The tempfile is best-effort cleaned up on rename failure.
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".llm-seed-*.yaml")
+// writeNew creates path with data and fails with fs.ErrExist when
+// anything is already there. O_EXCL makes the existence check and the
+// create one atomic step, so there is no window for a concurrent run
+// or an editor save to be overwritten; it also refuses a symlink,
+// dangling or not, where a check-then-write would follow the link. A
+// failed write removes the partial file so a half-written seed never
+// passes for an operator's config on the next run.
+func writeNew(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
+		return err
 	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("write temp: %w", err)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
 	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("close temp: %w", err)
-	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("chmod temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("rename temp: %w", err)
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
 	}
 	return nil
 }

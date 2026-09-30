@@ -39,9 +39,13 @@ If that prints a model response, you are done. If it errors, read
 [docs/troubleshooting.md](docs/troubleshooting.md).
 
 The first run seeds a default pool — a list of models foo picks
-from based on what each request needs. The `balanced` tier is the
-default; switch with `--budget cheap` for cheaper, faster picks
-or `--budget premium` for the most capable. Full tour:
+from based on what each request needs — by creating `llm.yaml`. foo
+only creates that file; if one already exists, foo leaves it as is,
+and you add a `pool:` block yourself
+([shape](docs/reference/config.md#kit-llmyaml-routing-surface)). The
+`balanced` tier is the default; switch with `--budget cheap` for
+cheaper, faster picks or `--budget premium` for the most capable.
+Full tour:
 [docs/how-to/route-across-models.md](docs/how-to/route-across-models.md).
 
 ## Documentation

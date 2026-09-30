@@ -46,18 +46,23 @@ After this guide you will be able to:
 ## Pool routing with --budget
 
 Pool routing is foo's recommended path for "let me declare a budget
-posture, then forget about it." On first run foo seeds a default
-pool block into `$XDG_CONFIG_HOME/hop/llm.yaml` (`XDG_CONFIG_HOME`
-unset: `~/.config` on Linux, `~/Library/Application Support` on
-macOS); edit it to match what you
-have keys for and how aggressively you want to spend.
+posture, then forget about it." On first run foo creates
+`$XDG_CONFIG_HOME/hop/llm.yaml` (`XDG_CONFIG_HOME` unset: `~/.config`
+on Linux, `~/Library/Application Support` on macOS) holding a default
+pool; edit it to match what you have keys for and how aggressively
+you want to spend.
+
+foo only seeds a file that does not exist. An `llm.yaml` you already
+have — say, one holding only `providers:` — is never edited; add a
+`pool:` block to it by hand
+([shape](../reference/config.md#kit-llmyaml-routing-surface)).
 
 ### Quick path
 
 ```sh
-# 1. Seed and inspect the default pool. (foo seeds it on first run;
-#    this just shows where it lives.)
-foo --help | head -1
+# 1. Seed and inspect the default pool. Any foo command that runs
+#    (not --help / --version) seeds it when llm.yaml does not exist.
+foo model current
 cat "$XDG_CONFIG_HOME/hop/llm.yaml"   # XDG_CONFIG_HOME unset? default above
 
 # 2. Pick the cheapest qualifying model.
@@ -273,6 +278,7 @@ with whichever underlying model it picked for the query.
 |---------|--------------|-----|
 | `--budget` chose a model whose key isn't set | The picker doesn't know about your env. | Either export the missing key, set `enabled: false` on the offending pool entry, or use `LLM_POOL_DISABLE`. |
 | `foo: seeded default pool config at ...` printed once and never again | First-run seeding succeeded; subsequent invocations are no-ops. | Working as intended — edit the seeded file. |
+| `llm.pool.empty` warning; no seed line ever printed | `llm.yaml` existed before foo's first run, without a `pool:` block. foo only seeds an absent file and never edits yours. | Add a `pool:` block by hand ([shape](../reference/config.md#kit-llmyaml-routing-surface)), or move the file aside, run foo once, and merge. |
 | Picker picks the "wrong" model under `cheap` | Models with no `cost` in models.dev are treated as 0 (helps local/open-weight models). | Inspect with `--picker-debug`. If undesired, set `enabled: false` on the offending entry. |
 | Fallback chain set but the second URI is never tried | The first error was not fallbackable (e.g. 401 auth, 400 bad request). Kit only walks the chain on retriable errors. | Verify the primary URI works in isolation; fix the auth or request shape. |
 | `LLM_FALLBACK` and `fallback:` both set, only env applies | By design. Env wins over the config file for fallbacks. | Unset `LLM_FALLBACK` to fall through to the config-file list. |
@@ -310,7 +316,7 @@ via `WithFallback`.
 | `-m, --model` | config value | Pin one model; **bypasses the picker**. |
 | `FOO_MODEL` (env) | (unset) | Default model id. |
 | `model` (foo config key) | `claude-3-5-sonnet-latest` | Default model id. |
-| `pool:` (`$XDG_CONFIG_HOME/hop/llm.yaml`) | seeded by foo | Candidate set for the picker. |
+| `pool:` (`$XDG_CONFIG_HOME/hop/llm.yaml`) | seeded by foo when `llm.yaml` is absent | Candidate set for the picker. |
 | `LLM_POOL_DISABLE` (env) | (unset) | Comma list of `alias` or `<scheme>:<model>` to mute. |
 | `LLM_FALLBACK` (env) | (unset) | Comma-separated provider URIs tried in order on retriable failure. Overrides `fallback:` in `llm.yaml`. |
 | `fallback:` (`$XDG_CONFIG_HOME/hop/llm.yaml`) | (none) | Same list, set in config rather than env. |
