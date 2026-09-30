@@ -99,15 +99,16 @@ func SeedDefaultPool() (wrote bool, err error) {
 	return true, nil
 }
 
-// writeNew creates path with data and fails with fs.ErrExist when
-// anything is already there. O_EXCL makes the existence check and the
-// create one atomic step, so there is no window for a concurrent run
-// or an editor save to be overwritten; it also refuses a symlink,
+// writeNew creates path with data, owner-only (0600: llm.yaml is where
+// operators put providers.<scheme>.api_key), and fails with
+// fs.ErrExist when anything is already there. O_EXCL makes the
+// existence check and the create one atomic step, so there is no
+// window for a concurrent run or an editor save to be overwritten; it also refuses a symlink,
 // dangling or not, where a check-then-write would follow the link. A
 // failed write removes the partial file so a half-written seed never
 // passes for an operator's config on the next run.
 func writeNew(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

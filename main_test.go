@@ -201,13 +201,21 @@ func TestSeed_LLMYAMLAbsentOnlyOnBinary(t *testing.T) {
 		env := isolatedEnv(t, t.TempDir())
 		path := filepath.Join(envValue(env, "XDG_CONFIG_HOME"), "hop", "llm.yaml")
 
-		_, stderr, code := run(t, env, "", foo, runs[0]...)
+		// Run under a fixed umask so the mode on disk is the one foo
+		// requested; under 077 a 0644 create would pass for 0600.
+		umask022 := append([]string{"-c", `umask 022 && exec "$@"`, "sh", foo}, runs[0]...)
+		_, stderr, code := run(t, env, "", "/bin/sh", umask022...)
 		if code != 0 || strings.Count(stderr, seeded) != 1 {
 			t.Fatalf("first run: exit %d, stderr %q; want 0 and one seed line", code, stderr)
 		}
 		first, err := os.ReadFile(path)
 		if err != nil || !strings.Contains(string(first), "pool:") {
 			t.Fatalf("seeded llm.yaml: err %v\n%s", err, first)
+		}
+		if fi, err := os.Stat(path); err != nil {
+			t.Error(err)
+		} else if fi.Mode().Perm() != 0o600 {
+			t.Errorf("seeded llm.yaml mode %v, want 0600", fi.Mode().Perm())
 		}
 		_, stderr, code = run(t, env, "", foo, runs[0]...)
 		if code != 0 || strings.Contains(stderr, seeded) {
