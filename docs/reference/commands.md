@@ -222,15 +222,20 @@ Discover model ids and manage the default model selection.
 
 By default the listing shows only models foo can actually call: the
 provider must have a compiled-in adapter, and must either need no
-credential (a local runtime) or have its API key present in the
-configured secret store. Everything else is hidden, and a stderr
-footer reports the count and names `--all`. The credential
-requirement is read from the model catalog, which publishes the env
-var names each provider accepts, so a provider accepting several
-alternatives (`google` takes `GOOGLE_API_KEY`,
-`GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`) is satisfied by
-any one of them. Keys resolve through the secret store, not
-`os.Getenv`, so a keyring backend works.
+credential (a local runtime) or have an API key a run would find.
+Everything else is hidden, and a stderr footer reports the count and
+names `--all`.
+
+For a provider foo has an adapter for, "a key a run would find" is
+the run's own key check: the scheme's variable (through the secret
+store, then the environment), `LLM_API_KEY`, or
+`providers.<scheme>.api_key` in llm.yaml
+([key precedence](config.md#key-precedence)). The check reads one
+variable per scheme — `GOOGLE_API_KEY` for `google`, not the
+catalog's `GEMINI_API_KEY` alternative — and asks nothing of a local
+runtime (`ollama`, `lmstudio`, `routellm`), even where the catalog
+lists a key for it. Other catalog providers use the env var names the
+catalog publishes, any one of which is enough.
 
 `--all` disables that filtering. It widens the candidate set rather
 than replacing the narrowing filters, so it combines with
@@ -286,14 +291,22 @@ Inspect configured LLM providers.
 | Status | Meaning |
 |--------|---------|
 | `available` | The provider needs no credential (a local runtime). |
-| `configured` | A required credential is present in the secret store. |
-| `missing` | A required credential is absent. |
+| `configured` | A run would find a key: the scheme's own, `LLM_API_KEY`, or llm.yaml. |
+| `missing` | No key from any of those sources. |
 
-The requirement comes from the same model catalog `foo model list`
-filters on, so the two surfaces always agree: a provider reported
-`missing` here is a provider whose models the default listing hides.
-`secret_key` names the secret-store key that satisfied the
-requirement, or the first alternative when none did.
+The verdict is the one `foo model list` filters on, and for a scheme
+foo links an adapter for it is the run's own key check, so a
+`missing` provider is one whose models the default listing hides and
+whose runs fail the key check. `secret_key` names the provider's own
+secret-store key — the one to set to give it a key of its own. With
+`--format json` or `yaml`, `key_source` says where a `configured`
+key was found; the key itself is never printed:
+
+| `key_source` | Key found in |
+|--------------|--------------|
+| `secret_key` | The secret store, or the env var `secret_key` maps to |
+| `LLM_API_KEY` | The universal `LLM_API_KEY` variable |
+| `llm.yaml` | `providers.<scheme>.api_key` in `$XDG_CONFIG_HOME/hop/llm.yaml` |
 
 ## `tool`
 

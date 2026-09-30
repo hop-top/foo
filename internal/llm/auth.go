@@ -23,6 +23,15 @@
 // foo's secret store may be a keyring rather than the environment. That
 // half goes through a SecretLookup the caller supplies, so a user with a
 // keyring backend is never told their configured key is missing.
+//
+// For a scheme foo links an adapter for, the catalog is not the last
+// word: a run's key precheck is. It reads one variable per scheme (not
+// the catalog's alternatives), also accepts LLM_API_KEY and llm.yaml's
+// providers.<scheme>.api_key, and asks nothing of a local runtime the
+// catalog lists a key for (lmstudio). Those schemes are therefore
+// answered by the precheck's own chain, resolveSchemeKey, so the
+// listing and `foo provider show` cannot call "missing" a key a run
+// would use, nor "configured" one it would refuse.
 
 package llm
 
@@ -64,14 +73,17 @@ func SecretName(envVar string) string {
 type ProviderAuth struct {
 	// Provider is the provider id ("openai", "groq").
 	Provider string
-	// EnvVars are the upstream env var names the provider accepts, in
-	// the order aim lists them. Empty means the provider needs no
-	// credential at all.
+	// EnvVars are the env var names the provider's key is read from:
+	// for a scheme foo links an adapter for, the one its precheck
+	// reads; otherwise the alternatives aim lists, in its order. Empty
+	// means the provider needs no credential at all.
 	EnvVars []string
-	// SecretKey is the secret-store name that satisfied the
-	// requirement, or — when nothing satisfied it — the first
-	// alternative, so an error message can name something concrete.
-	// Empty when no credential is required.
+	// SecretKey is the secret-store name of the provider's own key:
+	// for an adapter scheme, the one its precheck reads, whatever
+	// source satisfied it (see Source); for a catalog-only provider,
+	// the alternative that resolved, or the first one when none did.
+	// Either way it names something concrete to set. Empty when no
+	// credential is required.
 	SecretKey string
 	// Required reports whether any credential is needed. False for a
 	// local runtime such as ollama.
@@ -80,6 +92,8 @@ type ProviderAuth struct {
 	// is false when Required is false: "no credential was found"
 	// is not a claim worth making about a provider that wants none.
 	Configured bool
+	// Source names where the key was found; empty unless Configured.
+	Source KeySource
 }
 
 // Satisfied reports whether foo can authenticate to the provider: either
@@ -135,16 +149,22 @@ func (a ProviderAuth) AuthType() string {
 // keyring-backed secret store charges real latency per lookup. The index
 // resolves each distinct provider exactly once.
 type AuthIndex struct {
+	// byProvider is keyed by catalog provider id.
 	byProvider map[string]ProviderAuth
+	// byScheme holds the adapter schemes with a catalog record, each
+	// resolved under its own scheme name — gemini reads
+	// providers.gemini in llm.yaml, not the google record's block.
+	byScheme map[string]ProviderAuth
 }
 
 // NewAuthIndex resolves every catalog provider's credential state.
 //
 // reg nil means foo's shared aim registry — the same one the listing
 // reads, so the providers described here are exactly the providers the
-// rows came from. lookup nil means "no secret store": every required
-// credential reports missing, which is the correct reading of "foo
-// cannot consult a store" and keeps the index usable in tests.
+// rows came from. lookup nil means "no secret store": a catalog-only
+// provider's credential reports missing, which is the correct reading
+// of "foo cannot consult a store"; an adapter scheme still resolves
+// through the rest of the precheck's chain.
 //
 // A registry read failure is returned rather than swallowed. Guessing
 // that nothing is configured would hide every model in the default view
@@ -157,26 +177,75 @@ func NewAuthIndex(ctx context.Context, reg *aim.Registry, lookup SecretLookup) (
 	if err != nil {
 		return nil, err
 	}
-	idx := &AuthIndex{byProvider: make(map[string]ProviderAuth, len(providers))}
+	envByProvider := make(map[string][]string, len(providers))
 	for _, p := range providers {
-		idx.byProvider[p.ID] = resolveAuth(ctx, p.ID, p.Env, lookup)
+		envByProvider[p.ID] = p.Env
 	}
-	return idx, nil
+	return NewAuthIndexFrom(ctx, envByProvider, lookup), nil
 }
 
 // NewAuthIndexFrom builds an index from an explicit provider→env-vars
 // map, bypassing aim. It is the seam tests use to pin the predicate
 // without a models.dev fetch, and the constructor a future non-aim
 // provider source would call.
+//
+// An adapter scheme is resolved through the precheck's chain only when
+// the map carries its provider record, so a provider absent from the
+// map keeps meaning "declares no requirement".
 func NewAuthIndexFrom(ctx context.Context, envByProvider map[string][]string, lookup SecretLookup) *AuthIndex {
-	idx := &AuthIndex{byProvider: make(map[string]ProviderAuth, len(envByProvider))}
+	idx := &AuthIndex{
+		byProvider: make(map[string]ProviderAuth, len(envByProvider)),
+		byScheme:   make(map[string]ProviderAuth, len(schemeKeyEnv)),
+	}
+	for scheme := range schemeKeyEnv {
+		if _, listed := envByProvider[catalogProviderFor(scheme)]; listed {
+			idx.byScheme[scheme] = resolveSchemeAuth(ctx, scheme, lookup)
+		}
+	}
 	for id, env := range envByProvider {
+		if scheme, ok := adapterSchemeFor(id); ok {
+			got := idx.byScheme[scheme]
+			got.Provider = id
+			idx.byProvider[id] = got
+			continue
+		}
 		idx.byProvider[id] = resolveAuth(ctx, id, env, lookup)
 	}
 	return idx
 }
 
-// resolveAuth decides one provider's state. A provider is satisfied when
+// resolveSchemeAuth decides an adapter scheme's state the way a run's
+// precheck does: the scheme's one env var (none for a local runtime),
+// then resolveSchemeKey's chain. Tier 1 asks foo's configured secret
+// store first, then the precheck's own lookup, so a key the run would
+// find is never reported missing. Only the source is kept; the key
+// value is dropped here.
+func resolveSchemeAuth(ctx context.Context, scheme string, lookup SecretLookup) ProviderAuth {
+	a := ProviderAuth{Provider: scheme}
+	envVar := envVarForScheme(scheme)
+	if envVar == "" {
+		return a
+	}
+	a.EnvVars = []string{envVar}
+	a.Required = true
+	a.SecretKey = SecretName(envVar)
+	own := func(envVar string) string {
+		if lookup != nil {
+			if v, ok, err := lookup(ctx, SecretName(envVar)); err == nil && ok && v != "" {
+				return v
+			}
+		}
+		return lookupAPIKey(envVar)
+	}
+	if key, src := resolveSchemeKey(scheme+"://", envVar, own); key != "" {
+		a.Configured = true
+		a.Source = src
+	}
+	return a
+}
+
+// resolveAuth decides a catalog-only provider's state (adapter schemes
+// go through resolveSchemeAuth). A provider is satisfied when
 // *any one* of its env vars resolves: aim lists alternatives, not a
 // conjunction — google's three names are three spellings of one key, and
 // requiring all three would report every google user as unconfigured.
@@ -200,6 +269,7 @@ func resolveAuth(ctx context.Context, provider string, envVars []string, lookup 
 		if _, ok, err := lookup(ctx, key); err == nil && ok {
 			a.SecretKey = key
 			a.Configured = true
+			a.Source = KeySourceSecret
 			return a
 		}
 	}
@@ -268,17 +338,42 @@ var schemeProviderAliases = map[string]string{
 // echoing "google" back at someone who asked about "gemini" would look
 // like a typo in foo rather than an answer.
 func (a *AuthIndex) LookupScheme(scheme string) ProviderAuth {
-	provider := scheme
-	if alias, ok := schemeProviderAliases[scheme]; ok {
-		provider = alias
+	if a != nil {
+		if got, ok := a.byScheme[scheme]; ok {
+			return got
+		}
 	}
-	got := a.Lookup(provider)
+	got := a.Lookup(catalogProviderFor(scheme))
 	got.Provider = scheme
 	return got
 }
 
+// catalogProviderFor returns the catalog provider id carrying a kit
+// scheme's record: its alias, or the scheme itself.
+func catalogProviderFor(scheme string) string {
+	if alias, ok := schemeProviderAliases[scheme]; ok {
+		return alias
+	}
+	return scheme
+}
+
+// adapterSchemeFor maps a catalog provider id onto the adapter scheme
+// whose precheck decides its key, if foo links one. An id that is itself
+// a scheme wins over an alias naming it (google is google, not gemini).
+func adapterSchemeFor(provider string) (string, bool) {
+	if _, ok := schemeKeyEnv[provider]; ok {
+		return provider, true
+	}
+	for scheme, alias := range schemeProviderAliases {
+		if alias == provider {
+			return scheme, true
+		}
+	}
+	return "", false
+}
+
 // ConfiguredProviders lists, sorted, the providers whose credential
-// requirement is met by a stored secret. It backs the "nothing is
+// requirement is met, from whichever source. It backs the "nothing is
 // reachable" guidance, which needs to distinguish "no keys at all" from
 // "keys, but none for the providers you filtered to".
 func (a *AuthIndex) ConfiguredProviders() []string {

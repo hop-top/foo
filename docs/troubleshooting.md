@@ -88,8 +88,9 @@ not fail the run: foo drops that entry and warns once on stderr
 named variable, or remove the entry.
 
 `foo provider list` shows registered schemes; `foo provider show
-<scheme>` shows whether the expected key is visible to foo. See
-[how-to/configure-models.md](how-to/configure-models.md).
+<scheme>` shows whether a run would find a key, from any of the
+sources above, and `--format json` adds `key_source` naming which
+one. See [how-to/configure-models.md](how-to/configure-models.md).
 
 ## Unknown model id routed to OpenAI
 

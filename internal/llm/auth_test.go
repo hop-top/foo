@@ -45,6 +45,7 @@ func TestSecretName(t *testing.T) {
 // be reported as usable. The old four-case switch answered "available"
 // for groq, which is exactly backwards.
 func TestAuthIndex_KeyedProviderNeedsItsKey(t *testing.T) {
+	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"groq":   {"GROQ_API_KEY"},
 		"openai": {"OPENAI_API_KEY"},
@@ -64,28 +65,31 @@ func TestAuthIndex_KeyedProviderNeedsItsKey(t *testing.T) {
 	}
 }
 
-// TestAuthIndex_AnyAlternativeSatisfies covers google, which accepts
-// three interchangeable spellings of one key. Requiring all of them
-// would report every google user as unconfigured.
+// TestAuthIndex_AnyAlternativeSatisfies covers a catalog provider that
+// accepts several interchangeable spellings of one key. Requiring all
+// of them would report every user of it as unconfigured. (An adapter
+// scheme such as google is answered by its precheck instead, which
+// reads one variable — see TestAuthIndex_GoogleNeedsThePrecheckKey.)
 func TestAuthIndex_AnyAlternativeSatisfies(t *testing.T) {
+	unsetKeyEnv(t)
 	env := map[string][]string{
-		"google": {"GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"},
+		"acme": {"ACME_API_KEY", "ACME_TOKEN", "ACME_KEY"},
 	}
-	for _, key := range []string{"google_api_key", "google_generative_ai_api_key", "gemini_api_key"} {
+	for _, key := range []string{"acme_api_key", "acme_token", "acme_key"} {
 		idx := NewAuthIndexFrom(context.Background(), env, stubLookup(key))
-		if !idx.Satisfied("google") {
-			t.Errorf("%s alone must satisfy google", key)
+		if !idx.Satisfied("acme") {
+			t.Errorf("%s alone must satisfy acme", key)
 		}
-		if got := idx.Lookup("google").SecretKey; got != key {
+		if got := idx.Lookup("acme").SecretKey; got != key {
 			t.Errorf("SecretKey = %q, want the alternative that resolved (%q)", got, key)
 		}
 	}
 	none := NewAuthIndexFrom(context.Background(), env, stubLookup())
-	if none.Satisfied("google") {
-		t.Error("no google alternative configured; want not satisfied")
+	if none.Satisfied("acme") {
+		t.Error("no acme alternative configured; want not satisfied")
 	}
 	// A missing verdict still names something concrete to set.
-	if got := none.Lookup("google").SecretKey; got != "google_api_key" {
+	if got := none.Lookup("acme").SecretKey; got != "acme_api_key" {
 		t.Errorf("unconfigured SecretKey = %q, want the first alternative", got)
 	}
 }
@@ -94,6 +98,7 @@ func TestAuthIndex_AnyAlternativeSatisfies(t *testing.T) {
 // provider declaring no env var needs no credential and is always
 // satisfied, with the "available" status `foo provider show` prints.
 func TestAuthIndex_NoEnvMeansNoAuth(t *testing.T) {
+	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"ollama": nil,
 	}, stubLookup())
@@ -113,6 +118,7 @@ func TestAuthIndex_NoEnvMeansNoAuth(t *testing.T) {
 // provider absent from the catalog — a self-hosted runtime with no
 // models.dev entry. No declared requirement means no requirement.
 func TestAuthIndex_UnknownProviderNeedsNoAuth(t *testing.T) {
+	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{"openai": {"OPENAI_API_KEY"}}, stubLookup())
 	if !idx.Satisfied("some-local-runtime") {
 		t.Error("a provider with no declared requirement must be satisfied")
@@ -134,19 +140,20 @@ func TestAuthIndex_NilIndexSatisfies(t *testing.T) {
 // TestAuthIndex_LookupErrorIsNotFatal checks one unreadable backend
 // entry does not make the remaining alternatives unaskable.
 func TestAuthIndex_LookupErrorIsNotFatal(t *testing.T) {
+	unsetKeyEnv(t)
 	lookup := func(_ context.Context, key string) (string, bool, error) {
-		if key == "google_api_key" {
+		if key == "acme_api_key" {
 			return "", false, errors.New("keyring locked")
 		}
-		if key == "gemini_api_key" {
+		if key == "acme_key" {
 			return "value", true, nil
 		}
 		return "", false, nil
 	}
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
-		"google": {"GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"},
+		"acme": {"ACME_API_KEY", "ACME_TOKEN", "ACME_KEY"},
 	}, lookup)
-	if !idx.Satisfied("google") {
+	if !idx.Satisfied("acme") {
 		t.Error("a later alternative resolved; the earlier error must not abort the scan")
 	}
 }
@@ -155,6 +162,7 @@ func TestAuthIndex_LookupErrorIsNotFatal(t *testing.T) {
 // guidance, which has to tell "no keys at all" from "keys, but not for
 // what you filtered to".
 func TestAuthIndex_ConfiguredProviders(t *testing.T) {
+	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"openai":  {"OPENAI_API_KEY"},
 		"groq":    {"GROQ_API_KEY"},
@@ -172,6 +180,7 @@ func TestAuthIndex_ConfiguredProviders(t *testing.T) {
 // contract: a row survives only when foo has both an adapter and a
 // credential for its provider.
 func TestFilterReachable_HidesKeylessAndUnroutable(t *testing.T) {
+	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"openai": {"OPENAI_API_KEY"},
 		"groq":   {"GROQ_API_KEY"},
@@ -269,6 +278,7 @@ func TestAuthIndex_SchemeSpellingsExistInCatalog(t *testing.T) {
 // TestAuthIndex_LookupSchemeResolvesAliases pins the translation itself,
 // against a fixture rather than the live catalog.
 func TestAuthIndex_LookupSchemeResolvesAliases(t *testing.T) {
+	unsetKeyEnv(t)
 	idx := NewAuthIndexFrom(context.Background(), map[string][]string{
 		"google":       {"GOOGLE_API_KEY"},
 		"fireworks-ai": {"FIREWORKS_API_KEY"},
