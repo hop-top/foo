@@ -323,6 +323,11 @@ func (e *shimEnv) runModel(cwd, tool, prompt string) modelRun {
 	require.NoError(e.t, err)
 
 	for i, ex := range exs {
+		// A refused recording or a stored failure is the root cause of
+		// any miss that follows it (an SDK retry, a fallback request).
+		require.Falsef(e.t, ex.Error != "" && !ex.Miss, "model request %d failed: %s", i+1, ex.Error)
+	}
+	for i, ex := range exs {
 		// Replay must never reach the network.
 		require.Falsef(e.t, mode == "replay" && ex.Live, "model request %d went live during replay", i+1)
 		require.Falsef(e.t, ex.Miss, "model request %d matches no recording (fingerprint %s): foo sent a request that differs from the recorded one. "+

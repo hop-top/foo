@@ -51,7 +51,9 @@ func init() {
 		// Record only what has no recording yet: a suite that repeats
 		// a call (same prompt, same tool) keeps one recording of it,
 		// and adding a case records just that case. Delete a
-		// recording to redo it.
+		// recording to redo it. An entry holding a failure counts as
+		// missing, and a failed live exchange is refused, never saved
+		// (see llmxrr.ErrRefused).
 		tr.Replay = xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette(os.Getenv(xrr.EnvCassetteDir)))
 	}
 	if root := os.Getenv(envRoot); root != "" {

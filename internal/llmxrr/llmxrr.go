@@ -64,15 +64,31 @@ type Exchange struct {
 	Live bool `json:"live"`
 	// Miss reports that replay found no recording for the request.
 	Miss bool `json:"miss"`
+	// Refused reports that record mode refused to save a failed
+	// exchange (see ErrRefused).
+	Refused bool `json:"refused"`
+	// Error is the error foo got instead of a response, if any.
+	Error string `json:"error,omitempty"`
 }
 
 // Transport is an http.RoundTripper that sends model-provider requests
 // through an xrr session and refuses every other request.
+//
+// Record mode saves successful exchanges only: a transport error or a
+// non-2xx status fails the request with ErrRefused, writes nothing, and
+// voids the rest of the recording (later misses fail the same way
+// without dialing). Replay hands back no stored failure either; see
+// ErrStoredFailure.
 type Transport struct {
+	// Session replays, records or passes through. Failures are kept
+	// out of the cassette only for a session that reports its Mode,
+	// as *xrr.FileSession does.
 	Session xrr.Session
 	// Replay, when set, is tried first; only a request it has no
 	// recording for goes to Session. With a record-mode Session this
-	// records just the missing calls and keeps every existing one.
+	// records just the missing calls and keeps every existing one. An
+	// entry holding a failure counts as missing, so recording again
+	// replaces it.
 	Replay xrr.Session
 	// Next carries record-mode requests to the network.
 	Next http.RoundTripper
@@ -91,10 +107,17 @@ type Transport struct {
 	adapter xhttp.Adapter
 	live    atomic.Int64
 	seen    atomic.Int64
+	refused atomic.Int64
+
+	mu      sync.Mutex
+	refusal error
 }
 
 // Live is the number of requests that reached the network.
 func (t *Transport) Live() int64 { return t.live.Load() }
+
+// Refused is the number of requests failed with ErrRefused.
+func (t *Transport) Refused() int64 { return t.refused.Load() }
 
 // Seen is the number of model requests the transport handled.
 func (t *Transport) Seen() int64 { return t.seen.Load() }
@@ -139,6 +162,11 @@ func (t *Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	var err error = xrr.ErrCassetteMiss
 	if t.Replay != nil {
 		resp, err = t.Replay.Record(r.Context(), &t.adapter, req, nil)
+		if _, failed := storedFailure(resp, err); failed {
+			// Never replay a stored failure: send the request again
+			// so a success overwrites it.
+			resp, err = nil, xrr.ErrCassetteMiss
+		}
 	}
 	if errors.Is(err, xrr.ErrCassetteMiss) {
 		resp, err = t.record(r, req, &ex)
@@ -146,39 +174,78 @@ func (t *Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.finish(r, req, fp, ex, resp, err)
 }
 
-// record sends req through Session: replayed in replay mode, sent live
-// and saved in record mode.
+// record sends req through Session: replayed in replay mode, passed
+// through in passthrough mode, and in record mode sent live and saved
+// only when it succeeded.
 func (t *Transport) record(r *http.Request, req *xhttp.Request, ex *Exchange) (xrr.Response, error) {
-	return t.Session.Record(r.Context(), &t.adapter, req, func() (xrr.Response, error) {
-		// Only record mode runs this; replay never touches the network.
-		t.live.Add(1)
-		ex.Live = true
-		out, lerr := t.Next.RoundTrip(r)
-		if lerr != nil {
-			return nil, lerr
-		}
-		defer out.Body.Close()
-		data, rerr := io.ReadAll(out.Body)
-		if rerr != nil {
-			return nil, rerr
-		}
-		return &xhttp.Response{
-			Status:  out.StatusCode,
-			Headers: map[string]string{"Content-Type": out.Header.Get("Content-Type")},
-			Body:    t.hide(string(data)),
-		}, nil
-	})
+	if modeOf(t.Session) != xrr.ModeRecord {
+		return t.Session.Record(r.Context(), &t.adapter, req, func() (xrr.Response, error) {
+			// Passthrough runs this; replay never touches the network.
+			return t.send(r, ex)
+		})
+	}
+	// xrr saves whatever do() returns, errors included, and offers no
+	// hook to skip a save: judge the live result first and hand the
+	// session only a success.
+	if err := t.voided(); err != nil {
+		return nil, err
+	}
+	out, lerr := t.send(r, ex)
+	status, body := 0, ""
+	if lerr == nil {
+		status, body = out.Status, out.Body
+	}
+	if err := CheckRecordable(r.Method, req.URL, status, []byte(body), lerr); err != nil {
+		t.void(err)
+		return nil, err
+	}
+	return t.Session.Record(r.Context(), &t.adapter, req, func() (xrr.Response, error) { return out, nil })
+}
+
+// send carries r to the network.
+func (t *Transport) send(r *http.Request, ex *Exchange) (*xhttp.Response, error) {
+	t.live.Add(1)
+	ex.Live = true
+	out, err := t.Next.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	data, err := io.ReadAll(out.Body)
+	if err != nil {
+		return nil, err
+	}
+	return &xhttp.Response{
+		Status:  out.StatusCode,
+		Headers: map[string]string{"Content-Type": out.Header.Get("Content-Type")},
+		Body:    t.hide(string(data)),
+	}, nil
 }
 
 // finish turns a session result into the response foo sees.
 func (t *Transport) finish(r *http.Request, req *xhttp.Request, fp string, ex Exchange, resp xrr.Response, err error) (*http.Response, error) {
 	if errors.Is(err, xrr.ErrCassetteMiss) {
-		ex.Miss = true
-		t.observe(ex)
-		return nil, fmt.Errorf("llmxrr: no recording for %s %s (fingerprint %s): the request differs from every recorded one; if the change is intended, re-record: %w",
+		err = fmt.Errorf("llmxrr: no recording for %s %s (fingerprint %s): the request differs from every recorded one; if the change is intended, re-record: %w",
 			r.Method, req.URL, fp, err)
+		if v := t.voided(); v != nil {
+			// A retry or fallback after a failure: lead with the cause.
+			err = fmt.Errorf("%w; after that, %w", v, err)
+		}
+		ex.Miss, ex.Error = true, err.Error()
+		t.observe(ex)
+		return nil, err
+	}
+	if what, failed := storedFailure(resp, err); failed {
+		err = fmt.Errorf("%w: %s %s (fingerprint %s): %s; a failure is never a valid recording: re-record it (record mode treats it as missing)",
+			ErrStoredFailure, r.Method, req.URL, fp, what)
+		t.void(err)
 	}
 	if err != nil {
+		if errors.Is(err, ErrRefused) {
+			ex.Refused = true
+			t.refused.Add(1)
+		}
+		ex.Error = err.Error()
 		t.observe(ex)
 		return nil, err
 	}

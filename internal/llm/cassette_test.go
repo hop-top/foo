@@ -2,13 +2,17 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"hop.top/foo/internal/llmxrr"
 	xrr "hop.top/xrr"
 	xhttp "hop.top/xrr/adapters/http"
 )
@@ -36,6 +40,8 @@ type xrrTransport struct {
 	sess  xrr.Session
 	next  http.RoundTripper
 	adapt *xhttp.Adapter
+	// record is set under -update.
+	record bool
 
 	// live counts round-trips that actually reached the network. In
 	// replay it must stay zero; a non-zero count means the cassette
@@ -53,19 +59,24 @@ type xrrTransport struct {
 func (t *xrrTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	req := &xhttp.Request{Method: r.Method, URL: r.URL.String()}
 
-	resp, err := t.sess.Record(r.Context(), t.adapt, req, func() (xrr.Response, error) {
-		// do() only runs in record mode; replay never calls it.
+	// xrr saves whatever do() returns, failures included: send first
+	// and hand the session only a success (see llmxrr.CheckRecordable).
+	var recorded xrr.Response
+	if t.record {
 		t.live.Add(1)
-		live, lerr := t.next.RoundTrip(r)
-		if lerr != nil {
-			return nil, lerr
+		out, lerr := t.liveRoundTrip(r)
+		status, body := 0, ""
+		if lerr == nil {
+			status, body = out.Status, out.Body
 		}
-		defer live.Body.Close()
-		body, rerr := io.ReadAll(live.Body)
-		if rerr != nil {
-			return nil, rerr
+		if err := llmxrr.CheckRecordable(r.Method, llmxrr.RecordedURL(r.URL), status, []byte(body), lerr); err != nil {
+			return nil, err
 		}
-		return &xhttp.Response{Status: live.StatusCode, Body: string(body)}, nil
+		recorded = out
+	}
+	resp, err := t.sess.Record(r.Context(), t.adapt, req, func() (xrr.Response, error) {
+		// Record mode only, with the response already judged.
+		return recorded, nil
 	})
 	if err != nil {
 		return nil, err
@@ -93,6 +104,19 @@ func (t *xrrTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+func (t *xrrTransport) liveRoundTrip(r *http.Request) (*xhttp.Response, error) {
+	live, err := t.next.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	defer live.Body.Close()
+	body, err := io.ReadAll(live.Body)
+	if err != nil {
+		return nil, err
+	}
+	return &xhttp.Response{Status: live.StatusCode, Body: string(body)}, nil
+}
+
 // newCassetteClient returns an http.Client backed by the cassette, plus
 // the transport so the test can assert on the seam and live counters.
 func newCassetteClient(t *testing.T) (*http.Client, *xrrTransport) {
@@ -102,9 +126,10 @@ func newCassetteClient(t *testing.T) (*http.Client, *xrrTransport) {
 		mode = xrr.ModeRecord
 	}
 	transport := &xrrTransport{
-		sess:  xrr.NewSession(mode, xrr.NewFileCassette(cassetteDir)),
-		next:  http.DefaultTransport,
-		adapt: xhttp.NewAdapter(),
+		sess:   xrr.NewSession(mode, xrr.NewFileCassette(cassetteDir)),
+		next:   http.DefaultTransport,
+		adapt:  xhttp.NewAdapter(),
+		record: *updateCassettes,
 	}
 	// Counting here is what proves the source used the injected
 	// client rather than building its own.
@@ -165,5 +190,28 @@ func TestEndpointCatalog_RealResponseFromCassette(t *testing.T) {
 	// models.dev id uses, which is the recorded shape worth pinning.
 	if !strings.Contains(got[0].ID, ":") {
 		t.Logf("first recorded id %q has no tag suffix", got[0].ID)
+	}
+}
+
+// Re-recording against a failing endpoint writes nothing: a failed
+// exchange in the cassette would replay forever.
+func TestXRRTransport_RecordRefusesFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"down"}`, http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	tr := &xrrTransport{
+		sess:   xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(dir)),
+		next:   http.DefaultTransport,
+		adapt:  xhttp.NewAdapter(),
+		record: true,
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/models", nil)
+	if _, err := tr.RoundTrip(req); !errors.Is(err, llmxrr.ErrRefused) {
+		t.Fatalf("err = %v, want llmxrr.ErrRefused", err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*")); len(m) != 0 {
+		t.Fatalf("failure written to the cassette: %v", m)
 	}
 }

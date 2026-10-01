@@ -39,7 +39,8 @@ cassettes recorded from the real provider; `go test ./...` never dials one.
 Recording happens only when you ask for it with `-update`. Cassettes never
 hold keys: auth headers are not recorded, Gemini's `?key=` is dropped from
 the URL, and every run fails if a cassette matches a key shape or the key
-you recorded with.
+you recorded with. A plain `go test ./internal/llmxrr` also scans every
+committed `testdata/cassettes` dir for key shapes and stored failures.
 
 | Suite | Cassettes | Record |
 |-------|-----------|--------|
@@ -48,6 +49,7 @@ you recorded with.
 | Tool round, OpenRouter | `internal/tool/testdata/cassettes/openrouter` | `OPENROUTER_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/openrouter' -update` (model `openai/gpt-4.1-nano`) |
 | Tool round, Anthropic | `internal/tool/testdata/cassettes/anthropic` | `ANTHROPIC_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/anthropic' -update` |
 | Tool round, Gemini | `internal/tool/testdata/cassettes/gemini` | `GOOGLE_API_KEY=... go test ./internal/tool -run 'TestRecordedToolRound/gemini' -update` (`GEMINI_API_KEY` also works) |
+| Endpoint catalog | `internal/llm/testdata/cassettes` | `go test ./internal/llm -run 'TestEndpointCatalog_RealResponseFromCassette' -update` (an OpenAI-compatible server at `127.0.0.1:11434/v1`) |
 | e2e `-T` shim calls | `tests/e2e/testdata/cassettes/tool-model` | `OPENAI_API_KEY=... go test ./tests/e2e -run 'TestToolShims\|TestToolPlugins' -update -timeout 60m` |
 
 A provider with no cassettes yet is skipped, and the skip names its record
@@ -62,9 +64,21 @@ to record it again. Paths under the test's scratch dir are stored as
 `{{root}}`, and tool results are left out of the fingerprint, since what a
 local command prints differs between macOS and Linux.
 
+Only successful exchanges are recorded. A transport error (a bad base URL,
+a refused connection) or a non-2xx status (a 400 for a bad request, a 401
+for a wrong key, a 429 or 5xx) fails the recording with `refusing to record
+a failed exchange`, naming the method, path and status, and writes nothing;
+fix the cause and record again. Once a request is refused, every later
+unrecorded request in that run fails the same way without reaching the
+provider, so SDK retries and fallbacks spend no calls. A cassette that
+already holds a failure (recorded before this rule) never replays as a
+reply: replay fails with `cassette holds a failed exchange`, and recording
+again treats the entry as missing and overwrites it.
+
 A replay that "matches no recording" means foo now sends a different
 request than the one recorded. If the change is intended, record again; if
-not, the test caught it.
+not, the test caught it. When the error leads with a refusal or a stored
+failure, that is the cause: the miss is the retry or fallback after it.
 
 ## Releases
 
