@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -51,10 +53,35 @@ func runTests(m *testing.M) int {
 	return m.Run()
 }
 
+// aimCatalogFixture is a small hand-written models.dev catalog: openai
+// and anthropic, plus fixturecloud, a provider only this file knows, so
+// a test can tell the fixture answered rather than a live catalog.
+const aimCatalogFixture = "testdata/aim/models-dev.json"
+
+// seedAimCatalog installs aimCatalogFixture as a fresh aim catalog
+// cache under cacheHome (an XDG_CACHE_HOME), unless one is there. A
+// fresh cache is served as is: foo never fetches models.dev, so the
+// suite needs no network and every run sees the same catalog.
+func seedAimCatalog(t *testing.T, cacheHome string) {
+	t.Helper()
+	dir := filepath.Join(cacheHome, "hop", "aim")
+	payload := filepath.Join(dir, "models-dev.json")
+	if _, err := os.Stat(payload); err == nil {
+		return
+	}
+	data, err := os.ReadFile(aimCatalogFixture)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(payload, data, 0o600))
+	meta := fmt.Sprintf(`{"last_fetch":%q,"ttl_seconds":%d}`, time.Now().UTC().Format(time.RFC3339Nano), int64(30*24*time.Hour/time.Second))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o600))
+}
+
 // runFoo executes the foo binary against an isolated $HOME, returning
 // stdout, stderr, and the exec error.
 func runFoo(t *testing.T, tmpHome string, args ...string) (string, string, error) {
 	t.Helper()
+	seedAimCatalog(t, filepath.Join(tmpHome, ".cache"))
 	cmd := exec.Command(fooBin, args...)
 
 	cmd.Env = append(os.Environ(),
@@ -262,6 +289,38 @@ func TestCLI_Provider(t *testing.T) {
 		require.Contains(t, stdout, "openai")
 		require.Contains(t, stdout, "configured")
 	})
+
+	// show answers from the key, not unconditionally, and for a
+	// provider known only from the catalog fixture: no live catalog
+	// was needed to know fixturecloud wants FIXTURECLOUD_API_KEY.
+	show := func(t *testing.T, scheme string) map[string]string {
+		t.Helper()
+		stdout, stderr, err := runFoo(t, tmpDir, "provider", "show", scheme, "--format=json")
+		require.NoError(t, err, stderr)
+		var got map[string]string
+		require.NoError(t, json.Unmarshal([]byte(stdout), &got), stdout)
+		return got
+	}
+	for _, tc := range []struct{ scheme, env, secret string }{
+		{"openai", "OPENAI_API_KEY", "openai_api_key"},
+		{"fixturecloud", "FIXTURECLOUD_API_KEY", "fixturecloud_api_key"},
+	} {
+		t.Run("show "+tc.scheme+" without key", func(t *testing.T) {
+			for _, name := range []string{tc.env, "LLM_API_KEY"} {
+				t.Setenv(name, "") // restores the caller's value after
+				require.NoError(t, os.Unsetenv(name))
+			}
+			got := show(t, tc.scheme)
+			require.Equal(t, "missing", got["status"], got)
+			require.Equal(t, "api_key", got["auth_type"], got)
+			require.Equal(t, tc.secret, got["secret_key"], got)
+		})
+		t.Run("show "+tc.scheme+" with key", func(t *testing.T) {
+			t.Setenv(tc.env, "sk-test123456789")
+			got := show(t, tc.scheme)
+			require.Equal(t, "configured", got["status"], got)
+		})
+	}
 }
 
 func TestCLI_Model(t *testing.T) {

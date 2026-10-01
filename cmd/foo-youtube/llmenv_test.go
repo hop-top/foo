@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"hop.top/foo/internal/testutil"
 	kitllm "hop.top/kit/go/ai/llm"
 )
 
@@ -45,29 +46,14 @@ func runIsolated(m *testing.M) int {
 			testCallerEnv = append(testCallerEnv, kv)
 		}
 	}
-	home, err := os.MkdirTemp("", "foo-youtube-test-home-")
+	// The go dirs are pinned first, so the fake yt-dlp builds against
+	// the caller's module and build caches, not an empty one.
+	cleanup, err := testutil.IsolateUserDirs()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "foo-youtube tests: temp HOME:", err)
+		fmt.Fprintln(os.Stderr, "foo-youtube tests: isolate user dirs:", err)
 		return 1
 	}
-	defer os.RemoveAll(home)
-	for name, sub := range map[string]string{
-		"HOME":            "",
-		"XDG_CONFIG_HOME": ".config",
-		"XDG_CACHE_HOME":  ".cache",
-		"XDG_DATA_HOME":   ".local/share",
-		"XDG_STATE_HOME":  ".local/state",
-	} {
-		dir := home
-		if sub != "" {
-			dir = home + "/" + sub
-		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			fmt.Fprintln(os.Stderr, "foo-youtube tests:", err)
-			return 1
-		}
-		os.Setenv(name, dir)
-	}
+	defer cleanup()
 	for _, name := range llmEnvNames {
 		os.Unsetenv(name)
 	}

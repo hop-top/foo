@@ -1,0 +1,29 @@
+{
+  "openai": {
+    "id": "openai",
+    "name": "OpenAI",
+    "api": "https://api.openai.com/v1",
+    "env": ["OPENAI_API_KEY"],
+    "models": {
+      "gpt-4o": {"id": "gpt-4o", "name": "GPT-4o", "family": "gpt", "modalities": {"input": ["text", "image"], "output": ["text"]}, "tool_call": true, "reasoning": false, "open_weights": false, "cost": {"input": 2.5, "output": 10}, "limit": {"context": 128000, "output": 16384}},
+      "gpt-4o-mini": {"id": "gpt-4o-mini", "name": "GPT-4o mini", "family": "gpt", "modalities": {"input": ["text", "image"], "output": ["text"]}, "tool_call": true, "reasoning": false, "open_weights": false, "cost": {"input": 0.15, "output": 0.6}, "limit": {"context": 128000, "output": 16384}}
+    }
+  },
+  "anthropic": {
+    "id": "anthropic",
+    "name": "Anthropic",
+    "env": ["ANTHROPIC_API_KEY"],
+    "models": {
+      "claude-sonnet-4-5": {"id": "claude-sonnet-4-5", "name": "Claude Sonnet 4.5", "family": "claude", "modalities": {"input": ["text", "image"], "output": ["text"]}, "tool_call": true, "reasoning": true, "open_weights": false, "cost": {"input": 3, "output": 15}, "limit": {"context": 200000, "output": 64000}}
+    }
+  },
+  "fixturecloud": {
+    "id": "fixturecloud",
+    "name": "Fixture Cloud",
+    "api": "https://fixturecloud.invalid/v1",
+    "env": ["FIXTURECLOUD_API_KEY"],
+    "models": {
+      "fixture-1": {"id": "fixture-1", "name": "Fixture 1", "modalities": {"input": ["text"], "output": ["text"]}, "tool_call": false, "reasoning": false, "open_weights": true, "limit": {"context": 8192, "output": 2048}}
+    }
+  }
+}
