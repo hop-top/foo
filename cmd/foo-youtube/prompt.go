@@ -23,10 +23,13 @@ import (
 // model whichever entry point the user reaches for.
 const youtubeModelDefault = "claude-3-5-sonnet-latest"
 
-// exitUnauthorized is the §8.1 slot for a missing credential. A prompt
+// exitUnauthorized is kit's unauthorized exit (§8.1, the same slot as
+// output.UnauthorizedError and the host's missing-key exit). A prompt
 // run that cannot authenticate is not a usage error (the invocation was
-// well-formed) and not a fetch error (nothing was fetched).
-const exitUnauthorized = 4
+// well-formed) and not a fetch error (nothing was fetched). It shares
+// slot 5 with exitMissingDep; the structured code (UNAUTHORIZED vs
+// MISSING_DEPENDENCY) tells them apart.
+const exitUnauthorized = 5
 
 func unauthorizedErrorf(format string, a ...any) *exitError {
 	return &exitError{cli: &output.Error{
@@ -163,7 +166,7 @@ func schemeForModel(model string) string {
 // aliases and aim catalog providers included), then LLM_API_KEY for a
 // provider that requires one. A local runtime (ollama, routellm) needs
 // none. A required key found nowhere fails here with an actionable
-// message and exit 4 rather than as an opaque 401 from the provider;
+// message and exit 5 rather than as an opaque 401 from the provider;
 // any other error passes through unchanged.
 //
 // The returned URI holds the key: never log or print it.
