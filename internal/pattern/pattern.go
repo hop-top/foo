@@ -37,12 +37,35 @@ func LoadPattern(patternsPath, name string) (*Pattern, error) {
 	return nil, fmt.Errorf("pattern %q not found", name)
 }
 
-func Create(patternsPath, name, system string) error {
+// Dir returns the directory that holds the named pattern under
+// patternsPath, rejecting a name Create, Import and Delete would refuse.
+func Dir(patternsPath, name string) (string, error) {
 	name, err := normalizeName(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(patternsPath, name), nil
+}
+
+// ImportName is the name Import stores srcPath under: name when given,
+// otherwise derived from the source path.
+func ImportName(srcPath, name string) string {
+	if name != "" {
+		return name
+	}
+	name = filepath.Base(filepath.Dir(srcPath))
+	if name == "." || name == "/" || name == "patterns" {
+		name = strings.TrimSuffix(filepath.Base(srcPath), ".md")
+	}
+	return name
+}
+
+func Create(patternsPath, name, system string) error {
+	dir, err := Dir(patternsPath, name)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(patternsPath, name, "system.md")
+	path := filepath.Join(dir, "system.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -50,18 +73,10 @@ func Create(patternsPath, name, system string) error {
 }
 
 func Import(patternsPath, srcPath, name string) error {
-	if name == "" {
-		name = filepath.Base(filepath.Dir(srcPath))
-		if name == "." || name == "/" || name == "patterns" {
-			name = strings.TrimSuffix(filepath.Base(srcPath), ".md")
-		}
-	}
-	name, err := normalizeName(name)
+	destDir, err := Dir(patternsPath, ImportName(srcPath, name))
 	if err != nil {
 		return err
 	}
-
-	destDir := filepath.Join(patternsPath, name)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
@@ -83,12 +98,11 @@ func Import(patternsPath, srcPath, name string) error {
 }
 
 func Delete(patternsPath, name string) error {
-	name, err := normalizeName(name)
+	dir, err := Dir(patternsPath, name)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(patternsPath, name)
-	return os.RemoveAll(path)
+	return os.RemoveAll(dir)
 }
 
 func List(patternsPath string) ([]string, error) {

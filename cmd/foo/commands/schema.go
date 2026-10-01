@@ -103,6 +103,9 @@ persistence; the JSON path stores the schema verbatim.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			if isDryRun(cmd) {
+				return planSchemaCreate(cmd, name, filePath, args)
+			}
 			store, err := openSchemaStore()
 			if err != nil {
 				return err
@@ -147,6 +150,9 @@ func schemaDeleteCmd() *cobra.Command {
 		Long:  "Remove a schema from the local store. Local irreversible.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isDryRun(cmd) {
+				return planSchemaDelete(cmd, args[0])
+			}
 			store, err := openSchemaStore()
 			if err != nil {
 				return err
@@ -184,16 +190,24 @@ func schemaCompileCmd() *cobra.Command {
 	return cmd
 }
 
-func openSchemaStore() (*schema.Store, error) {
+// schemaDBPath is where the schema store lives.
+func schemaDBPath() (string, error) {
 	stateDir, err := xdg.StateDir("foo")
 	if err != nil {
-		return nil, fmt.Errorf("state dir: %w", err)
+		return "", fmt.Errorf("state dir: %w", err)
 	}
+	return filepath.Join(stateDir, "schemas.db"), nil
+}
+
+func openSchemaStore() (*schema.Store, error) {
+	dbPath, err := schemaDBPath()
+	if err != nil {
+		return nil, err
+	}
+	stateDir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, err
 	}
-
-	dbPath := filepath.Join(stateDir, "schemas.db")
 
 	// Back up the live DB into <stateDir>/.dbs/ before NewStore migrates.
 	// No-op on first run; timestamped copy otherwise. Backups stay in a

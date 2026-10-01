@@ -39,7 +39,7 @@ foo -m gpt-4o-mini strategy list
 ```
 
 Only persistent flags (`--budget`, `--picker-debug`, and the kit
-globals) are inherited by subcommands.
+globals, `--dry-run` among them) are inherited by subcommands.
 
 Piping with no positional prompt is an error rather than a REPL, since
 stdin is not a terminal:
@@ -58,7 +58,6 @@ foo < /dev/null
 | `--model` | `-m` | (config) | Model override for this call (bare id, or a full `scheme://model` URI) |
 | `--max-tokens` | | `0` | Cap completion length in tokens (`0` = provider default, field omitted) |
 | `--no-stream` | | `false` | Wait for full response |
-| `--dry-run` | | `false` | Print assembled prompt and exit |
 | `--tool` | `-T` | (none) | Enable tools by name (repeatable); names come from [`foo tool list`](#tool). An unknown name fails with exit 3 before any model call |
 | `--chain-limit` | | `5` | Max tool-call iterations |
 | `--tools-debug` | | `false` | Log tool calls + results to stderr |
@@ -76,7 +75,8 @@ foo < /dev/null
 | `--confirm` | Confirm policy: `auto` (default), `yes`, `no`, `prompt` |
 | `--format` | `csv`, `human`, `json`, `table`, `text`, `yaml` |
 | `--cols` / `--columns` | Restrict columns (repeatable) |
-| `-C, --chdir` | Change directory before running |
+| `-C, --chdir` | Change directory before anything else runs, so the project `.foo.yaml`, `.foo/patterns` and the fragment workspace come from there. A directory that does not exist fails the run |
+| `--dry-run` | Preview without acting; see [Dry runs](#dry-runs) |
 | `-o, --output` | Write output to path (`-` for stdout) |
 | `--template` | Go text/template applied to results |
 | `--format-help` | Show available formats |
@@ -121,9 +121,34 @@ $ echo $?
 10
 ```
 
-Exit 5 is kit's class for a call a policy forbids: running the same
-command again cannot succeed. The `OFFLINE` code distinguishes it
-from a missing or rejected API key (`UNAUTHORIZED`, also 5).
+Exit 10 is foo's own code. kit's exit 5 (`UNAUTHORIZED`) means a
+missing or rejected API key, which a key fixes; no key fixes an
+offline refusal.
+
+### Dry runs
+
+`--dry-run` is kit's global flag. It previews and changes nothing,
+anywhere on the line:
+
+| Command | Under `--dry-run` |
+|---------|-------------------|
+| `foo "<prompt>"` | Prints the assembled prompt (system, fragments, schema contract) and exits: no model call, no workspace record, no first-run `llm.yaml` |
+| Write and destructive leaves: `pattern create\|import\|delete`, `schema create\|delete`, `fragment create\|delete`, `embed add\|file`, `embed collection delete`, `model default`, `upgrade` | Checks the input as the real run would, then prints the plan of effects (`--format json` or `yaml` for a machine-readable plan). A destructive leaf needs no `--confirm`, since nothing is applied. `embed` makes no embeddings call; `upgrade` checks for a release but installs nothing |
+| Read leaves (`list`, `show`, `status`, …) | Accepted, no effect |
+| `repl`, and the bare `foo` with no prompt | Refused: an interactive session has no preview |
+| `alias add\|delete`, `tool install\|uninstall` | Refused: these have no preview mode |
+
+```
+$ foo pattern delete reviewer --dry-run --format json
+{
+  "command": "foo pattern delete",
+  "args": { "name": "reviewer" },
+  "effects": [
+    { "kind": "delete", "target": "~/.config/foo/patterns/reviewer", "reversible": false, "detail": "remove pattern \"reviewer\"" }
+  ],
+  ...
+}
+```
 
 ## `embed`
 
