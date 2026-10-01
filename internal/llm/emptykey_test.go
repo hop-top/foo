@@ -164,8 +164,10 @@ func TestEmptyKey_SurfacesAgree(t *testing.T) {
 					store := src.apply(t, xdg, kind.provider, kind.envVar, st)
 
 					// A source outside kit's key plan cannot key a
-					// provider no adapter serves: no run reaches it.
-					want := st.present && (kind.routed || !src.kitOnly)
+					// provider no adapter serves, its own llm.yaml
+					// block aside: kit attaches that key to its
+					// scheme, so the index reports it too.
+					want := st.present && (kind.routed || !src.kitOnly || src.ownBlock)
 					wantStatus := map[bool]string{true: "configured", false: "missing"}[want]
 
 					idx := NewAuthIndexFrom(context.Background(), map[string][]string{

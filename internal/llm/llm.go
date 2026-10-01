@@ -345,7 +345,7 @@ func fallbackURIs(ctx context.Context, store secret.Store, uri string) []string 
 	primaryScheme := schemeOf(uri)
 	out := make([]string, 0, len(cfg.Fallbacks))
 	for _, fb := range cfg.Fallbacks {
-		keyed, err := kitllm.ApplyAPIKey(ctx, &namedStore{inner: store}, fb)
+		keyed, err := kitllm.ApplyAPIKey(ctx, storeFor(store), fb)
 		if err != nil {
 			warnDroppedFallback(fb, err)
 			continue
@@ -389,12 +389,16 @@ func warnDroppedFallback(fb string, err error) {
 		return
 	}
 	envVar := firstEnvVar(missing)
-	slog.Warn(
-		"llm.fallback.dropped: fallback has no API key; skipping it",
+	attrs := []any{
 		slog.String("fallback", id),
 		slog.String("missing", envVar),
 		slog.String("hint", "export "+envVar+"=... to enable it, or remove it from LLM_FALLBACK / llm.yaml fallback:"),
-	)
+	}
+	if missing.StoreErr != nil {
+		// The key may sit in a store that could not be read.
+		attrs = append(attrs, slog.String("store_error", missing.StoreErr.Error()))
+	}
+	slog.Warn("llm.fallback.dropped: fallback has no API key; skipping it", attrs...)
 }
 
 // schemeForModel maps a bare model id to its kit URI scheme. The

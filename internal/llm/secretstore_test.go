@@ -173,6 +173,58 @@ func TestApplyKey_StoreBeforeEnv(t *testing.T) {
 	}
 }
 
+// TestApplyKey_StoreFailureIsSurfaced: a store backend failure never
+// stops the search, and is never dropped either. With no key anywhere
+// the missing-key error names it, so "missing" for a key that sits in
+// a locked keychain explains itself; with a key from the environment
+// the run goes on and the failure is logged.
+func TestApplyKey_StoreFailureIsSurfaced(t *testing.T) {
+	unsetKeyEnv(t)
+	ctx := context.Background()
+	uri := "openrouter://openai/gpt-4.1-nano"
+	failing := newFakeStore()
+	failing.errs["openrouter_api_key"] = errors.New("keyring locked")
+
+	_, err := applyKey(ctx, failing, uri)
+	assertMissingKeyError(t, err, "OPENROUTER_API_KEY", "openrouter")
+	if err == nil || !strings.Contains(err.Error(), "keyring locked") {
+		t.Errorf("missing-key error hides the store failure: %v", err)
+	}
+
+	warnings := captureWarnings(t)
+	t.Setenv("OPENROUTER_API_KEY", "sk-or-env")
+	got, err := applyKey(ctx, failing, uri)
+	if err != nil {
+		t.Fatalf("applyKey with an env key behind a failing store: %v", err)
+	}
+	if k := parseOrFatal(t, got).Params["api_key"]; k != "sk-or-env" {
+		t.Errorf("api_key = %q, want the env key", k)
+	}
+	if !strings.Contains(warnings.String(), "keyring locked") {
+		t.Errorf("store failure not logged: %q", warnings.String())
+	}
+}
+
+// TestFallbackURIs_DropNamesStoreFailure: a fallback dropped for a
+// missing key whose store lookup failed says so, so the warning does
+// not send the user to export a key that sits in a locked keychain.
+func TestFallbackURIs_DropNamesStoreFailure(t *testing.T) {
+	unsetKeyEnv(t)
+	warnings := captureWarnings(t)
+	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
+	t.Setenv("LLM_FALLBACK", "openrouter://openai/gpt-4.1-nano")
+	failing := newFakeStore()
+	failing.errs["openrouter_api_key"] = errors.New("keyring locked")
+
+	if got := fallbackURIs(context.Background(), failing, "openai://primary"); len(got) != 0 {
+		t.Fatalf("fallbackURIs = %q, want the keyless entry dropped", got)
+	}
+	out := warnings.String()
+	if !strings.Contains(out, "missing=OPENROUTER_API_KEY") || !strings.Contains(out, "keyring locked") {
+		t.Errorf("drop warning = %q, want the missing variable and the store failure", out)
+	}
+}
+
 // TestApplyKey_NilStoreIsEnvOnly: with no store configured the lookup
 // is the environment (and llm.yaml), as before stores existed.
 func TestApplyKey_NilStoreIsEnvOnly(t *testing.T) {

@@ -118,6 +118,12 @@ precedence first:
 3. `$XDG_CONFIG_HOME/hop/llm.yaml` `providers.<scheme>.base_url`
 4. the provider's default endpoint
 
+A provider's llm.yaml block may sit under any of its names: a scheme
+with no block of its own reads the block of the provider it names
+(`gemini://` reads `providers.google`, `fireworks-ai://` reads
+`providers.fireworks`, and back). Its own block wins; blocks are
+never merged. The same block supplies `api_key` and `api_key_env`.
+
 ```
 $ cat ~/.config/hop/llm.yaml
 providers:
@@ -133,7 +139,7 @@ sends the request to `localhost:4000`, with `OPENROUTER_API_KEY`.
 Keys resolve through kit (`llm.ApplyAPIKey`), the same for bare ids and
 URIs, highest precedence first:
 
-1. `api_key` on the model URI
+1. `api_key` on the model URI, unless blank
 2. `$XDG_CONFIG_HOME/hop/llm.yaml` `providers.<scheme>.api_key`, then
    the variable `api_key_env` names
 3. the scheme's own variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
@@ -141,6 +147,10 @@ URIs, highest precedence first:
    `GROQ_API_KEY`, ... (aliases such as `fireworks-ai` and aim catalog
    providers included)
 4. `LLM_API_KEY`
+
+A blank value (empty or only whitespace) counts as unset at every
+step, so an exported `OPENAI_API_KEY="  "` is a missing key, and a
+blank `?api_key=` is dropped and the key resolved as above.
 
 A provider never receives another provider's key: an OpenRouter model
 with only `OPENAI_API_KEY` set is a missing key. Local runtimes (ollama,

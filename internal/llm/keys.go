@@ -1,8 +1,10 @@
-// Provider keys. Kit resolves them (kitllm.ApplyAPIKey): which
-// variables a scheme reads, in what order, from llm.yaml, the secret
-// store, the environment and LLM_API_KEY. foo keeps only its own policy
-// around that call: the secret-store names it documents, the exit code
-// and wording of a missing key, and what a fallback without a key does.
+// Provider keys. Kit resolves them (kitllm.ApplyAPIKey for a run,
+// kitllm.ResolveAPIKey to say where a key came from): which variables a
+// scheme reads, in what order, from llm.yaml, the secret store, the
+// environment and LLM_API_KEY, what counts as blank, and what a store
+// backend failure does. foo keeps only its own policy around those
+// calls: the secret-store names it documents, the exit code and wording
+// of a missing key, and what a fallback without a key does.
 
 package llm
 
@@ -10,7 +12,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	kitllm "hop.top/kit/go/ai/llm"
@@ -20,14 +21,17 @@ import (
 
 // applyKey returns uri with its provider's key set as the api_key
 // param, which is where kit's Resolve reads it from. uri must name its
-// scheme. A URI already carrying api_key, a local runtime without its
-// own key, and a scheme no adapter serves come back unchanged (kit
-// reports the last one itself, at Resolve).
+// scheme. A URI already carrying a non-blank api_key, a local runtime
+// without its own key, and a scheme no adapter serves whose llm.yaml
+// block names no key come back unchanged (kit reports the last one
+// itself, at Resolve). A blank api_key is dropped and the key resolved.
 //
 // A required key found nowhere is foo's precheck failure
-// (missingKeyError); any other kit error is returned as is.
+// (missingKeyError); any other kit error is returned as is. A store
+// backend failure does not stop the search: kit logs it when another
+// source has the key, and missingKeyError names it when none does.
 func applyKey(ctx context.Context, store secret.Store, uri string) (string, error) {
-	keyed, err := kitllm.ApplyAPIKey(ctx, &namedStore{inner: store}, uri)
+	keyed, err := kitllm.ApplyAPIKey(ctx, storeFor(store), uri)
 	var missing *kitllm.MissingKeyError
 	if errors.As(err, &missing) {
 		return "", missingKeyError(missing)
@@ -45,24 +49,28 @@ func applyKey(ctx context.Context, store secret.Store, uri string) (string, erro
 // (errors.Is kitllm.ErrMissingKey), left for the caller to word. A
 // scheme that needs no key returns "".
 func APIKey(ctx context.Context, store secret.Store, uri string) (string, error) {
-	keyed, err := kitllm.ApplyAPIKey(ctx, &namedStore{inner: store}, uri)
+	keyed, err := kitllm.ApplyAPIKey(ctx, storeFor(store), uri)
 	if err != nil {
 		return "", err
 	}
 	parsed, err := kitllm.ParseURI(keyed)
 	if err != nil {
-		// ParseURI quotes its input, which now carries the key.
-		return "", errors.New("llm: provider URI must be scheme://model")
+		return "", err // kit masks the key in the URI it quotes
 	}
 	return parsed.Params["api_key"], nil
 }
 
 // missingKeyError is the precheck failure every path shares, so a bare
 // id, a URI and a pool pick all name the variable to set the same way:
-// the first one kit consulted, the highest-precedence name.
+// the first one kit consulted, the highest-precedence name. A secret
+// store that failed on the way is named too: the key may sit in it.
 func missingKeyError(m *kitllm.MissingKeyError) error {
 	envVar := firstEnvVar(m)
-	return output.UnauthorizedError(fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, m.Model, m.Scheme, envVar))
+	msg := fmt.Sprintf("missing %s for model %q (provider %s); export %s=... and retry, or switch models with `foo model default <model>`", envVar, m.Model, m.Scheme, envVar)
+	if m.StoreErr != nil {
+		msg += " (" + m.StoreErr.Error() + ")"
+	}
+	return output.UnauthorizedError(msg)
 }
 
 // firstEnvVar is the variable a missing-key message tells the user to
@@ -77,65 +85,48 @@ func firstEnvVar(m *kitllm.MissingKeyError) string {
 
 // blankKey reports whether v holds no key: it is empty or only
 // whitespace. kit applies the same rule at every key source, so foo's
-// own lookups (lookupCatalogKey) apply it too.
+// own lookup for a provider kit cannot reach (lookupCatalogKey)
+// applies it too.
 func blankKey(v string) bool { return strings.TrimSpace(v) == "" }
 
 // SecretName maps an env var name onto the key foo's secret store
 // knows it by.
 //
 // Kit asks a store for a provider's key under the variable's own name
-// (OPENAI_API_KEY). foo's store is keyed in lowercase — `openai_api_key`
-// — which is what `foo provider show` reports and what users have
-// stored. namedStore applies this mapping to every lookup kit makes, so
-// the documented names keep working on every backend; the env backend
-// uppercases on read, so either spelling reaches the same variable
-// there.
+// (OPENAI_API_KEY), and names it so in a KeySource. foo's store is
+// keyed in lowercase — `openai_api_key` — which is what `foo provider
+// show` reports and what users have stored. namedStore applies this
+// mapping to every lookup kit makes, so the documented names keep
+// working on every backend; the env backend uppercases on read, so
+// either spelling reaches the same variable there.
 func SecretName(envVar string) string {
 	return strings.ToLower(strings.TrimSpace(envVar))
 }
 
-// namedStore is the secret.Store foo hands kit: inner (foo's configured
-// store, or nil for none) asked under SecretName.
-//
-// A backend error reads as "not here": kit then tries the next name and
-// the environment, so an unreachable keyring never breaks a working
-// env-based setup (kit itself would fail the run on it).
-//
-// It also records what kit asked, which is how the credential index
-// names the source of a key without resolving it a second way: asked
-// counts lookups (none means kit took the key from llm.yaml before
-// consulting any name), hit is the name that answered.
+// storeFor returns the secret.Store foo hands kit: store asked under
+// SecretName, or nil (kit's "no store") when there is none.
+func storeFor(store secret.Store) secret.Store {
+	if store == nil {
+		return nil
+	}
+	return namedStore{inner: store}
+}
+
+// namedStore asks inner for every key under its SecretName. It changes
+// names only: blank values and backend failures are kit's to judge.
 type namedStore struct {
 	inner secret.Store
-	asked int
-	hit   string
 }
 
-func (s *namedStore) Get(ctx context.Context, key string) (*secret.Secret, error) {
-	s.asked++
-	if s.inner == nil {
-		return nil, secret.ErrNotFound
-	}
-	name := SecretName(key)
-	got, err := s.inner.Get(ctx, name)
-	if err != nil || got == nil || blankKey(string(got.Value)) {
-		return nil, secret.ErrNotFound
-	}
-	s.hit = name
-	return got, nil
+func (s namedStore) Get(ctx context.Context, key string) (*secret.Secret, error) {
+	return s.inner.Get(ctx, SecretName(key))
 }
 
-func (s *namedStore) List(ctx context.Context, prefix string) ([]string, error) {
-	if s.inner == nil {
-		return nil, nil
-	}
+func (s namedStore) List(ctx context.Context, prefix string) ([]string, error) {
 	return s.inner.List(ctx, SecretName(prefix))
 }
 
-func (s *namedStore) Exists(ctx context.Context, key string) (bool, error) {
-	if s.inner == nil {
-		return false, nil
-	}
+func (s namedStore) Exists(ctx context.Context, key string) (bool, error) {
 	return s.inner.Exists(ctx, SecretName(key))
 }
 
@@ -148,12 +139,13 @@ const (
 	KeySourceSecret KeySource = "secret_key"
 	// KeySourceLLMAPIKey: kit's universal LLM_API_KEY.
 	KeySourceLLMAPIKey KeySource = "LLM_API_KEY"
-	// KeySourceLLMConfig: providers.<scheme>.api_key in llm.yaml.
+	// KeySourceLLMConfig: api_key in the llm.yaml block kit reads for
+	// the scheme (its own, or an alias's).
 	KeySourceLLMConfig KeySource = "llm.yaml"
 )
 
 // keyStatus is what a run on scheme would do for its key, without the
-// key: the same kitllm.ApplyAPIKey call, observed.
+// key: kit's resolution, reported in foo's vocabulary.
 type keyStatus struct {
 	// routed is false when no kit adapter serves the scheme.
 	routed bool
@@ -167,48 +159,30 @@ type keyStatus struct {
 	secretKey string
 }
 
-// resolveKeyStatus runs kit's key resolution for scheme against store
-// and reports the outcome. The source comes from what kit asked of the
-// store: no lookup at all means llm.yaml's api_key answered; a store
-// hit names the key; otherwise the value came from the environment,
-// under one of the provider's names or else LLM_API_KEY.
+// resolveKeyStatus resolves scheme's key as a run would
+// (kitllm.ResolveAPIKey, against store under foo's names) and maps
+// kit's KeySource onto foo's: llm.yaml's api_key is KeySourceLLMConfig,
+// a provider key name from the store or the environment is
+// KeySourceSecret under its SecretName, LLM_API_KEY is
+// KeySourceLLMAPIKey. secretKey names the key that resolved, else the
+// first of the scheme's names, so it always names something to set.
 func resolveKeyStatus(ctx context.Context, store secret.Store, scheme string) keyStatus {
-	key, routed := kitllm.ProviderKeyFor(scheme)
-	st := keyStatus{routed: routed, key: key}
-	if !routed {
-		return st
+	res, err := kitllm.ResolveAPIKey(ctx, storeFor(store), scheme+"://probe")
+	var missing *kitllm.MissingKeyError
+	if err != nil && !errors.As(err, &missing) {
+		return keyStatus{}
 	}
-	if len(key.EnvVars) > 0 {
-		st.secretKey = SecretName(key.EnvVars[0])
+	st := keyStatus{routed: res.Known, key: res.Key, found: res.Found()}
+	if len(res.Key.EnvVars) > 0 {
+		st.secretKey = SecretName(res.Key.EnvVars[0])
 	}
-	probe := &namedStore{inner: store}
-	keyed, err := kitllm.ApplyAPIKey(ctx, probe, scheme+"://probe")
-	if err != nil {
-		return st
-	}
-	parsed, err := kitllm.ParseURI(keyed)
-	if err != nil {
-		return st
-	}
-	if _, ok := parsed.Params["api_key"]; !ok {
-		return st
-	}
-	st.found = true
-	switch {
-	case probe.asked == 0:
+	switch res.Source.Kind {
+	case kitllm.KeySourceConfig:
 		st.source = KeySourceLLMConfig
-	case probe.hit != "":
-		st.source, st.secretKey = KeySourceSecret, probe.hit
-	default:
-		// kit read the environment: the first of the provider's names
-		// that is set, else LLM_API_KEY.
+	case kitllm.KeySourceStore, kitllm.KeySourceEnv:
+		st.source, st.secretKey = KeySourceSecret, SecretName(res.Source.Name)
+	case kitllm.KeySourceFallback:
 		st.source = KeySourceLLMAPIKey
-		for _, name := range key.EnvVars {
-			if !blankKey(os.Getenv(name)) {
-				st.source, st.secretKey = KeySourceSecret, SecretName(name)
-				break
-			}
-		}
 	}
 	return st
 }
