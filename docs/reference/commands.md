@@ -139,7 +139,7 @@ Flags:
 
 | Flag | Subcommands | Default | Purpose |
 |------|-------------|---------|---------|
-| `-c, --collection` | `add`, `file`, `search` | `default` | Collection name |
+| `--collection` | `add`, `file`, `search` | `default` | Collection name. No short form: `-c` is kit's `--config` |
 | `--file` | `file` | (required) | Path to file to embed |
 | `-n, --count` | `search` | `5` | Number of neighbors |
 

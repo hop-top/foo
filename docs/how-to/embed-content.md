@@ -57,10 +57,11 @@ The default collection name is `default`.
 
 ### 2. Embed into a named collection
 
-Use `-c/--collection` to choose where the row goes:
+Use `--collection` to choose where the row goes. It has no short
+form: `-c` is the kit-wide `--config` flag on every foo command.
 
 ```sh
-foo embed add "anthropic provider uses ANTHROPIC_API_KEY" -c providers
+foo embed add "anthropic provider uses ANTHROPIC_API_KEY" --collection providers
 # embedded 01HZY... into "providers"
 ```
 
@@ -115,7 +116,7 @@ for the wider model.
 
 | Flag | Applies to | Default | Purpose |
 |------|------------|---------|---------|
-| `-c, --collection` | `add`, `file` | `default` | Target collection |
+| `--collection` | `add`, `file` | `default` | Target collection |
 | `--file` | `file` | (required) | File to chunk and embed |
 
 ## Related docs

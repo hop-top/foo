@@ -38,7 +38,7 @@ foo embed search "how do plugins work?" --collection foo-docs --count 3
 ### 1. Run a search
 
 ```sh
-foo embed search "kit config layering rules" -c foo-docs
+foo embed search "kit config layering rules" --collection foo-docs
 ```
 
 Expected output (table format, default):
@@ -55,7 +55,7 @@ ID            SCORE   SOURCE                 CHUNK
 `-n/--count` controls how many neighbors come back. Default 5.
 
 ```sh
-foo embed search "destructive confirm policy" -c foo-docs -n 10
+foo embed search "destructive confirm policy" --collection foo-docs -n 10
 ```
 
 ### 3. Switch output format for piping
@@ -64,7 +64,7 @@ The result is `output.Dispatch`-rendered, so kit's format flags
 apply. JSON is useful when chaining into another foo call:
 
 ```sh
-foo embed search "schema dsl grammar" -c foo-docs --format json
+foo embed search "schema dsl grammar" --collection foo-docs --format json
 ```
 
 Expected: a JSON array; each element has `id`, `score`, `source`,
@@ -96,7 +96,7 @@ For the wider mental model see
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `-c, --collection` | `default` | Collection to search |
+| `--collection` | `default` | Collection to search (no short form; `-c` is kit's `--config`) |
 | `-n, --count` | `5` | Number of neighbors to return |
 | `--format` (kit global) | `table` | `json`, `yaml`, `text`, etc. |
 
