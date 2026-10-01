@@ -8,9 +8,14 @@ import (
 	gokeyring "github.com/zalando/go-keyring"
 
 	"hop.top/foo/internal/egress"
+	"hop.top/foo/internal/testutil"
 )
 
 // TestMain makes the suite hermetic before any test runs.
+//
+// HOME and the XDG base dirs point at a throwaway tree, so a test that
+// does not set its own reads none of the developer's config and writes
+// no cache, seed or state where a concurrent test run would see it.
 //
 // The OS keychain is swapped for go-keyring's in-memory mock: the
 // keyring secrets backend is linked, so a test that loads a config
@@ -26,13 +31,23 @@ import (
 // and the suite fails if anything reached it: a test that needs a
 // server stands one up on loopback.
 func TestMain(m *testing.M) {
+	cleanup, err := testutil.IsolateUserDirs()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "isolate user dirs:", err)
+		os.Exit(1)
+	}
+	os.Exit(runSuite(m, cleanup))
+}
+
+func runSuite(m *testing.M, cleanup func()) int {
+	defer cleanup()
 	gokeyring.MockInit()
 	_ = os.Setenv(upgradeNoticeOptOutEnv, "1")
 
 	rec, err := egress.Start()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "egress recorder:", err)
-		os.Exit(1)
+		return 1
 	}
 	rec.Install()
 
@@ -43,5 +58,5 @@ func TestMain(m *testing.M) {
 			code = 1
 		}
 	}
-	os.Exit(code)
+	return code
 }
