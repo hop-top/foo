@@ -133,10 +133,10 @@ anywhere on the line:
 | Command | Under `--dry-run` |
 |---------|-------------------|
 | `foo "<prompt>"` | Prints the assembled prompt (system, fragments, schema contract) and exits: no model call, no workspace record, no first-run `llm.yaml` |
-| Write and destructive leaves: `pattern create\|import\|delete`, `schema create\|delete`, `fragment create\|delete`, `embed add\|file`, `embed collection delete`, `model default`, `upgrade` | Checks the input as the real run would, then prints the plan of effects (`--format json` or `yaml` for a machine-readable plan). A destructive leaf needs no `--confirm`, since nothing is applied. `embed` makes no embeddings call; `upgrade` checks for a release but installs nothing |
+| Write and destructive leaves: `pattern create\|import\|delete`, `schema create\|delete`, `fragment create\|delete`, `embed add\|file`, `embed collection delete`, `model default`, `alias add\|delete`, `upgrade` | Checks the input as the real run would, then prints the plan of effects (`--format json` or `yaml` for a machine-readable plan). A destructive leaf needs no `--confirm`, since nothing is applied. `embed` makes no embeddings call; `upgrade` checks for a release but installs nothing |
 | Read leaves (`list`, `show`, `status`, …) | Accepted, no effect |
 | `repl`, and the bare `foo` with no prompt | Refused (`USAGE`, exit 2): an interactive session has no preview |
-| `alias add\|delete`, `tool install\|uninstall` | Refused (`USAGE`, exit 2): these have no preview mode |
+| `tool install\|uninstall` | Refused (`USAGE`, exit 2): these have no preview mode |
 
 A refusal is kit's usage error, raised before the command runs, so
 nothing is changed; drop `--dry-run` to run the command.

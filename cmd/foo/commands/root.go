@@ -913,16 +913,8 @@ func aliasCmd() *cobra.Command {
 	if loadErr := store.Load(); loadErr != nil {
 		slog.Warn("alias.load.failed", slog.Any("err", loadErr))
 	}
-	cmd := root.AliasCmd(store)
-	// kit's alias leaves write the store without consulting --dry-run,
-	// so a dry run would save or drop the alias for real. Opt them out:
-	// kit then refuses --dry-run on them instead.
-	for _, sub := range cmd.Commands() {
-		if kitcli.IsDryRunSupported(sub) {
-			kitcli.OptOutDryRun(sub)
-		}
-	}
-	return cmd
+	// kit's alias add|delete preview under --dry-run themselves.
+	return root.AliasCmd(store)
 }
 
 func upgradeCmd() *cobra.Command {

@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -26,30 +25,21 @@ import (
 // that runs on under the tag acts unconfirmed. Each such leaf checks
 // isDryRun after validating its input and, when set, returns
 // renderPlan instead of acting. A leaf that cannot preview opts out
-// with kitcli.OptOutDryRun, which makes kit refuse the flag.
+// with kitcli.OptOutDryRun, which makes kit refuse the flag (USAGE,
+// exit 2).
 
 // isDryRun reports whether kit tagged this invocation as a dry run.
 func isDryRun(cmd *cobra.Command) bool {
 	return sideeffect.IsDryRun(cmd.Context())
 }
 
-// renderPlan prints what the leaf would do, in --format json or yaml
-// when asked and as kit's plan table otherwise.
+// renderPlan prints what the leaf would do: kit's cli.RenderPlan, in
+// --format json or yaml when asked and as kit's plan table otherwise.
 func renderPlan(cmd *cobra.Command, args map[string]any, prereqs []string, effects ...kitcli.Effect) error {
-	if effects == nil {
-		effects = []kitcli.Effect{}
-	}
-	format := output.Table
-	switch f := root.Viper.GetString("format"); f {
-	case output.JSON, output.YAML:
-		format = f
-	}
-	return output.RenderPlan(cmd.OutOrStdout(), format, kitcli.Plan{
-		Command:              cmd.CommandPath(),
+	return kitcli.RenderPlan(cmd, kitcli.Plan{
 		Args:                 args,
 		Effects:              effects,
 		PrerequisitesChecked: prereqs,
-		GeneratedAt:          time.Now().UTC(),
 	})
 }
 

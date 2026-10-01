@@ -104,17 +104,19 @@ var dryRunCases = []dryRunCase{
 		},
 		effects: 1,
 	},
+	// kit's own alias leaves preview: the plan names the alias.
+	{path: []string{"alias", "add"}, args: []string{"ml", "model list"}, effects: 1},
+	{
+		path:    []string{"alias", "delete"},
+		args:    []string{"ml"},
+		setup:   func(t *testing.T, _ string) { mustRun(t, "alias", "add", "ml", "model list") },
+		effects: 1,
+	},
 }
 
 // dryRunOptedOut are the write leaves that refuse --dry-run: running
 // one must fail and change nothing.
 var dryRunOptedOut = []dryRunCase{
-	{path: []string{"alias", "add"}, args: []string{"ml", "model list"}},
-	{
-		path:  []string{"alias", "delete"},
-		args:  []string{"ml"},
-		setup: func(t *testing.T, _ string) { mustRun(t, "alias", "add", "ml", "model list") },
-	},
 	{path: []string{"tool", "install"}, args: []string{"--dir", "links"}},
 	{path: []string{"tool", "uninstall"}, args: []string{"--dir", "links"}},
 }
