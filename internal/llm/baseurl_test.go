@@ -136,3 +136,27 @@ func TestResolvedURI_NoBaseURLConfigured(t *testing.T) {
 		t.Fatalf("base_url = %q, want empty when nothing is configured", bu)
 	}
 }
+
+// TestEndpointBaseURL pins the read-back the embedder relies on: the
+// base a call whose only model is uri reaches, by the run's ladder.
+func TestEndpointBaseURL(t *testing.T) {
+	file := "providers:\n  openai:\n    base_url: http://127.0.0.1:9101/v1\n"
+	for _, tc := range []struct {
+		name, uri, env, file, want string
+	}{
+		{"nothing configured", "openai://text-embedding-3-small", "", "", ""},
+		{"file", "openai://text-embedding-3-small", "", file, "http://127.0.0.1:9101/v1"},
+		{"env beats file", "openai://text-embedding-3-small", "http://127.0.0.1:9102/v1", file, "http://127.0.0.1:9102/v1"},
+		{"explicit beats env", "openai://m?base_url=http://127.0.0.1:9103/v1", "http://127.0.0.1:9102/v1", file, "http://127.0.0.1:9103/v1"},
+		{"host form", "openai://127.0.0.1:9104/m", "", file, "http://127.0.0.1:9104"},
+		{"other scheme's block", "openai://m", "", "providers:\n  anthropic:\n    base_url: http://127.0.0.1:9105\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("LLM_BASE_URL", tc.env)
+			writeLLMYAML(t, tc.file)
+			if got := EndpointBaseURL(tc.uri); got != tc.want {
+				t.Errorf("EndpointBaseURL(%q) = %q, want %q", tc.uri, got, tc.want)
+			}
+		})
+	}
+}

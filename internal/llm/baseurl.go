@@ -50,6 +50,31 @@ func applyConfiguredBaseURL(uri, primaryScheme string) string {
 	return uri + querySep(uri) + "base_url=" + base
 }
 
+// EndpointBaseURL returns the base URL a call whose only model is uri
+// reaches, or "" for the adapter's default. It is applyConfiguredBaseURL
+// with uri as its own primary, read back: the same ladder a run's
+// primary model takes (?base_url=, LLM_BASE_URL, llm.yaml
+// providers.<scheme>.base_url), and for a host-form URI the host, as
+// kit's Resolve reads it.
+//
+// It serves callers that speak to the provider directly rather than
+// through a kit client — the embedder — so they reach the server a run
+// on the same URI reaches. The value is the API root (the OpenAI
+// adapter's "…/v1"); the caller appends its own path.
+func EndpointBaseURL(uri string) string {
+	parsed, err := kitllm.ParseURI(applyConfiguredBaseURL(uri, schemeOf(uri)))
+	if err != nil {
+		return ""
+	}
+	if base, ok := parsed.Params["base_url"]; ok {
+		return base
+	}
+	if parsed.Host != "" {
+		return "http://" + parsed.Host
+	}
+	return ""
+}
+
 // configuredBaseURL returns tiers 2-3 of applyConfiguredBaseURL for a
 // URI with no base_url param and no host.
 //

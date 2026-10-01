@@ -106,9 +106,11 @@ served on loopback goes through. The flag works before or after the prompt.
 | Any other host, including a DNS name that resolves to loopback | Refused: `OFFLINE`, exit 10 |
 | Provider defaults (`api.openai.com`, `api.anthropic.com`, …) | Refused: `OFFLINE`, exit 10 |
 
-It applies to plain prompts, streamed or not, to `-T` tool runs, and
-to fallback providers. foo also skips the upgrade check and bus peers,
-and `foo upgrade` refuses to run.
+It applies to plain prompts, streamed or not, to `-T` tool runs, to
+fallback providers, and to `foo embed add|file|search`, whose
+embeddings call takes the same base URL as an `openai` run. foo also
+skips the upgrade check and bus peers, and `foo upgrade` refuses to
+run.
 
 ```
 $ LLM_BASE_URL=https://api.example.com/v1 foo --offline -m gpt-4o "hi"
@@ -142,6 +144,11 @@ Flags:
 | `-c, --collection` | `add`, `file`, `search` | `default` | Collection name |
 | `--file` | `file` | (required) | Path to file to embed |
 | `-n, --count` | `search` | `5` | Number of neighbors |
+
+`add`, `file` and `search` call the OpenAI embeddings API, or the
+OpenAI-compatible server `LLM_BASE_URL` / llm.yaml
+`providers.openai.base_url` names
+([base URL precedence](config.md#base-url-precedence)).
 
 ## `fragment`
 
