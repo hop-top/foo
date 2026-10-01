@@ -51,7 +51,8 @@ func applyConfiguredBaseURL(uri, primaryScheme string) string {
 // with uri as its own primary, read back: the same ladder a run's
 // primary model takes (?base_url=, LLM_BASE_URL, the llm.yaml block's
 // base_url), and for a host-form URI the host, as kit's Resolve reads
-// it.
+// it. kit's openai adapter reaches an openai host form at its /v1 API
+// root (http://host:port/v1), so that is the base returned for it.
 //
 // It serves callers that speak to the provider directly rather than
 // through a kit client — the embedder — so they reach the server a run
@@ -66,6 +67,9 @@ func EndpointBaseURL(uri string) string {
 		return base
 	}
 	if parsed.Host != "" {
+		if parsed.Scheme == "openai" {
+			return "http://" + parsed.Host + "/v1"
+		}
 		return "http://" + parsed.Host
 	}
 	return ""

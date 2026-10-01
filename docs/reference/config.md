@@ -290,7 +290,10 @@ first hit:
 | 4 | The adapter's default | Public API for hosted schemes; local default for `ollama`, `lmstudio` |
 
 A host-form URI (`scheme://host:port/model`) names its endpoint
-and is sent as written.
+and is sent as written. An `openai` host form reaches the server's
+`/v1` API root (`openai://127.0.0.1:8000/my-model` posts to
+`http://127.0.0.1:8000/v1/chat/completions`); a `base_url` is used
+as given.
 
 `LLM_BASE_URL` is one server for any scheme, so it stops at the
 primary's scheme. With `LLM_BASE_URL=http://127.0.0.1:8000/v1`,

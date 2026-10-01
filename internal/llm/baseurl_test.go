@@ -148,7 +148,8 @@ func TestEndpointBaseURL(t *testing.T) {
 		{"file", "openai://text-embedding-3-small", "", file, "http://127.0.0.1:9101/v1"},
 		{"env beats file", "openai://text-embedding-3-small", "http://127.0.0.1:9102/v1", file, "http://127.0.0.1:9102/v1"},
 		{"explicit beats env", "openai://m?base_url=http://127.0.0.1:9103/v1", "http://127.0.0.1:9102/v1", file, "http://127.0.0.1:9103/v1"},
-		{"host form", "openai://127.0.0.1:9104/m", "", file, "http://127.0.0.1:9104"},
+		{"openai host form reaches /v1", "openai://127.0.0.1:9104/m", "", file, "http://127.0.0.1:9104/v1"},
+		{"other host form is the host", "anthropic://127.0.0.1:9106/m", "", file, "http://127.0.0.1:9106"},
 		{"other scheme's block", "openai://m", "", "providers:\n  anthropic:\n    base_url: http://127.0.0.1:9105\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
