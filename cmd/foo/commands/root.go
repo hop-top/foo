@@ -474,16 +474,14 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fullPrompt := prompt
-	if systemPrompt != "" {
-		fullPrompt = systemPrompt + "\n\nUser: " + prompt
-	}
-
 	recordMessage(cmd.Context(), "user", prompt)
 
+	// The system prompt travels with the system role on every path,
+	// never spliced into the user text.
 	if len(toolNames) > 0 {
-		dispatcher := tool.NewDispatcher(client, registry, toolDispatchConfig(cmd, prompter))
-		resp, err := dispatcher.Run(cmd.Context(), fullPrompt)
+		dcfg := toolDispatchConfig(cmd, prompter)
+		dcfg.System = systemPrompt
+		resp, err := tool.NewDispatcher(client, registry, dcfg).Run(cmd.Context(), prompt)
 		if err != nil {
 			return err
 		}
@@ -492,8 +490,9 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	msgs := llm.Messages(systemPrompt, prompt)
 	if noStream {
-		resp, err := client.Prompt(cmd.Context(), fullPrompt)
+		resp, err := client.Complete(cmd.Context(), msgs)
 		if err != nil {
 			return err
 		}
@@ -503,7 +502,7 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 	}
 
 	var buf strings.Builder
-	if err := client.PromptStream(cmd.Context(), io.MultiWriter(cmd.OutOrStdout(), &buf), fullPrompt); err != nil {
+	if err := client.Stream(cmd.Context(), io.MultiWriter(cmd.OutOrStdout(), &buf), msgs); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())

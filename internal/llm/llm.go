@@ -477,11 +477,29 @@ func (c *Client) enrichUnknownModel(err error) error {
 		err, c.guessedModel)
 }
 
+// Messages opens a conversation: the system prompt, when there is
+// one, as a single leading message with the system role, then the user
+// prompt as is. Kit's adapters map the system role to each provider's
+// own slot (OpenAI system message, Anthropic top-level system, Gemini
+// systemInstruction, Ollama system message), so it never has to be
+// spliced into the user text.
+func Messages(system, prompt string) []kitllm.Message {
+	msgs := make([]kitllm.Message, 0, 2)
+	if system != "" {
+		msgs = append(msgs, kitllm.Message{Role: "system", Content: system})
+	}
+	return append(msgs, kitllm.Message{Role: "user", Content: prompt})
+}
+
+// Prompt sends prompt as the only, user, message.
 func (c *Client) Prompt(ctx context.Context, prompt string) (string, error) {
+	return c.Complete(ctx, Messages("", prompt))
+}
+
+// Complete sends msgs and returns the reply text.
+func (c *Client) Complete(ctx context.Context, msgs []kitllm.Message) (string, error) {
 	resp, err := c.client.Complete(ctx, kitllm.Request{
-		Messages: []kitllm.Message{
-			{Role: "user", Content: prompt},
-		},
+		Messages:  msgs,
 		MaxTokens: c.maxTokens,
 	})
 	if err != nil {
@@ -505,21 +523,26 @@ func (c *Client) CallWithTools(
 	return resp, OfflineRefusal(c.enrichUnknownModel(err))
 }
 
-// PromptStream streams LLM response tokens to w. Falls back to
-// non-streaming Prompt if the provider doesn't support streaming.
+// PromptStream streams the reply to prompt, sent as the only, user,
+// message, to w.
 func (c *Client) PromptStream(ctx context.Context, w io.Writer, prompt string) error {
+	return c.Stream(ctx, w, Messages("", prompt))
+}
+
+// Stream streams the reply to msgs to w. Falls back to non-streaming
+// Complete, with the same messages, if the provider doesn't support
+// streaming.
+func (c *Client) Stream(ctx context.Context, w io.Writer, msgs []kitllm.Message) error {
 	req := kitllm.Request{
-		Messages: []kitllm.Message{
-			{Role: "user", Content: prompt},
-		},
+		Messages:  msgs,
 		MaxTokens: c.maxTokens,
 	}
 
 	iter, err := c.client.Stream(ctx, req)
 	if err != nil {
-		// Fallback: provider may not support streaming. Prompt already
-		// enriches, so no second pass here.
-		resp, promptErr := c.Prompt(ctx, prompt)
+		// Fallback: provider may not support streaming. Complete
+		// already enriches, so no second pass here.
+		resp, promptErr := c.Complete(ctx, msgs)
 		if promptErr != nil {
 			return promptErr
 		}
