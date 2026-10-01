@@ -85,7 +85,7 @@ collection is "default"; override with --collection.`,
 		},
 	}
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
-	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
+	cmd.Flags().StringVar(&collection, "collection", "default", "Collection name")
 	return cmd
 }
 
@@ -154,7 +154,7 @@ same content produces new rows.`,
 	}
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
 	kitcli.SetIdempotency(cmd, kitcli.IdempotencyConditional)
-	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
+	cmd.Flags().StringVar(&collection, "collection", "default", "Collection name")
 	cmd.Flags().StringVar(&filePath, "file", "", "File to embed")
 	return cmd
 }
@@ -205,7 +205,7 @@ from the named collection. Pure read; no state mutation.`,
 	}
 
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectRead)
-	cmd.Flags().StringVarP(&collection, "collection", "c", "default", "Collection name")
+	cmd.Flags().StringVar(&collection, "collection", "default", "Collection name")
 	cmd.Flags().IntVarP(&count, "count", "n", 5, "Number of results")
 	return cmd
 }
