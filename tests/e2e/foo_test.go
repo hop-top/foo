@@ -303,6 +303,7 @@ func TestCLI_Provider(t *testing.T) {
 	}
 	for _, tc := range []struct{ scheme, env, secret string }{
 		{"openai", "OPENAI_API_KEY", "openai_api_key"},
+		{"fixturecompat", "FIXTURECOMPAT_API_KEY", "fixturecompat_api_key"},
 		{"fixturecloud", "FIXTURECLOUD_API_KEY", "fixturecloud_api_key"},
 	} {
 		t.Run("show "+tc.scheme+" without key", func(t *testing.T) {
@@ -315,10 +316,38 @@ func TestCLI_Provider(t *testing.T) {
 			require.Equal(t, "api_key", got["auth_type"], got)
 			require.Equal(t, tc.secret, got["secret_key"], got)
 		})
+		// Exported but empty is no key: the env secret backend
+		// answers it with an empty secret, which must not count.
+		t.Run("show "+tc.scheme+" with empty key", func(t *testing.T) {
+			t.Setenv(tc.env, "")
+			t.Setenv("LLM_API_KEY", "")
+			got := show(t, tc.scheme)
+			require.Equal(t, "missing", got["status"], got)
+		})
 		t.Run("show "+tc.scheme+" with key", func(t *testing.T) {
 			t.Setenv(tc.env, "sk-test123456789")
 			got := show(t, tc.scheme)
 			require.Equal(t, "configured", got["status"], got)
+		})
+	}
+
+	// A run with an empty key fails the precheck (exit 5) before any
+	// request, for a scheme with its own adapter and for a catalog
+	// provider reached through its protocol alike.
+	for _, tc := range []struct{ model, env string }{
+		{"openai://gpt-4o", "OPENAI_API_KEY"},
+		{"fixturecompat://compat-1", "FIXTURECOMPAT_API_KEY"},
+	} {
+		t.Run("run "+tc.model+" with empty key", func(t *testing.T) {
+			t.Setenv(tc.env, "")
+			t.Setenv("LLM_API_KEY", "")
+			// Nothing may leave the machine if the precheck lets it by.
+			t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+			_, stderr, err := runFoo(t, tmpDir, "-m", tc.model, "--no-stream", "hi")
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr, stderr)
+			require.Equal(t, 5, exitErr.ExitCode(), "stderr: %s", stderr)
+			require.Contains(t, stderr, "missing "+tc.env)
 		})
 	}
 }

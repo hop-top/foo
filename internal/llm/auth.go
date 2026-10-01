@@ -21,13 +21,15 @@
 // use, nor "configured" one it would refuse.
 //
 // A catalog provider no adapter serves cannot be run at all; for it the
-// index reads the variables aim lists, so `provider show` still names
-// what that provider would want.
+// index reads the variables aim lists, by kit's rules (store, then
+// environment; an empty value is no key), so `provider show` still
+// names what that provider would want.
 
 package llm
 
 import (
 	"context"
+	"os"
 	"sort"
 
 	"hop.top/aim"
@@ -198,9 +200,15 @@ func resolveProviderAuth(ctx context.Context, name string, catalogEnv []string, 
 
 // resolveCatalogAuth decides the state of a catalog provider no kit
 // adapter serves. It is satisfied when *any one* of its env vars
-// resolves in the store: aim lists alternatives, not a conjunction —
-// three spellings of one key, and requiring all three would report
-// every user of it as unconfigured.
+// holds a key: aim lists alternatives, not a conjunction — three
+// spellings of one key, and requiring all three would report every
+// user of it as unconfigured.
+//
+// The names are looked up as kit looks up a routed provider's: the
+// store first, then the environment, and only a non-empty value is a
+// key. An empty variable is no key here either, so it reads "missing"
+// on this branch as it does on kit's. LLM_API_KEY and llm.yaml are not
+// consulted: kit lends neither to a provider it cannot reach.
 func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, store secret.Store) ProviderAuth {
 	a := ProviderAuth{Provider: provider, EnvVars: envVars, Required: len(envVars) > 0}
 	if !a.Required {
@@ -209,23 +217,33 @@ func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, 
 	// Name the first alternative up front, so a "missing" verdict can
 	// tell the user which variable to set even though none resolved.
 	a.SecretKey = SecretName(envVars[0])
-	if store == nil {
-		return a
-	}
-	for _, envVar := range envVars {
-		key := SecretName(envVar)
-		// A lookup error is treated as "not this one" rather than
-		// aborted on: one unreadable backend entry must not make the
-		// other two alternatives unaskable, and the listing has to
-		// render either way.
-		if got, err := store.Get(ctx, key); err == nil && got != nil {
-			a.SecretKey = key
-			a.Configured = true
-			a.Source = KeySourceSecret
-			return a
-		}
+	if name, ok := lookupCatalogKey(ctx, store, envVars); ok {
+		a.SecretKey = name
+		a.Configured = true
+		a.Source = KeySourceSecret
 	}
 	return a
+}
+
+// lookupCatalogKey reports the secret name of the first of envVars
+// holding a non-empty key: in store (nil for none), then in the
+// environment. namedStore applies foo's names and counts an empty
+// secret, or a lookup error, as "not this one": one unreadable backend
+// entry must not make the other alternatives unaskable, and the
+// listing has to render either way.
+func lookupCatalogKey(ctx context.Context, store secret.Store, envVars []string) (string, bool) {
+	probe := &namedStore{inner: store}
+	for _, envVar := range envVars {
+		if _, err := probe.Get(ctx, envVar); err == nil {
+			return probe.hit, true
+		}
+	}
+	for _, envVar := range envVars {
+		if os.Getenv(envVar) != "" {
+			return SecretName(envVar), true
+		}
+	}
+	return "", false
 }
 
 // Lookup returns the credential state of a catalog provider id or a kit

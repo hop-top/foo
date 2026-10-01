@@ -327,6 +327,15 @@ Inspect configured LLM providers.
 | `configured` | A run would find a key: llm.yaml, the scheme's own, or `LLM_API_KEY`. |
 | `missing` | No key from any of those sources. |
 
+An empty value is no key: a variable exported as `""`, an empty
+secret, `api_key: ""` in llm.yaml, or an `api_key_env` naming an
+empty variable reads `missing`, and a run with it fails the key
+check (exit 5). A value of spaces is sent as written, so it counts
+as a key. A catalog provider no adapter serves is looked up under
+the names the catalog lists, in the secret store then the
+environment; `LLM_API_KEY` and llm.yaml never apply to it, since no
+run can reach it.
+
 The verdict is the one `foo model list` filters on, and for a
 provider an adapter serves it is the run's own key check, so a
 `missing` provider is one whose models the default listing hides and

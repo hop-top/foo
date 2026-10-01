@@ -17,6 +17,16 @@
       "claude-sonnet-4-5": {"id": "claude-sonnet-4-5", "name": "Claude Sonnet 4.5", "family": "claude", "modalities": {"input": ["text", "image"], "output": ["text"]}, "tool_call": true, "reasoning": true, "open_weights": false, "cost": {"input": 3, "output": 15}, "limit": {"context": 200000, "output": 64000}}
     }
   },
+  "fixturecompat": {
+    "id": "fixturecompat",
+    "name": "Fixture Compat",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://fixturecompat.invalid/v1",
+    "env": ["FIXTURECOMPAT_API_KEY"],
+    "models": {
+      "compat-1": {"id": "compat-1", "name": "Compat 1", "modalities": {"input": ["text"], "output": ["text"]}, "tool_call": false, "reasoning": false, "open_weights": true, "limit": {"context": 8192, "output": 2048}}
+    }
+  },
   "fixturecloud": {
     "id": "fixturecloud",
     "name": "Fixture Cloud",
