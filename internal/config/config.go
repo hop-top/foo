@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
 	"hop.top/kit/go/core/config"
 	"hop.top/kit/go/core/xdg"
 	"hop.top/kit/go/storage/secret"
@@ -85,25 +84,6 @@ func Load(opts LoadOptions) (Config, error) {
 	}
 
 	return cfg, err
-}
-
-func (c Config) Save() error {
-	confDir, err := xdg.ConfigDir("foo")
-	if err != nil {
-		return err
-	}
-	userConfig := filepath.Join(confDir, "config.yaml")
-
-	if err := os.MkdirAll(filepath.Dir(userConfig), 0755); err != nil {
-		return err
-	}
-
-	data, err := yaml.Marshal(c)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(userConfig, data, 0644)
 }
 
 // SecretStore opens the store the `secrets:` block configures. Every
