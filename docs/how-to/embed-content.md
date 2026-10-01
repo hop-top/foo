@@ -22,6 +22,14 @@ You need:
   ([key precedence](../reference/config.md#key-precedence)); an
   Anthropic-only setup will not work for this command. See
   [troubleshooting.md](../troubleshooting.md) for the exact error.
+- An embeddings endpoint. By default that is OpenAI's
+  (`https://api.openai.com/v1/embeddings`). To use an
+  OpenAI-compatible server instead, point the `openai` scheme at it
+  the way you would for a run: `LLM_BASE_URL`, or
+  `providers.openai.base_url` in llm.yaml
+  ([base URL precedence](../reference/config.md#base-url-precedence)).
+  foo posts to `<base>/embeddings`, so a base of
+  `http://127.0.0.1:8000/v1` receives `/v1/embeddings`.
 - Write access to `$XDG_STATE_HOME/foo/` (`XDG_STATE_HOME` unset:
   `~/.local/state` on Linux, `~/Library/Application Support` on
   macOS).
@@ -93,6 +101,8 @@ Expected: a table with one row per collection and its row count.
 |---------|--------------|-----|
 | `embed: ... 401 Unauthorized` | `OPENAI_API_KEY` missing or invalid | Export a valid key |
 | `embed: ... no embedding API` | Provider does not expose one | Use OpenAI or an OpenAI-compatible endpoint |
+| `OFFLINE: --offline refused api.openai.com` (exit 10) | `--offline` allows loopback endpoints only | Point the base URL at a local server (`LLM_BASE_URL=http://127.0.0.1:<port>/v1`) or drop `--offline` |
+| `openai 404` from a local server | Base URL lacks the API root (`/v1`) | Set the base to the root that serves `/embeddings`, e.g. `http://127.0.0.1:8000/v1` |
 | `--file is required` | Forgot `--file` on `foo embed file` | Add `--file <path>` |
 | `state dir: ...` permission error | Cannot write XDG state dir | Check `$XDG_STATE_HOME` and dir perms |
 

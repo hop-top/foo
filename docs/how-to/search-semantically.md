@@ -16,9 +16,11 @@ running a natural-language query through `foo embed search`.
 
 You need:
 
-- An OpenAI key, found the same way as for
+- An OpenAI key and endpoint, found the same way as for
   [`foo embed add`](embed-content.md#before-you-begin) (the query is
-  embedded the same way the stored content was).
+  embedded the same way the stored content was). Query against the
+  endpoint and model that embedded the collection: vectors from
+  different models are not comparable.
 - At least one row in the target collection — verify with
   `foo embed collection list`.
 

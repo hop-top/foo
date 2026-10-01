@@ -19,16 +19,18 @@ import (
 // cannot succeed.
 const CodeOffline = "OFFLINE"
 
-// offlineRefusal turns a model request kit's network guard refused
+// OfflineRefusal turns a model request kit's network guard refused
 // under --offline into foo's OFFLINE envelope. Any other error, nil
-// included, is returned untouched.
+// included, is returned untouched. The run path applies it to every
+// completion; a caller that speaks to a provider over its own HTTP
+// client (the embedder) applies it to that client's errors.
 //
 // The guard (netpolicy, installed by cli.New) decides what is local:
 // loopback addresses, the name localhost, and unix sockets. A DNS name
 // is remote even when it resolves to loopback, since resolving it would
 // itself touch the network. foo does not repeat that decision; it only
 // names the endpoint and the way out.
-func offlineRefusal(err error) error {
+func OfflineRefusal(err error) error {
 	cause := findOffline(err)
 	if cause == nil {
 		return err

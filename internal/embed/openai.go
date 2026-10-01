@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"hop.top/foo/internal/llm"
 	kitllm "hop.top/kit/go/ai/llm"
@@ -18,15 +19,21 @@ import (
 const (
 	defaultModel     = "text-embedding-3-small"
 	defaultDimension = 1536
-	openaiURL        = "https://api.openai.com/v1/embeddings"
+	// openaiAPIRoot is the OpenAI adapter's default base URL: where
+	// the embeddings path is joined when no endpoint is configured.
+	openaiAPIRoot  = "https://api.openai.com/v1"
+	embeddingsPath = "/embeddings"
 )
 
-// OpenAIEmbedder calls the OpenAI embeddings API directly via HTTP.
+// OpenAIEmbedder calls an OpenAI-compatible embeddings API directly
+// via HTTP.
 type OpenAIEmbedder struct {
 	apiKey string
 	model  string
 	dim    int
 	store  secret.Store
+	// url is the full embeddings endpoint, resolved at construction;
+	// tests point it at a local recorder.
 	url    string
 	client *http.Client
 }
@@ -56,18 +63,26 @@ func WithSecretStore(store secret.Store) OpenAIOption {
 // the store given by WithSecretStore under its documented name
 // `openai_api_key`, then OPENAI_API_KEY, then LLM_API_KEY, with
 // llm.yaml's providers.openai.api_key ahead of all three.
+//
+// The endpoint is resolved as a run on the same openai URI resolves it
+// (llm.EndpointBaseURL): LLM_BASE_URL, then llm.yaml
+// providers.openai.base_url, then OpenAI's public API. The embeddings
+// path is joined under that API root, so a base of
+// http://host:8000/v1 is posted to at http://host:8000/v1/embeddings.
 func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	e := &OpenAIEmbedder{
 		model:  defaultModel,
 		dim:    defaultDimension,
-		url:    openaiURL,
 		client: http.DefaultClient,
 	}
 	for _, o := range opts {
 		o(e)
 	}
 
-	key, err := llm.APIKey(context.Background(), e.store, "openai://"+e.model)
+	uri := "openai://" + e.model
+	e.url = embeddingsURL(llm.EndpointBaseURL(uri))
+
+	key, err := llm.APIKey(context.Background(), e.store, uri)
 	switch {
 	case errors.Is(err, kitllm.ErrMissingKey):
 		return nil, output.UnauthorizedError("OPENAI_API_KEY not set")
@@ -76,6 +91,15 @@ func NewOpenAIEmbedder(opts ...OpenAIOption) (*OpenAIEmbedder, error) {
 	}
 	e.apiKey = key
 	return e, nil
+}
+
+// embeddingsURL joins the embeddings path to an API root, tolerating a
+// trailing slash. An empty base is OpenAI's own.
+func embeddingsURL(base string) string {
+	if base == "" {
+		base = openaiAPIRoot
+	}
+	return strings.TrimRight(base, "/") + embeddingsPath
 }
 
 func (e *OpenAIEmbedder) Dimension() int { return e.dim }
@@ -111,7 +135,7 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("openai request: %w", err)
+		return nil, llm.OfflineRefusal(fmt.Errorf("openai request: %w", err))
 	}
 	defer resp.Body.Close()
 

@@ -348,7 +348,7 @@ endpoint, including a provider's default
 OFFLINE: --offline refused api.openai.com: only loopback endpoints (localhost, 127.0.0.0/8, ::1) are reachable offline
 ```
 
-The exit code is 5. Fix it one of two ways:
+The exit code is 10. Fix it one of two ways:
 
 - Point the call at a model you serve locally, e.g.
   `LLM_BASE_URL=http://127.0.0.1:11434/v1 foo --offline -m llama3 "hi"`
