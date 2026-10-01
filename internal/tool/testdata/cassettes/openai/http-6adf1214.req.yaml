@@ -1,13 +1,17 @@
 xrr: "1"
 adapter: http
-fingerprint: 8d557dd5
-recorded_at: "2026-09-30T13:35:09Z"
+fingerprint: 6adf1214
+recorded_at: "2026-10-01T07:49:00Z"
 payload:
     method: POST
     url: /v1/chat/completions
     body: |
         {
           "messages": [
+            {
+              "content": "You are a terse assistant. Use tools when asked.",
+              "role": "system"
+            },
             {
               "content": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else.",
               "role": "user"
@@ -17,10 +21,10 @@ payload:
               "tool_calls": [
                 {
                   "function": {
-                    "arguments": "{\"text\":\"pelican\"}",
+                    "arguments": "{\"text\": \"pelican\"}",
                     "name": "echo"
                   },
-                  "id": "call_sm4lcnfw",
+                  "id": "call_9RrsWNrlpRKD0xqU7PaZZilq",
                   "type": "function"
                 }
               ]
@@ -28,10 +32,10 @@ payload:
             {
               "content": "{\"echo\":\"pelican\"}",
               "role": "tool",
-              "tool_call_id": "call_sm4lcnfw"
+              "tool_call_id": "call_9RrsWNrlpRKD0xqU7PaZZilq"
             }
           ],
-          "model": "ornith:9b",
+          "model": "gpt-4.1-nano-2025-04-14",
           "tools": [
             {
               "function": {

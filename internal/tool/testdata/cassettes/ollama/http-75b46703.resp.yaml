@@ -1,0 +1,10 @@
+xrr: "1"
+adapter: http
+fingerprint: 75b46703
+recorded_at: "2026-10-01T07:49:08Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json
+    body: |
+        {"id":"chatcmpl-187","object":"chat.completion","created":1790840948,"model":"ornith:9b","system_fingerprint":"fp_ollama","choices":[{"index":0,"message":{"role":"assistant","content":"","reasoning":"The user wants me to call the echo tool with \"pelican\", then reply with exactly what the tool returned. The echo tool echoes text, so it will return \"pelican\" verbatim.","tool_calls":[{"id":"call_633c004c","index":0,"type":"function","function":{"name":"echo","arguments":"{\"text\":\"pelican\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":324,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens":69,"total_tokens":393}}

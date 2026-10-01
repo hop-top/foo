@@ -1,0 +1,10 @@
+xrr: "1"
+adapter: http
+fingerprint: "05299709"
+recorded_at: "2026-10-01T07:49:08Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json
+    body: |
+        {"id":"chatcmpl-319","object":"chat.completion","created":1790840948,"model":"ornith:9b","system_fingerprint":"fp_ollama","choices":[{"index":0,"message":{"role":"assistant","content":"pelican","reasoning":"The echo tool returned \"pelican\". I need to reply with just the word \"pelican\" and nothing else."},"finish_reason":"stop"}],"usage":{"prompt_tokens":373,"prompt_tokens_details":{"cached_tokens":320},"completion_tokens":30,"total_tokens":403}}

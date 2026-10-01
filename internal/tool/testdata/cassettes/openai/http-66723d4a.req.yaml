@@ -1,0 +1,42 @@
+xrr: "1"
+adapter: http
+fingerprint: 66723d4a
+recorded_at: "2026-10-01T07:48:59Z"
+payload:
+    method: POST
+    url: /v1/chat/completions
+    body: |
+        {
+          "messages": [
+            {
+              "content": "You are a terse assistant. Use tools when asked.",
+              "role": "system"
+            },
+            {
+              "content": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else.",
+              "role": "user"
+            }
+          ],
+          "model": "gpt-4.1-nano-2025-04-14",
+          "tools": [
+            {
+              "function": {
+                "description": "Echo the given text back verbatim.",
+                "name": "echo",
+                "parameters": {
+                  "properties": {
+                    "text": {
+                      "description": "Text to echo",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }
