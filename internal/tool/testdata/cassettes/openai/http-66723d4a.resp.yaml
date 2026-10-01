@@ -1,34 +1,44 @@
 xrr: "1"
 adapter: http
-fingerprint: e0dd83d9
-recorded_at: "2026-09-30T13:33:01Z"
+fingerprint: 66723d4a
+recorded_at: "2026-10-01T07:48:59Z"
 payload:
     status: 200
     headers:
         Content-Type: application/json
     body: |
         {
-          "id": "chatcmpl-EToibNuNME4XHU3JQgk8OBIrPbeXB",
+          "id": "chatcmpl-EU5pDRb9jAcuIwB0G0CLAJPsszXSA",
           "object": "chat.completion",
-          "created": 1790775181,
+          "created": 1790840939,
           "model": "gpt-4.1-nano-2025-04-14",
           "choices": [
             {
               "index": 0,
               "message": {
                 "role": "assistant",
-                "content": "pelican",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call_9RrsWNrlpRKD0xqU7PaZZilq",
+                    "type": "function",
+                    "function": {
+                      "name": "echo",
+                      "arguments": "{\"text\": \"pelican\"}"
+                    }
+                  }
+                ],
                 "refusal": null,
                 "annotations": []
               },
               "logprobs": null,
-              "finish_reason": "stop"
+              "finish_reason": "tool_calls"
             }
           ],
           "usage": {
-            "prompt_tokens": 113,
-            "completion_tokens": 3,
-            "total_tokens": 116,
+            "prompt_tokens": 97,
+            "completion_tokens": 30,
+            "total_tokens": 127,
             "prompt_tokens_details": {
               "cached_tokens": 0,
               "audio_tokens": 0
@@ -41,5 +51,5 @@ payload:
             }
           },
           "service_tier": "default",
-          "system_fingerprint": "fp_6afed20c8d"
+          "system_fingerprint": "fp_2ee0449033"
         }

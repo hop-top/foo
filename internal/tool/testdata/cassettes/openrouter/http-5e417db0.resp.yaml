@@ -1,0 +1,9 @@
+xrr: "1"
+adapter: http
+fingerprint: 5e417db0
+recorded_at: "2026-10-01T07:49:24Z"
+payload:
+    status: 200
+    headers:
+        Content-Type: application/json
+    body: "\n         \n{\"id\":\"gen-1790840963-EYhhftjDXpEkCAkLapIr\",\"object\":\"chat.completion\",\"created\":1790840963,\"model\":\"openai/gpt-4.1-nano\",\"provider\":\"OpenAI\",\"system_fingerprint\":null,\"service_tier\":\"default\",\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"completed\",\"message\":{\"role\":\"assistant\",\"content\":null,\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"type\":\"function\",\"index\":0,\"id\":\"call_Hk1zlAj5YZkF16LZRop3REYw\",\"function\":{\"name\":\"echo\",\"arguments\":\"{\\\"text\\\":\\\"pelican\\\"}\"}}]}}],\"usage\":{\"prompt_tokens\":95,\"completion_tokens\":31,\"total_tokens\":126,\"cost\":0.0000219,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0000219,\"upstream_inference_prompt_cost\":0.0000095,\"upstream_inference_completions_cost\":0.0000124},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}"

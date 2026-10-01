@@ -1,7 +1,7 @@
 xrr: "1"
 adapter: http
-fingerprint: c1a8b00c
-recorded_at: "2026-09-30T14:51:09Z"
+fingerprint: 71b3746d
+recorded_at: "2026-10-01T07:49:32Z"
 payload:
     method: POST
     url: /v1beta/models/gemini-3.5-flash-lite:generateContent
@@ -15,8 +15,43 @@ payload:
                 }
               ],
               "role": "user"
+            },
+            {
+              "parts": [
+                {
+                  "functionCall": {
+                    "args": {
+                      "text": "pelican"
+                    },
+                    "name": "echo"
+                  },
+                  "thoughtSignature": "EmAKXgFpFH0Toq9CWgXrLooAn69ATQXgQGSfkhYypYiUGgiDm2E6XFRQCRtxitNcRb5fsedrvLb4JryLGwsebZhUQJDKCOY1uGC/NJSTKdjUGrE1CR5zeFPoNZnQkPJZ2Jg="
+                }
+              ],
+              "role": "model"
+            },
+            {
+              "parts": [
+                {
+                  "functionResponse": {
+                    "name": "echo",
+                    "response": {
+                      "echo": "pelican"
+                    }
+                  }
+                }
+              ],
+              "role": "user"
             }
           ],
+          "systemInstruction": {
+            "parts": [
+              {
+                "text": "You are a terse assistant. Use tools when asked."
+              }
+            ],
+            "role": "user"
+          },
           "tools": [
             {
               "functionDeclarations": [

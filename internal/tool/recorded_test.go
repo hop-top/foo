@@ -46,6 +46,10 @@ func (echoTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessag
 }
 
 const (
+	// recordedSystem rides in each provider's system slot, so the
+	// cassettes pin that foo sends a pattern or strategy as a system
+	// message, not spliced into the user text.
+	recordedSystem = "You are a terse assistant. Use tools when asked."
 	recordedPrompt = `Call the echo tool once with the text "pelican". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else.`
 	echoWord       = "pelican"
 )
@@ -234,7 +238,7 @@ func TestRecordedToolRound(t *testing.T) {
 			if err := reg.Register(echoTool{}); err != nil {
 				t.Fatal(err)
 			}
-			answer, err := tool.NewDispatcher(client, reg, tool.DispatchConfig{}).Run(context.Background(), recordedPrompt)
+			answer, err := tool.NewDispatcher(client, reg, tool.DispatchConfig{System: recordedSystem}).Run(context.Background(), recordedPrompt)
 			if err != nil {
 				for i, ex := range exchanges {
 					if ex.Miss {

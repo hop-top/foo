@@ -1,7 +1,7 @@
 xrr: "1"
 adapter: http
-fingerprint: c1a8b00c
-recorded_at: "2026-09-30T14:51:09Z"
+fingerprint: 7b66095c
+recorded_at: "2026-10-01T07:49:32Z"
 payload:
     status: 200
     headers:
@@ -18,9 +18,9 @@ payload:
                       "args": {
                         "text": "pelican"
                       },
-                      "id": "call_730386"
+                      "id": "call_133875"
                     },
-                    "thoughtSignature": "EmAKXgFpFH0TJaCJfZQylptkbBm6+ttsdK+4rLfwIwUJcYgMXrsBd62HFq6SAuqKwug9TatJ34Qv+X6RteyilGKAz5yhRkU4l0O9yO1En3tljyG02e//XHt62IIZPlyZqrQ="
+                    "thoughtSignature": "EmAKXgFpFH0Toq9CWgXrLooAn69ATQXgQGSfkhYypYiUGgiDm2E6XFRQCRtxitNcRb5fsedrvLb4JryLGwsebZhUQJDKCOY1uGC/NJSTKdjUGrE1CR5zeFPoNZnQkPJZ2Jg="
                   }
                 ],
                 "role": "model"
@@ -31,17 +31,17 @@ payload:
             }
           ],
           "usageMetadata": {
-            "promptTokenCount": 88,
+            "promptTokenCount": 100,
             "candidatesTokenCount": 15,
-            "totalTokenCount": 103,
+            "totalTokenCount": 115,
             "promptTokensDetails": [
               {
                 "modality": "TEXT",
-                "tokenCount": 88
+                "tokenCount": 100
               }
             ],
             "serviceTier": "standard"
           },
           "modelVersion": "gemini-3.5-flash-lite",
-          "responseId": "2SG9aoD2KJWj_PUPj-6SwAg"
+          "responseId": "ixC-atXiL77U-sAPxrGf8Ag"
         }

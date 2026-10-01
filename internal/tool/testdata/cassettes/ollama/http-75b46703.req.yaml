@@ -1,19 +1,23 @@
 xrr: "1"
 adapter: http
-fingerprint: a1dc2a34
-recorded_at: "2026-09-30T14:45:14Z"
+fingerprint: 75b46703
+recorded_at: "2026-10-01T07:49:08Z"
 payload:
     method: POST
-    url: /api/v1/chat/completions
+    url: /v1/chat/completions
     body: |
         {
           "messages": [
+            {
+              "content": "You are a terse assistant. Use tools when asked.",
+              "role": "system"
+            },
             {
               "content": "Call the echo tool once with the text \"pelican\". When its result comes back, do not call any tool again: reply with the word the tool echoed, and nothing else.",
               "role": "user"
             }
           ],
-          "model": "openai/gpt-4.1-nano",
+          "model": "ornith:9b",
           "tools": [
             {
               "function": {

@@ -1,7 +1,7 @@
 xrr: "1"
 adapter: http
-fingerprint: 024069f2
-recorded_at: "2026-09-30T14:24:30Z"
+fingerprint: bc7ac42b
+recorded_at: "2026-10-01T07:49:29Z"
 payload:
     method: POST
     url: /v1/messages
@@ -21,7 +21,7 @@ payload:
             {
               "content": [
                 {
-                  "id": "toolu_01S8DBSaE4ZAwVqPnDQLqQSv",
+                  "id": "toolu_01GMRNZDUszo1YJPpwfvfDNY",
                   "input": {
                     "text": "pelican"
                   },
@@ -40,7 +40,7 @@ payload:
                       "type": "text"
                     }
                   ],
-                  "tool_use_id": "toolu_01S8DBSaE4ZAwVqPnDQLqQSv",
+                  "tool_use_id": "toolu_01GMRNZDUszo1YJPpwfvfDNY",
                   "type": "tool_result"
                 }
               ],
@@ -48,6 +48,12 @@ payload:
             }
           ],
           "model": "claude-haiku-4-5-20251001",
+          "system": [
+            {
+              "text": "You are a terse assistant. Use tools when asked.",
+              "type": "text"
+            }
+          ],
           "tools": [
             {
               "description": "Echo the given text back verbatim.",

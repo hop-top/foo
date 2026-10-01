@@ -1,7 +1,7 @@
 xrr: "1"
 adapter: http
-fingerprint: 5cee165a
-recorded_at: "2026-09-30T14:24:26Z"
+fingerprint: fcc40c6a
+recorded_at: "2026-10-01T07:49:29Z"
 payload:
     method: POST
     url: /v1/messages
@@ -20,6 +20,12 @@ payload:
             }
           ],
           "model": "claude-haiku-4-5-20251001",
+          "system": [
+            {
+              "text": "You are a terse assistant. Use tools when asked.",
+              "type": "text"
+            }
+          ],
           "tools": [
             {
               "description": "Echo the given text back verbatim.",
