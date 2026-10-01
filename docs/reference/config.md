@@ -307,6 +307,7 @@ take effect on every `foo` invocation.
 | `FOO_SECRETS_SERVICE` | `secrets.service` | Keychain service (`keyring` backend; default `foo`) |
 | `FOO_CACHE` | `$XDG_CACHE_HOME/foo` | Directory holding foo's own caches, e.g. `foo model list --endpoint`'s inventory store. |
 | `FOO_CACHE_TTL` | (per-cache default) | Freshness window for foo's own caches, as a Go duration (`30s`, `1h`). `0` disables caching. Does not affect the aim catalog's 24h window, which aim owns. |
+| `FOO_NO_UPDATE_NOTIFIER` | (none) | Any value turns off the update notice and its release check on every command. `foo upgrade` still checks. See [Upgrade foo](../how-to/upgrade-foo.md#how-it-works). |
 
 ### XDG variables (kit-shared)
 

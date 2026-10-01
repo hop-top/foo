@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/log/v2"
@@ -360,11 +361,12 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	cmd.SetContext(kitcli.WithOffline(cmd.Context(), offline))
 
 	// Work foo skips outright rather than letting the guard refuse:
-	// the upgrade check (the one unconditional network touch in the
-	// init path), bus peers (wireBusNetwork) and `foo upgrade` all read
-	// networkAllowed().
-	if !offline && cmd.Name() != "upgrade" {
-		upgrade.NotifyIfAvailable(cmd.Context(), newUpgradeChecker(), cmd.ErrOrStderr())
+	// the update notice (the one network touch in the init path; see
+	// upgradeNoticeWanted for when it runs), bus peers
+	// (wireBusNetwork) and `foo upgrade` all honor --offline.
+	if upgradeNoticeWanted(cmd) {
+		upgrade.NotifyIfAvailable(cmd.Context(),
+			newUpgradeChecker(upgrade.WithTimeout(upgradeNoticeTimeout)), cmd.ErrOrStderr())
 	}
 	if eventBus == nil {
 		eventBus = kitbus.New()
@@ -1118,16 +1120,62 @@ func recordMessage(ctx context.Context, role, content string) {
 	})
 }
 
-func newUpgradeChecker() *upgrade.Checker {
+// upgradeNoticeOptOutEnv, set to any value, turns the passive update
+// notice off for every run (gh's GH_NO_UPDATE_NOTIFIER, foo's prefix).
+// `foo upgrade` still checks when asked.
+const upgradeNoticeOptOutEnv = "FOO_NO_UPDATE_NOTIFIER"
+
+var (
+	// upgradeSource is where foo's releases are published; a var so a
+	// test can point the check at a loopback feed.
+	upgradeSource = upgrade.WithGitHub("hop-top/foo")
+
+	// upgradeNoticeTimeout bounds the passive check. It runs inline in
+	// the pre-run, ahead of the command, and kit does not cache a failed
+	// check, so on a network that drops packets every invocation would
+	// otherwise wait out kit's 10s default before doing any work.
+	upgradeNoticeTimeout = 2 * time.Second
+
+	// stderrIsTerminal reports whether w, where the notice prints, is a
+	// terminal. A var so a test can stand in for one.
+	stderrIsTerminal = func(w io.Writer) bool {
+		f, ok := w.(*os.File)
+		return ok && term.IsTerminal(int(f.Fd()))
+	}
+)
+
+// upgradeNoticeWanted reports whether this run should check for a newer
+// foo and print the one-line notice. The check is a network call made
+// on every invocation, so it runs only for someone who can see the
+// result and has not declined it:
+//
+//   - not under --offline (kit's guard would refuse the call anyway);
+//   - not for `foo upgrade`, which checks for itself;
+//   - not under --quiet, which suppresses non-essential output;
+//   - not with FOO_NO_UPDATE_NOTIFIER set, or CI set (the convention
+//     CI providers follow);
+//   - only when stderr is a terminal: piped or captured output is a
+//     script or another program, which the notice would only pollute.
+func upgradeNoticeWanted(cmd *cobra.Command) bool {
+	switch {
+	case offline, cmd.Name() == "upgrade", root.IsQuiet():
+		return false
+	case os.Getenv(upgradeNoticeOptOutEnv) != "", os.Getenv("CI") != "":
+		return false
+	}
+	return stderrIsTerminal(cmd.ErrOrStderr())
+}
+
+func newUpgradeChecker(opts ...upgrade.Option) *upgrade.Checker {
 	stateDir, err := xdg.StateDir("foo")
 	if err != nil {
 		stateDir = ""
 	}
-	return upgrade.New(
+	return upgrade.New(append([]upgrade.Option{
 		upgrade.WithBinary("foo", version),
-		upgrade.WithGitHub("hop-top/foo"),
+		upgradeSource,
 		upgrade.WithStateDir(stateDir),
-	)
+	}, opts...)...)
 }
 
 // providerAuthRequirement reports what credential a provider scheme

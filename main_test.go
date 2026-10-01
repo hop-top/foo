@@ -25,12 +25,12 @@ func buildFoo(t *testing.T) string {
 	return bin
 }
 
-// isolatedEnv is a throwaway HOME/XDG tree, a minimal PATH and no
-// provider credentials.
+// isolatedEnv is a throwaway HOME/XDG tree, a minimal PATH, no
+// provider credentials and no update check.
 func isolatedEnv(t *testing.T, pathDir string) []string {
 	t.Helper()
 	root := t.TempDir()
-	env := []string{"PATH=" + pathDir + ":/usr/bin:/bin", "NO_COLOR=1"}
+	env := []string{"PATH=" + pathDir + ":/usr/bin:/bin", "NO_COLOR=1", "FOO_NO_UPDATE_NOTIFIER=1"}
 	for k, sub := range map[string]string{
 		"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_DATA_HOME": "data",
 		"XDG_CACHE_HOME": "cache", "XDG_STATE_HOME": "state",

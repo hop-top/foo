@@ -24,7 +24,18 @@ var (
 
 func TestMain(m *testing.M) { os.Exit(runTests(m)) }
 
+// noUpdateNotifier opts a foo run out of the passive update check,
+// which would otherwise dial api.github.com on every invocation.
+const noUpdateNotifier = "FOO_NO_UPDATE_NOTIFIER"
+
 func runTests(m *testing.M) int {
+	// Every foo the suite starts inherits this: no run asks GitHub for
+	// the latest release. A harness that builds its own environment
+	// carries it too (see noUpdateNotifier).
+	if err := os.Setenv(noUpdateNotifier, "1"); err != nil {
+		fmt.Fprintln(os.Stderr, "e2e:", err)
+		return 1
+	}
 	dir, err := os.MkdirTemp("", "foo-e2e-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e: scratch dir:", err)
