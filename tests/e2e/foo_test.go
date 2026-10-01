@@ -62,6 +62,10 @@ func runFoo(t *testing.T, tmpHome string, args ...string) (string, string, error
 		"XDG_CONFIG_HOME="+filepath.Join(tmpHome, ".config"),
 		"XDG_STATE_HOME="+filepath.Join(tmpHome, ".local", "state"),
 		"XDG_DATA_HOME="+filepath.Join(tmpHome, ".local", "share"),
+		// Without it, an inherited XDG_CACHE_HOME puts the model
+		// catalog and endpoint caches in the developer's real cache,
+		// shared with every concurrent run.
+		"XDG_CACHE_HOME="+filepath.Join(tmpHome, ".cache"),
 		// The binary links the keyring secrets backend; an inherited
 		// FOO_SECRETS_BACKEND=keyring would reach the real keychain.
 		"FOO_SECRETS_BACKEND=env",
