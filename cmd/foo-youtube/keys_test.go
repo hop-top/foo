@@ -14,6 +14,17 @@ import (
 	"hop.top/kit/go/console/output"
 )
 
+// A missing key exits with kit's unauthorized code, the same slot the
+// host uses, not a sidecar-specific number.
+func TestExitUnauthorized_MatchesKit(t *testing.T) {
+	if want := output.UnauthorizedError("").ExitCode; exitUnauthorized != want {
+		t.Errorf("exitUnauthorized = %d, want kit's unauthorized exit %d", exitUnauthorized, want)
+	}
+	if exitUnauthorized != exitMissingDep {
+		t.Errorf("exitUnauthorized = %d, exitMissingDep = %d: both are kit's environment/auth slot", exitUnauthorized, exitMissingDep)
+	}
+}
+
 // Key resolution is kit's (llm.ApplyAPIKey); these tests pin what the
 // sidecar hands it and how it words kit's answer. Every test runs under
 // isolateLLMEnv: throwaway HOME/XDG, no provider variables, and no
@@ -21,7 +32,7 @@ import (
 // server).
 
 // wantUnauthorized asserts err is the sidecar's missing-key envelope:
-// exit 4, CodeUnauthorized, naming envVar and the FOO_YOUTUBE_MODEL
+// exit 5, CodeUnauthorized, naming envVar and the FOO_YOUTUBE_MODEL
 // escape hatch.
 func wantUnauthorized(t *testing.T, err error, envVar string) {
 	t.Helper()
@@ -212,7 +223,7 @@ func TestModelURI_CatalogProviderKey(t *testing.T) {
 }
 
 // TestModelURI_OtherErrorsPassThrough: a failure that is not a missing
-// key keeps kit's own error (not exit 4), and names no key value.
+// key keeps kit's own error (not the unauthorized exit), and names no key value.
 func TestModelURI_OtherErrorsPassThrough(t *testing.T) {
 	isolateLLMEnv(t)
 	// A key a provider URI cannot carry intact.
@@ -259,7 +270,7 @@ func TestAnswer_URIFormModelSendsKey(t *testing.T) {
 
 // TestRun_MissingKeyExitsUnauthorizedWithoutRequest goes through run()
 // with the real answer seam: a URI-form model with no key must stop with
-// exit 4 before any request is made, and print nothing.
+// exit 5 before any request is made, and print nothing.
 func TestRun_MissingKeyExitsUnauthorizedWithoutRequest(t *testing.T) {
 	withFullYTDLP(t)
 	clearPromptEnv(t)

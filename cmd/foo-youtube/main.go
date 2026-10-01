@@ -65,7 +65,8 @@ var (
 )
 
 // Exit codes follow the kit cross-tool convention (§8.1): 1 generic,
-// 2 usage (bad/missing args), 5 a missing external dependency. Fetch
+// 2 usage (bad/missing args), 5 environment/auth: a missing external
+// dependency or a missing provider key (exitUnauthorized). Fetch
 // failures are runtime errors against an otherwise-valid request, so
 // they map to the generic 1. Cobra itself exits 2 on flag/arg parse
 // failures, which lines up with exitUsage.

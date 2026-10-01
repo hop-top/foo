@@ -157,7 +157,7 @@ with only `OPENAI_API_KEY` set is a missing key. Local runtimes (ollama,
 routellm) need none and never get `LLM_API_KEY`. The full precedence is
 kit's: [`llm.ApplyAPIKey`](https://pkg.go.dev/hop.top/kit/go/ai/llm#ApplyAPIKey).
 
-A missing key fails before any request, with exit 4:
+A missing key fails before any request, with exit 5:
 
 ```
 $ FOO_YOUTUBE_MODEL=openrouter://openai/gpt-4.1-nano foo youtube dQw4w9WgXcQ "summary?"
@@ -237,8 +237,7 @@ Follows the kit cross-tool convention (§8.1):
 | `0` | Success |
 | `1` | Fetch failure (metadata/transcript against a valid request), or the model call failed |
 | `2` | Usage error (missing/invalid URL or video ID, bad flags) |
-| `4` | Missing provider API key for the model answering a question |
-| `5` | Missing dependency (`yt-dlp` not on `$PATH`) |
+| `5` | Missing provider API key for the model answering a question (`UNAUTHORIZED`), or missing dependency (`yt-dlp` not on `$PATH`, `MISSING_DEPENDENCY`) |
 
 Comments are best-effort: a fetch failure there warns on stderr and
 continues (does not fail the run). A non-zero exit produces no stdout,
