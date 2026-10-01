@@ -704,7 +704,8 @@ supplied on the command line.`,
 	currentCmd := &cobra.Command{
 		Use:   "current",
 		Short: "Show the current default model",
-		Long:  "Print the model id stored in user config as the default.",
+		Long: `Print the default model in effect: the model config key after
+every layer (user and project files, FOO_MODEL, -c) is applied.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return renderData(cmd, modelStatus{Current: cfg.Model})
 		},
@@ -715,15 +716,24 @@ supplied on the command line.`,
 	defaultCmd := &cobra.Command{
 		Use:   "default <model>",
 		Short: "Set the default model",
-		Long:  "Persist the supplied model id as the new default in user config.",
-		Args:  cobra.ExactArgs(1),
+		Long: `Persist the supplied model id as the new default in user config
+($XDG_CONFIG_HOME/foo/config.yaml). Only the model key is written; the
+rest of the file is left as it is.
+
+A project .foo.yaml, FOO_MODEL or -c model=... still outranks the user
+file; when one does, a note on stderr names the model that wins.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.Model = args[0]
-			if err := cfg.Save(); err != nil {
+			model := args[0]
+			if err := config.SetUser("model", model); err != nil {
 				return err
 			}
-			publishEvent(cmd.Context(), "foo.organize.model.selected", map[string]any{"model": cfg.Model})
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default model set to %q\n", cfg.Model)
+			publishEvent(cmd.Context(), "foo.organize.model.selected", map[string]any{"model": model})
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default model set to %q\n", model)
+			if effective := effectiveModel(); effective != "" && effective != model {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+					"note: saved to user config, but %q still wins here (project .foo.yaml, FOO_MODEL or -c model=...)\n", effective)
+			}
 			return nil
 		},
 	}
@@ -731,6 +741,20 @@ supplied on the command line.`,
 	cmd.AddCommand(defaultCmd)
 
 	return cmd
+}
+
+// effectiveModel reloads the config as this invocation layered it and
+// returns the model it resolves to, or "" when it cannot be loaded.
+func effectiveModel() string {
+	extraPaths, overrides, err := root.ConfigArgs()
+	if err != nil {
+		return ""
+	}
+	loaded, err := config.Load(config.LoadOptions{ExtraConfigPaths: extraPaths, Overrides: overrides})
+	if err != nil {
+		return ""
+	}
+	return loaded.Model
 }
 
 func providerCmd() *cobra.Command {

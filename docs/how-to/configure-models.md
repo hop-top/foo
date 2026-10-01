@@ -246,7 +246,20 @@ foo model default claude-3-5-sonnet-latest
 ```
 
 The value is written to `$XDG_CONFIG_HOME/foo/config.yaml` under
-`model`. You can also set it ad hoc via `FOO_MODEL` in env.
+`model`, and only there: the rest of that file — other keys,
+comments, blank lines — is left as it is, and nothing from a project
+`.foo.yaml`, `FOO_*` variables or `-c` is copied into it. The file is
+created if missing. You can also set the model ad hoc via `FOO_MODEL`
+in env.
+
+A higher layer still wins over the user file. When one sets `model`,
+the command saves anyway and says which model is in effect:
+
+```sh
+FOO_MODEL=gpt-4o foo model default claude-3-5-sonnet-latest
+# default model set to "claude-3-5-sonnet-latest"
+# note: saved to user config, but "gpt-4o" still wins here (project .foo.yaml, FOO_MODEL or -c model=...)
+```
 
 ### 6. Override on one call
 
@@ -325,15 +338,24 @@ foo provider show groq --format json
 | `model list` prints only a footer, no rows | No provider key configured, so nothing is reachable | Export a key named by `provider show <scheme>`, or pass `--all` to list the catalog anyway |
 | A model you know exists is absent from `model list` | Its provider has no adapter, or no key configured | Re-run with `--all`; the footer names the count it was hiding |
 | `model default ...` no-op | Filesystem permission on `$XDG_CONFIG_HOME` | Check directory perms |
+| `model default ...` prints `note: ... still wins here` | `.foo.yaml`, `FOO_MODEL` or `-c model=...` outranks the user file | Remove or change that layer, or use `-m` per call |
+| `model default ...` fails with a YAML error | The user `config.yaml` does not parse; foo will not overwrite it | Fix the file (the error names the line) and retry |
 
 ## How it works
 
 Model selection precedence (highest first):
 
 1. `-m`/`--model` on the command line.
-2. `FOO_MODEL` in env.
-3. `model` in user config (`config.yaml`).
-4. Hard-coded default: `claude-3-5-sonnet-latest`.
+2. `-c model=...` on the command line.
+3. `FOO_MODEL` in env.
+4. `model` in an extra `-c <path>` file.
+5. `model` in the project `.foo.yaml`.
+6. `model` in user config (`$XDG_CONFIG_HOME/foo/config.yaml`) —
+   the one `foo model default` writes.
+7. `model` in `/etc/foo/config.yaml`.
+8. Hard-coded default: `claude-3-5-sonnet-latest`.
+
+See [config sources and precedence](../reference/config.md#sources-and-precedence).
 
 foo dispatches by scheme prefix. Known prefixes route to the
 matching provider; unknown prefixes fall back to the OpenAI

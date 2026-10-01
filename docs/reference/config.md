@@ -27,6 +27,18 @@ ones.
   literal string).
 - `-c` flags win over any file layer.
 
+### What foo writes
+
+foo reads every layer but writes only the user file, and only the
+key a command sets: `foo model default <id>` writes `model` and
+leaves the rest of `$XDG_CONFIG_HOME/foo/config.yaml` as it is —
+other keys, comments, blank lines and order. Values from the
+project file, `FOO_*` variables, `-c` and `--profile` are never
+copied into it. A missing file is created holding just that key
+(mode 0644: the file names a secret backend, never a secret); an
+existing file keeps its mode and, if it is a symlink, stays one. A
+file that does not parse is reported and left untouched.
+
 ## Configuration keys
 
 | Key | Type | Default | Description | Env equivalent |

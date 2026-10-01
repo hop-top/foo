@@ -207,7 +207,7 @@ Discover model ids and manage the default model selection.
 |------------|----------|-------------|--------|
 | `list` | `foo model list [--flags]` | List models from the model catalog | [Configure models](../how-to/configure-models.md#1-find-a-model-id) |
 | `current` | `foo model current` | Show the current default model | [Configure models](../how-to/configure-models.md) |
-| `default` | `foo model default <model>` | Set the default model | [Configure models](../how-to/configure-models.md) |
+| `default` | `foo model default <model>` | Set the default model: writes only `model` to the user config file ([what foo writes](config.md#what-foo-writes)) | [Configure models](../how-to/configure-models.md#5-set-a-new-default) |
 
 `list` flags:
 
