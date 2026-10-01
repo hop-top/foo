@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"hop.top/foo/internal/embed"
 	kitcli "hop.top/kit/go/console/cli"
+	"hop.top/kit/go/console/output"
 	"hop.top/kit/go/core/upgrade"
 )
 
@@ -166,8 +168,8 @@ func TestDryRun_OptedOutLeavesRefuse(t *testing.T) {
 
 			args := append(append(append([]string(nil), tc.path...), tc.args...), "--dry-run")
 			_, _, err := runFooExecute(t, args...)
-			if err == nil || !strings.Contains(err.Error(), "opted out") {
-				t.Errorf("foo %s: err %v; want kit's opt-out refusal", strings.Join(args, " "), err)
+			if !isDryRunRefusal(err) {
+				t.Errorf("foo %s: err %v; want kit's --dry-run refusal (USAGE, exit 2)", strings.Join(args, " "), err)
 			}
 			if after := snapshotTree(t, dryRunRoots(dir)); !sameTree(before, after) {
 				t.Errorf("refused dry run changed the filesystem:\n%s", treeDiff(before, after))
@@ -207,6 +209,14 @@ func TestDryRun_EveryHonoringLeafCovered(t *testing.T) {
 			t.Errorf("%s is listed as opted out but is not", c.CommandPath())
 		}
 	}
+}
+
+// isDryRunRefusal reports whether err refuses --dry-run the way kit
+// does: a USAGE error, exit 2, naming the flag. kit owns the wording.
+func isDryRunRefusal(err error) bool {
+	var oe *output.Error
+	return errors.As(err, &oe) && oe.Code == output.CodeUsage && oe.ExitCode == 2 &&
+		strings.Contains(oe.Message, "--dry-run")
 }
 
 // dryRunEnv isolates a run and makes a scratch working directory the

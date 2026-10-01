@@ -13,9 +13,9 @@ cause → fix; the longer sections below give the detail.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `missing X_API_KEY for model "..."` (exit 5) | No key for that scheme in `providers.<scheme>.api_key` in llm.yaml, the secret store, `X_API_KEY` (or the scheme's other key names) or `LLM_API_KEY` | [Set an API key](#api-key-missing-or-invalid) |
+| `missing X_API_KEY for model "..."` (exit 5) | No key for that scheme in `providers.<scheme>.api_key` in llm.yaml, the secret store, `X_API_KEY` (or the scheme's other key names) or `LLM_API_KEY`. A blank value (`""` or spaces) counts as no key | [Set an API key](#api-key-missing-or-invalid) |
 | `auth error (provider "...")` | API key set but rejected by the provider | [Check your key + provider config](#api-key-missing-or-invalid) |
-| 401 `Missing Authentication header` from OpenRouter, Groq or another gateway | No key reached the provider; its key is in `OPENAI_API_KEY`, or the URI has an empty `?api_key=` | [Export the scheme's own key](#api-key-missing-or-invalid) |
+| 401 `Missing Authentication header` from OpenRouter, Groq or another gateway | No key reached the provider; its key is in `OPENAI_API_KEY` | [Export the scheme's own key](#api-key-missing-or-invalid) |
 | `auth error (provider "...")` from a fallback, or a provider you have no key for, while `LLM_API_KEY` is set | `LLM_API_KEY` goes to every keyed scheme without its own key | [Export that scheme's own key](#api-key-missing-or-invalid) |
 | `secrets.store.unavailable: cannot open the configured secret store` | `secrets.backend` names a backend foo does not ship (only `env` and `keyring`) | Fix `secrets.backend` / `FOO_SECRETS_BACKEND`; see [Secret store](reference/config.md#secret-store) |
 | `provider show` says `missing` for a key in the keychain | Keyring item under another service or account name; foo asks service `foo` (or `secrets.service`, or the `--profile` name), account e.g. `openrouter_api_key` | [Secret store](reference/config.md#secret-store) |

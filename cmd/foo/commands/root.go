@@ -553,11 +553,13 @@ func stdinIsPipe(cmd *cobra.Command) bool {
 }
 
 func runREPL(cmd *cobra.Command) error {
-	// Same refusal kit gives `foo repl --dry-run`: a session has no
-	// batch boundary to preview. The bare root reaches here when no
-	// prompt was given on a terminal.
+	// Same refusal kit gives `foo repl --dry-run` (USAGE, exit 2): a
+	// session has no batch boundary to preview. The bare root reaches
+	// here when no prompt was given on a terminal.
 	if kitcli.IsDryRun(cmd) {
-		return fmt.Errorf("--dry-run is not meaningful for the interactive REPL: pass a prompt to preview it, or run without --dry-run")
+		ce := output.UsageError(fmt.Sprintf("%q does not accept --dry-run without a prompt: the interactive REPL has no batch boundary to scope the preview", cmd.CommandPath()))
+		ce.SuggestedFix = "pass a prompt to preview it, or run without --dry-run"
+		return ce
 	}
 	if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
 		return fmt.Errorf("interactive REPL requires a terminal; supply a prompt (`foo \"...\"`) or pipe input (`echo ... | foo -p <pattern>`)")

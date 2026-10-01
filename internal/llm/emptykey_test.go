@@ -13,16 +13,15 @@ import (
 	envstore "hop.top/kit/go/storage/secret/env"
 )
 
-// An empty key is no key. A variable exported as "", an empty secret,
-// `api_key: ""` in llm.yaml, and an api_key_env naming an empty
-// variable must read "missing" on every surface that asks: `foo
-// provider show` (Lookup().Status()), the `foo model list` reachability
-// filter (FilterReachable), and a run's key precheck (applyKey). Kit's
-// own lookup already skips empty values; the defect was foo's catalog
-// branch accepting an empty value from the env-backed secret store.
-//
-// Whitespace is a value: kit sends "  " as written, so it counts as
-// set on every surface too. What matters is that the surfaces agree.
+// A blank key is no key. A variable exported as "" or as spaces, a
+// blank secret, a blank `api_key` in llm.yaml, and an api_key_env
+// naming a blank variable must read "missing" on every surface that
+// asks: `foo provider show` (Lookup().Status()), the `foo model list`
+// reachability filter (FilterReachable), and a run's key precheck
+// (applyKey). Kit's own lookup skips blank values (empty or only
+// whitespace) at every source; foo's catalog branch, which looks up
+// the names of a provider no adapter serves itself, applies the same
+// rule, so the surfaces agree.
 
 // emptyKeyKinds are the provider shapes a key check can take, each
 // served from an in-test catalog: openai has its own adapter,
@@ -72,7 +71,7 @@ type keyState struct {
 var keyStates = []keyState{
 	{name: "unset", unset: true},
 	{name: "empty", value: ""},
-	{name: "whitespace", value: "  ", present: true},
+	{name: "whitespace", value: "  "},
 	{name: "set", value: "fake-key", present: true},
 }
 
@@ -83,7 +82,11 @@ type keySource struct {
 	// kitOnly: the source is part of kit's key plan, which applies only
 	// to a provider an adapter serves.
 	kitOnly bool
-	apply   func(t *testing.T, xdg, provider, envVar string, st keyState) secret.Store
+	// ownBlock: the source is the provider's own llm.yaml block, which
+	// kit reads even for a scheme no adapter serves: that key is the
+	// scheme's own, not lent.
+	ownBlock bool
+	apply    func(t *testing.T, xdg, provider, envVar string, st keyState) secret.Store
 }
 
 // envStore is foo's default store (`secrets.backend: env`, no prefix):
@@ -114,13 +117,13 @@ var keySources = []keySource{
 		setState(t, "LLM_API_KEY", st)
 		return envStore()
 	}},
-	{name: "llm.yaml api_key", kitOnly: true, apply: func(t *testing.T, xdg, provider, _ string, st keyState) secret.Store {
+	{name: "llm.yaml api_key", kitOnly: true, ownBlock: true, apply: func(t *testing.T, xdg, provider, _ string, st keyState) secret.Store {
 		if !st.unset {
 			writeLLMConfig(t, xdg, fmt.Sprintf("providers:\n  %s:\n    api_key: %q\n", provider, st.value))
 		}
 		return envStore()
 	}},
-	{name: "llm.yaml api_key_env", kitOnly: true, apply: func(t *testing.T, xdg, provider, _ string, st keyState) secret.Store {
+	{name: "llm.yaml api_key_env", kitOnly: true, ownBlock: true, apply: func(t *testing.T, xdg, provider, _ string, st keyState) secret.Store {
 		writeLLMConfig(t, xdg, fmt.Sprintf("providers:\n  %s:\n    api_key_env: FOO_TEST_NAMED_KEY\n", provider))
 		setState(t, "FOO_TEST_NAMED_KEY", st)
 		return envStore()
@@ -190,12 +193,18 @@ func TestEmptyKey_SurfacesAgree(t *testing.T) {
 					uri, err := applyKey(context.Background(), store, kind.provider+"://some-model")
 					if !kind.routed {
 						// kit lends no credential to a host it cannot
-						// reach; the run fails at Resolve instead.
+						// reach, but the scheme's own llm.yaml block is
+						// its own: that key is attached. Either way the
+						// run fails at Resolve.
 						if err != nil {
 							t.Fatalf("applyKey on an unrouted scheme: %v", err)
 						}
-						if p := parseOrFatal(t, uri).Params; p["api_key"] != "" {
-							t.Errorf("unrouted scheme was given a key")
+						wantKey := ""
+						if st.present && src.ownBlock {
+							wantKey = st.value
+						}
+						if k := parseOrFatal(t, uri).Params["api_key"]; k != wantKey {
+							t.Errorf("unrouted scheme: api_key = %q, want %q", k, wantKey)
 						}
 						if _, err := NewClient(context.Background(), ClientOpts{Model: kind.provider + "://some-model", Secrets: store}); err == nil {
 							t.Error("run on a provider no adapter serves succeeded")

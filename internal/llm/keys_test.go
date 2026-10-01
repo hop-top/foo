@@ -171,6 +171,29 @@ func TestResolveURI_URIForm_ExplicitAPIKeyUntouched(t *testing.T) {
 	}
 }
 
+// TestResolveURI_URIForm_BlankAPIKeyResolved: a blank api_key is no
+// key. It leaves the URI and the scheme's key resolves as if the URI
+// named none; with none anywhere, the precheck fails as for a URI
+// without the param.
+func TestResolveURI_URIForm_BlankAPIKeyResolved(t *testing.T) {
+	for _, blank := range []string{"", "  "} {
+		clearProviderKeys(t)
+		t.Setenv("OPENROUTER_API_KEY", "fake-env-key")
+		uri := "openrouter://openai/gpt-4.1-nano?api_key=" + blank + "&base_url=http://127.0.0.1:1/v1"
+		got, err := resolvedURIForModel(uri)
+		if err != nil {
+			t.Fatalf("resolvedURIForModel(%q): %v", uri, err)
+		}
+		if p := parseOrFatal(t, got).Params; p["api_key"] != "fake-env-key" || p["base_url"] != "http://127.0.0.1:1/v1" {
+			t.Errorf("blank api_key %q: sent api_key=%q base_url=%q, want the env key and the URI's base_url", blank, p["api_key"], p["base_url"])
+		}
+
+		unsetForTest(t, "OPENROUTER_API_KEY")
+		_, err = resolvedURIForModel(uri)
+		assertMissingKeyError(t, err, "OPENROUTER_API_KEY", "openrouter")
+	}
+}
+
 // TestResolveURI_URIForm_LocalSchemesUntouched: local runtimes take no
 // key, so no precheck fails and nothing is appended.
 func TestResolveURI_URIForm_LocalSchemesUntouched(t *testing.T) {
