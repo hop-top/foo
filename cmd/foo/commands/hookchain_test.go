@@ -149,15 +149,15 @@ func TestDryRun_RootWritesNothing(t *testing.T) {
 func TestDryRun_REPLRefused(t *testing.T) {
 	newToolTestEnv(t)
 	_, _, err := runFooExecute(t, "repl", "--dry-run")
-	if err == nil || !strings.Contains(err.Error(), "not meaningful for interactive commands") {
-		t.Errorf("foo repl --dry-run: err %v; want kit's interactive refusal", err)
+	if !isDryRunRefusal(err) {
+		t.Errorf("foo repl --dry-run: err %v; want kit's interactive refusal (USAGE, exit 2)", err)
 	}
 
 	r := New("test")
 	if err := r.Cmd.ParseFlags([]string{"--dry-run"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runREPL(r.Cmd); err == nil || !strings.Contains(err.Error(), "--dry-run") {
-		t.Errorf("bare REPL under --dry-run: err %v; want a --dry-run refusal", err)
+	if err := runREPL(r.Cmd); !isDryRunRefusal(err) {
+		t.Errorf("bare REPL under --dry-run: err %v; want the same refusal as kit's (USAGE, exit 2)", err)
 	}
 }

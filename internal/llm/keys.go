@@ -75,6 +75,11 @@ func firstEnvVar(m *kitllm.MissingKeyError) string {
 	return m.EnvVars[0]
 }
 
+// blankKey reports whether v holds no key: it is empty or only
+// whitespace. kit applies the same rule at every key source, so foo's
+// own lookups (lookupCatalogKey) apply it too.
+func blankKey(v string) bool { return strings.TrimSpace(v) == "" }
+
 // SecretName maps an env var name onto the key foo's secret store
 // knows it by.
 //
@@ -113,7 +118,7 @@ func (s *namedStore) Get(ctx context.Context, key string) (*secret.Secret, error
 	}
 	name := SecretName(key)
 	got, err := s.inner.Get(ctx, name)
-	if err != nil || got == nil || len(got.Value) == 0 {
+	if err != nil || got == nil || blankKey(string(got.Value)) {
 		return nil, secret.ErrNotFound
 	}
 	s.hit = name
@@ -199,7 +204,7 @@ func resolveKeyStatus(ctx context.Context, store secret.Store, scheme string) ke
 		// that is set, else LLM_API_KEY.
 		st.source = KeySourceLLMAPIKey
 		for _, name := range key.EnvVars {
-			if os.Getenv(name) != "" {
+			if !blankKey(os.Getenv(name)) {
 				st.source, st.secretKey = KeySourceSecret, SecretName(name)
 				break
 			}

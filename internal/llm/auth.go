@@ -205,9 +205,9 @@ func resolveProviderAuth(ctx context.Context, name string, catalogEnv []string, 
 // user of it as unconfigured.
 //
 // The names are looked up as kit looks up a routed provider's: the
-// store first, then the environment, and only a non-empty value is a
-// key. An empty variable is no key here either, so it reads "missing"
-// on this branch as it does on kit's. LLM_API_KEY and llm.yaml are not
+// store first, then the environment, and a blank value (empty or only
+// whitespace) is no key. A blank variable reads "missing" on this
+// branch as it does on kit's. LLM_API_KEY and llm.yaml are not
 // consulted: kit lends neither to a provider it cannot reach.
 func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, store secret.Store) ProviderAuth {
 	a := ProviderAuth{Provider: provider, EnvVars: envVars, Required: len(envVars) > 0}
@@ -226,11 +226,11 @@ func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, 
 }
 
 // lookupCatalogKey reports the secret name of the first of envVars
-// holding a non-empty key: in store (nil for none), then in the
-// environment. namedStore applies foo's names and counts an empty
-// secret, or a lookup error, as "not this one": one unreadable backend
-// entry must not make the other alternatives unaskable, and the
-// listing has to render either way.
+// holding a key: in store (nil for none), then in the environment. A
+// blank value is no key, kit's rule (blankKey). namedStore applies
+// foo's names and counts a blank secret, or a lookup error, as "not
+// this one": one unreadable backend entry must not make the other
+// alternatives unaskable, and the listing has to render either way.
 func lookupCatalogKey(ctx context.Context, store secret.Store, envVars []string) (string, bool) {
 	probe := &namedStore{inner: store}
 	for _, envVar := range envVars {
@@ -239,7 +239,7 @@ func lookupCatalogKey(ctx context.Context, store secret.Store, envVars []string)
 		}
 	}
 	for _, envVar := range envVars {
-		if os.Getenv(envVar) != "" {
+		if !blankKey(os.Getenv(envVar)) {
 			return SecretName(envVar), true
 		}
 	}

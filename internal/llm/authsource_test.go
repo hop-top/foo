@@ -166,18 +166,65 @@ func TestAuthIndex_GoogleTakesEitherKey(t *testing.T) {
 	}
 }
 
-// TestAuthIndex_GeminiReadsItsOwnConfigBlock: a gemini:// run reads
-// providers.gemini, so `provider show gemini` must too — not the google
-// record it borrows the catalog requirement from.
-func TestAuthIndex_GeminiReadsItsOwnConfigBlock(t *testing.T) {
-	xdg := unsetKeyEnv(t)
-	writeLLMConfig(t, xdg, "providers:\n  gemini:\n    api_key: fake-yaml-gemini\n")
-	idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
-
-	if got := idx.Lookup("gemini"); got.Status() != "configured" || got.Provider != "gemini" {
-		t.Errorf("gemini = %q (provider %q), want configured under gemini", got.Status(), got.Provider)
+// TestAuthIndex_BlankNameIsSkipped: kit skips a blank variable and
+// takes the next name, so the source the index names is the one that
+// answered, not the first one exported.
+func TestAuthIndex_BlankNameIsSkipped(t *testing.T) {
+	unsetKeyEnv(t)
+	t.Setenv("GOOGLE_API_KEY", "  ")
+	t.Setenv("GEMINI_API_KEY", "fake-gemini")
+	idx := NewAuthIndexFrom(context.Background(), catalogEnv, nil)
+	got := idx.Lookup("google")
+	if got.Status() != "configured" || got.Source != KeySourceSecret || got.SecretKey != "gemini_api_key" {
+		t.Errorf("google = %q / %q / %q, want configured / %q / gemini_api_key", got.Status(), got.Source, got.SecretKey, KeySourceSecret)
 	}
-	if got := idx.Lookup("google"); got.Status() != "missing" {
-		t.Errorf("google = %q, want missing: providers.gemini is not providers.google", got.Status())
+}
+
+// TestAuthIndex_GoogleAndGeminiShareConfigBlocks: google and gemini name
+// one provider, and kit reads an llm.yaml block by either name for
+// both: the scheme's own block first, else the other name's. The index
+// reports what a run on each scheme does, key and source alike.
+func TestAuthIndex_GoogleAndGeminiShareConfigBlocks(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		// want is the key a run on each scheme sends.
+		want map[string]string
+	}{
+		{
+			name: "gemini block only",
+			yaml: "providers:\n  gemini:\n    api_key: fake-yaml-gemini\n",
+			want: map[string]string{"gemini": "fake-yaml-gemini", "google": "fake-yaml-gemini"},
+		},
+		{
+			name: "google block only",
+			yaml: "providers:\n  google:\n    api_key: fake-yaml-google\n",
+			want: map[string]string{"gemini": "fake-yaml-google", "google": "fake-yaml-google"},
+		},
+		{
+			name: "both blocks: each scheme's own wins",
+			yaml: "providers:\n  google:\n    api_key: fake-yaml-google\n  gemini:\n    api_key: fake-yaml-gemini\n",
+			want: map[string]string{"gemini": "fake-yaml-gemini", "google": "fake-yaml-google"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			xdg := unsetKeyEnv(t)
+			writeLLMConfig(t, xdg, tc.yaml)
+			idx := NewAuthIndexFrom(context.Background(), catalogEnv, stubStore())
+			for _, scheme := range []string{"gemini", "google"} {
+				got := idx.Lookup(scheme)
+				if got.Status() != "configured" || got.Provider != scheme || got.Source != KeySourceLLMConfig {
+					t.Errorf("%s = %q (provider %q, source %q), want configured from llm.yaml", scheme, got.Status(), got.Provider, got.Source)
+				}
+				uri, err := applyKey(context.Background(), stubStore(), scheme+"://some-model")
+				if err != nil {
+					t.Fatalf("%s run: %v", scheme, err)
+				}
+				if k := parseOrFatal(t, uri).Params["api_key"]; k != tc.want[scheme] {
+					t.Errorf("%s run sends %q, want %q", scheme, k, tc.want[scheme])
+				}
+			}
+		})
 	}
 }

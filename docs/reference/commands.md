@@ -135,8 +135,11 @@ anywhere on the line:
 | `foo "<prompt>"` | Prints the assembled prompt (system, fragments, schema contract) and exits: no model call, no workspace record, no first-run `llm.yaml` |
 | Write and destructive leaves: `pattern create\|import\|delete`, `schema create\|delete`, `fragment create\|delete`, `embed add\|file`, `embed collection delete`, `model default`, `upgrade` | Checks the input as the real run would, then prints the plan of effects (`--format json` or `yaml` for a machine-readable plan). A destructive leaf needs no `--confirm`, since nothing is applied. `embed` makes no embeddings call; `upgrade` checks for a release but installs nothing |
 | Read leaves (`list`, `show`, `status`, …) | Accepted, no effect |
-| `repl`, and the bare `foo` with no prompt | Refused: an interactive session has no preview |
-| `alias add\|delete`, `tool install\|uninstall` | Refused: these have no preview mode |
+| `repl`, and the bare `foo` with no prompt | Refused (`USAGE`, exit 2): an interactive session has no preview |
+| `alias add\|delete`, `tool install\|uninstall` | Refused (`USAGE`, exit 2): these have no preview mode |
+
+A refusal is kit's usage error, raised before the command runs, so
+nothing is changed; drop `--dry-run` to run the command.
 
 ```
 $ foo pattern delete reviewer --dry-run --format json
@@ -327,11 +330,11 @@ Inspect configured LLM providers.
 | `configured` | A run would find a key: llm.yaml, the scheme's own, or `LLM_API_KEY`. |
 | `missing` | No key from any of those sources. |
 
-An empty value is no key: a variable exported as `""`, an empty
-secret, `api_key: ""` in llm.yaml, or an `api_key_env` naming an
-empty variable reads `missing`, and a run with it fails the key
-check (exit 5). A value of spaces is sent as written, so it counts
-as a key. A catalog provider no adapter serves is looked up under
+A blank value (empty or only whitespace) is no key: a variable
+exported as `""` or `"  "`, a blank secret, a blank `api_key` in
+llm.yaml, or an `api_key_env` naming a blank variable reads
+`missing`, and a run with it fails the key check (exit 5); a
+lower-precedence source still applies. A catalog provider no adapter serves is looked up under
 the names the catalog lists, in the secret store then the
 environment; `LLM_API_KEY` and llm.yaml never apply to it, since no
 run can reach it.
