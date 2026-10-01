@@ -74,10 +74,26 @@ already current is a no-op. State (last-checked timestamp,
 cached release metadata) lives under
 `$XDG_STATE_HOME/foo/`.
 
-Outside `foo upgrade`, every foo invocation also runs a
-background staleness check (via `upgrade.NotifyIfAvailable`) and
-emits an unobtrusive notice to stderr when a newer version exists.
-Set `--quiet` to suppress the notice.
+Outside `foo upgrade`, a foo invocation also checks for a newer
+release before the command runs (via `upgrade.NotifyIfAvailable`)
+and prints a one-line notice to stderr when one exists. A successful
+check is cached for 4 hours; a failed one is not, so the check gives
+up after 2 seconds rather than delay the command.
+
+The check runs only for someone who can see the notice. It is
+skipped, with no network request at all, when:
+
+| Condition | Why |
+|-----------|-----|
+| stderr is not a terminal | Piped or captured output belongs to a script |
+| `--offline` | No request leaves the machine |
+| `--quiet` | Non-essential output is suppressed |
+| `FOO_NO_UPDATE_NOTIFIER` set (any value) | Explicit opt-out |
+| `CI` set (any value) | CI runners set it; nobody reads the notice |
+| the command is `foo upgrade` | It checks for itself |
+
+`foo upgrade` ignores `FOO_NO_UPDATE_NOTIFIER` and `CI`: asking for
+an upgrade always checks.
 
 ## Options
 

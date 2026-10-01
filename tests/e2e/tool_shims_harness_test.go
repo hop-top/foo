@@ -64,6 +64,7 @@ func newShimEnv(t *testing.T) *shimEnv {
 		require.NoError(t, os.MkdirAll(d, 0o755))
 		e.env = append(e.env, k+"="+d)
 	}
+	e.env = append(e.env, noUpdateNotifier+"=1")
 	e.home, e.config = filepath.Join(root, "home"), filepath.Join(root, "config")
 	require.NoError(t, os.MkdirAll(e.bin, 0o755))
 	e.setPath(e.bin)
