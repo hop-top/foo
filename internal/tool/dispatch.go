@@ -20,6 +20,11 @@ type ApproveFunc func(name string, args json.RawMessage) (bool, error)
 
 // DispatchConfig controls the agentic dispatch loop.
 type DispatchConfig struct {
+	// System is the system prompt (pattern, strategy, system fragments,
+	// schema). When set it opens the conversation as its one message
+	// with the system role, ahead of the user prompt, and stays the
+	// first message on every round. Empty sends no system message.
+	System string
 	// ChainLimit caps tool-call iterations (default 5).
 	ChainLimit int
 	// Debug enables logging of tool calls and results.
@@ -70,14 +75,18 @@ func NewDispatcher(client ToolClient, reg *Registry, cfg DispatchConfig) *Dispat
 	}
 }
 
-// Run executes the agentic loop: sends prompt + tools to LLM, executes
-// any tool calls, feeds results back, and repeats until the LLM returns
-// a text-only response or the chain limit is reached.
+// Run executes the agentic loop: sends the system prompt, prompt and
+// tools to the LLM, executes any tool calls, feeds results back, and
+// repeats until the LLM returns a text-only response or the chain limit
+// is reached. Each round resends the whole conversation: system (once,
+// first), user, then every assistant turn followed by its tool results.
 func (d *Dispatcher) Run(ctx context.Context, prompt string) (string, error) {
 	defs := d.registry.ToolDefs()
-	messages := []llm.Message{
-		{Role: "user", Content: prompt},
+	messages := make([]llm.Message, 0, 2)
+	if d.cfg.System != "" {
+		messages = append(messages, llm.Message{Role: "system", Content: d.cfg.System})
 	}
+	messages = append(messages, llm.Message{Role: "user", Content: prompt})
 	dbg := d.cfg.debugWriter()
 
 	for i := 0; i < d.cfg.chainLimit(); i++ {
