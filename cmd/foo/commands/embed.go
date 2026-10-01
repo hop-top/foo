@@ -11,16 +11,11 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
+	"hop.top/foo/internal/dbbackup"
 	"hop.top/foo/internal/embed"
 	kitcli "hop.top/kit/go/console/cli"
 	"hop.top/kit/go/core/xdg"
-	"hop.top/kit/go/storage/sqlstore"
 )
-
-// embedSchemaVersion is the embeddings-store schema revision recorded in
-// pre-migrate backup filenames. Bump when embed.NewStore's table layout
-// changes so backups are labeled with the version they precede.
-const embedSchemaVersion = 1
 
 func embedRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -308,12 +303,10 @@ func openEmbedStore() (*embed.Store, error) {
 		return nil, err
 	}
 
-	// Back up the live DB into <stateDir>/.dbs/ before NewStore runs its
-	// CREATE TABLE migrations. BackupBeforeMigrate is a no-op on first
-	// run (no file yet) and writes a timestamped copy otherwise, so a
-	// schema change never destroys recoverable data. Backups live in a
-	// hidden .dbs sibling, never beside the live DB.
-	if _, err := sqlstore.BackupBeforeMigrate(dbPath, embedSchemaVersion, sqlstore.WithBackupDir(filepath.Join(stateDir, ".dbs"))); err != nil {
+	// Back up the live DB into <stateDir>/.dbs/ before NewStore migrates,
+	// only when a migration is pending (recorded revision below
+	// embed.SchemaVersion); the newest dbbackup.Keep copies are kept.
+	if _, err := dbbackup.BeforeMigrate(dbPath, embed.SchemaVersion); err != nil {
 		return nil, fmt.Errorf("backup embeddings db: %w", err)
 	}
 

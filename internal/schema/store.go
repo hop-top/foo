@@ -32,8 +32,20 @@ func NewStore(db *sql.DB) (*Store, error) {
 	return s, nil
 }
 
+// SchemaVersion is the table-layout revision migrate brings the database
+// to, stamped into its header (PRAGMA user_version). Bump it with any
+// layout change: a store recorded below it has a migration pending, and
+// foo backs the file up before opening it (see internal/dbbackup).
+const SchemaVersion = 1
+
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`
 		CREATE TABLE IF NOT EXISTS schemas (
 			name       TEXT PRIMARY KEY,
 			dsl        TEXT NOT NULL DEFAULT '',
@@ -41,8 +53,22 @@ func (s *Store) migrate() error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)
-	`)
-	return err
+	`); err != nil {
+		return err
+	}
+
+	// Raise the stamp, never lower it: a file a newer foo migrated keeps
+	// its revision.
+	var v int
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		return err
+	}
+	if v < SchemaVersion {
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Set stores a schema compiled from DSL under the given name.

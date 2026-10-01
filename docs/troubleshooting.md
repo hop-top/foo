@@ -42,6 +42,7 @@ cause → fix; the longer sections below give the detail.
 | `--file is required` | `foo embed file` missing `--file` | Add `--file <path>` |
 | `foo status` shows degraded | One or more subsystems missing keys/state | [Read the status surface](#foo-status-shows-degraded-health) |
 | `no source provided and stdin is a terminal` | `foo fragment create <alias>` with no source on a TTY | Pipe content or pass a file/URL |
+| `.dbs/` under `$XDG_STATE_HOME/foo/` full of `*.bak` files | Earlier foo builds copied the store on every open | Nothing to do: the first open of each store after upgrading keeps its newest 5 copies; later opens copy only before a schema change. See [Where state lives](concepts.md#where-state-lives) |
 
 ## API key missing or invalid
 

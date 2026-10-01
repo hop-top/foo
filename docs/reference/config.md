@@ -338,7 +338,7 @@ applies when the variable is unset.
 | Variable | Linux default | macOS default | Holds |
 |----------|---------------|---------------|-------|
 | `XDG_CONFIG_HOME` | `~/.config` | `~/Library/Application Support` | `foo/config.yaml`, `foo/patterns/`, `foo/strategies/`, tool files `foo/scope.yaml`, `foo/tool-policy.yaml`, `foo/tools/`; kit's `hop/llm.yaml` |
-| `XDG_STATE_HOME` | `~/.local/state` | `~/Library/Application Support` | `foo/embeddings.db`, `foo/schemas.db`, `foo/workspace.db` (WSM workspace store, fragments included), upgrade state, `foo/tool-shims.json` (`foo tool install` links), `foo/tool-flavors.json` (detected BSD/GNU/busybox flavor per binary) |
+| `XDG_STATE_HOME` | `~/.local/state` | `~/Library/Application Support` | `foo/embeddings.db`, `foo/schemas.db` (their pre-migration backups in `foo/.dbs/`, newest 5 each), `foo/workspace.db` (WSM workspace store, fragments included), upgrade state, `foo/tool-shims.json` (`foo tool install` links), `foo/tool-flavors.json` (detected BSD/GNU/busybox flavor per binary) |
 | `XDG_DATA_HOME` | `~/.local/share` | `~/Library/Application Support` | `wsm/machine-id` (WSM's machine identity) |
 | `XDG_CACHE_HOME` | `~/.cache` | `~/Library/Caches` | `foo/model-endpoint-cache.db`, `hop/aim/` (models.dev catalog) |
 | `XDG_BIN_HOME` | `~/.local/bin` | `~/.local/bin` | `foo/` (`foo tool install` links) |

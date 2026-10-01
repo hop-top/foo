@@ -187,6 +187,7 @@ on macOS; see [XDG variables](reference/config.md#xdg-variables-kit-shared).
 | Patterns | `$XDG_CONFIG_HOME/foo/patterns/` |
 | Embeddings DB | `$XDG_STATE_HOME/foo/embeddings.db` |
 | Schemas DB | `$XDG_STATE_HOME/foo/schemas.db` |
+| Pre-migration DB backups | `$XDG_STATE_HOME/foo/.dbs/` |
 | Workspace events (fragments included) | WSM workspace store, `$XDG_STATE_HOME/foo/workspace.db` |
 | Tool path scope | `$XDG_CONFIG_HOME/foo/scope.yaml` |
 | Tool approval overrides | `$XDG_CONFIG_HOME/foo/tool-policy.yaml` |
@@ -195,6 +196,13 @@ on macOS; see [XDG variables](reference/config.md#xdg-variables-kit-shared).
 
 Project-local overrides live next to the project root: `.foo.yaml`
 for config, `.foo/patterns/` for patterns.
+
+Each SQLite store records its schema revision in the file. When a
+newer foo needs to change a store's tables, it first copies the file
+to `.dbs/<store>.pre-v<revision>.<UTC timestamp>.bak` and keeps the
+newest 5 copies per store, deleting older ones. Opening a store that
+needs no change copies nothing. To roll back, copy a backup over the
+`.db` file while no foo is running.
 
 ## What foo never does
 
