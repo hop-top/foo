@@ -237,6 +237,10 @@ func TestRecordedToolRound(t *testing.T) {
 			answer, err := tool.NewDispatcher(client, reg, tool.DispatchConfig{}).Run(context.Background(), recordedPrompt)
 			if err != nil {
 				for i, ex := range exchanges {
+					if ex.Error != "" && !ex.Miss {
+						// A refused recording or a stored failure.
+						t.Errorf("request %d: %s", i+1, ex.Error)
+					}
 					if ex.Miss {
 						t.Errorf("request %d matched no recording: foo's wire request changed.\nsent (normalized):\n%s", i+1, ex.Canonical)
 					}
