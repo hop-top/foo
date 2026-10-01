@@ -250,7 +250,9 @@ pool, or as a URI: `-m 'openrouter://openai/gpt-4.1-nano'` gets
 `OPENROUTER_API_KEY` appended. A URI that already carries
 `?api_key=` is sent as written. A missing key fails before any
 request (exit 5) with `missing OPENROUTER_API_KEY for model
-"..."`, naming the highest-precedence variable.
+"..."`, naming the highest-precedence variable. At every step an
+empty value is skipped as if unset: an exported `""`, an empty
+secret, `api_key: ""`, an `api_key_env` naming an empty variable.
 
 Fallback entries (`LLM_FALLBACK`, llm.yaml `fallback:`) get their
 own scheme's key the same way. A fallback whose key is missing is
