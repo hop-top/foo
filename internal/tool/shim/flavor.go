@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -60,15 +61,20 @@ func (f *Flavors) Detect(bin string) string {
 	if fl, ok := f.cache[key]; ok {
 		return fl
 	}
-	fl := ClassifyVersion(versionOutput(bin))
+	out, done := versionOutput(bin)
+	fl := ClassifyVersion(out)
 	// A busybox applet is a link to the multi-call binary. Not every
 	// applet names BusyBox in --version: sed prints "This is not GNU
 	// sed version 4.0".
 	if real, err := filepath.EvalSymlinks(bin); err == nil && filepath.Base(real) == "busybox" {
-		fl = FlavorBusyBox
+		fl, done = FlavorBusyBox, true
 	}
-	f.cache[key] = fl
-	f.save()
+	// A probe that did not finish says nothing about the binary: its
+	// fallback is not cached, so the next call probes again.
+	if done {
+		f.cache[key] = fl
+		f.save()
+	}
 	return fl
 }
 
@@ -103,26 +109,33 @@ func (f *Flavors) save() {
 	}
 }
 
+// versionTimeout bounds a --version probe.
+var versionTimeout = 2 * time.Second
+
 // versionOutput runs `bin --version` in an empty scratch directory with
 // no stdin and a short timeout, so a binary that takes --version for a
-// file name cannot touch anything that matters.
-func versionOutput(bin string) string {
+// file name cannot touch anything that matters. done is false when the
+// probe did not run to an exit of its own: it could not start, or it
+// timed out. A nonzero exit is an answer (BSD tools reject --version).
+func versionOutput(bin string) (out string, done bool) {
 	dir, err := os.MkdirTemp("", "foo-flavor-")
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "--version")
 	cmd.Dir = dir
 	cmd.Env = childEnv(os.Environ())
-	var out bytes.Buffer
-	w := &capWriter{max: 4096, buf: &out}
+	var buf bytes.Buffer
+	w := &capWriter{max: 4096, buf: &buf}
 	cmd.Stdout, cmd.Stderr = w, w
 	setProcessGroup(cmd)
 	cmd.WaitDelay = time.Second
-	_ = cmd.Run()
-	return out.String()
+	err = cmd.Run()
+	var exit *exec.ExitError
+	done = ctx.Err() == nil && (err == nil || errors.As(err, &exit))
+	return buf.String(), done
 }
