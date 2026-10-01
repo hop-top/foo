@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -211,23 +212,36 @@ func TestFetchTranscript_LeavesNoFilesInCwd(t *testing.T) {
 
 // TestFetchTranscript_TempDirRemoved proves the downloaded subtitle file
 // is cleaned up rather than accumulating in the system temp dir.
+//
+// The temp dir is this test's own: in the shared one, a concurrent run
+// of the same test has its subtitle dir open, and counts as a leak.
+// TMPDIR moves after the fake is built, so the go build scratch never
+// lands in it.
 func TestFetchTranscript_TempDirRemoved(t *testing.T) {
 	argvFile := filepath.Join(t.TempDir(), "argv.txt")
 	withSubtitleYTDLP(t, argvFile, json3Fixture, []string{"en"})
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 
-	before, err := filepath.Glob(filepath.Join(os.TempDir(), "foo-youtube-subs-*"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
 	if _, err := fetchTranscript(context.Background(), "https://youtu.be/VID123", false); err != nil {
 		t.Fatalf("fetchTranscript: %v", err)
 	}
-	after, err := filepath.Glob(filepath.Join(os.TempDir(), "foo-youtube-subs-*"))
+	// The subtitles were downloaded into this temp dir, or an empty
+	// dir proves nothing.
+	raw, err := os.ReadFile(argvFile)
 	if err != nil {
-		t.Fatalf("glob: %v", err)
+		t.Fatalf("read argv: %v", err)
 	}
-	if len(after) > len(before) {
-		t.Errorf("temp dirs leaked: %d before, %d after", len(before), len(after))
+	args := strings.Split(string(raw), "\n")
+	if i := slices.Index(args, "-o"); i < 0 || i+1 >= len(args) || !strings.HasPrefix(args[i+1], tmp+string(filepath.Separator)) {
+		t.Fatalf("yt-dlp -o is not under the test's TMPDIR %s: %q", tmp, args)
+	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		t.Errorf("temp entry leaked: %q", e.Name())
 	}
 }
 
