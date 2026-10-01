@@ -79,6 +79,9 @@ func fragmentCreateCmd() *cobra.Command {
   - Omitted to read from stdin`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isDryRun(cmd) {
+				return planFragmentCreate(cmd, args)
+			}
 			ctx := cmd.Context()
 			mgr, err := newFragmentManager()
 			if err != nil {
@@ -142,6 +145,12 @@ func fragmentDeleteCmd() *cobra.Command {
 		Long:  "Remove a fragment alias and its index entry. Local irreversible.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isDryRun(cmd) {
+				return renderPlan(cmd, map[string]any{"alias": args[0]}, nil, kitcli.Effect{
+					Kind: "delete", Target: "fragment:" + args[0],
+					Detail: "remove the alias and its index entry from the workspace store",
+				})
+			}
 			ctx := cmd.Context()
 			mgr, err := newFragmentManager()
 			if err != nil {

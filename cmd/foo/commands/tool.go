@@ -216,6 +216,9 @@ removed. Running install again changes nothing.`,
 	cmd.Flags().StringVar(&dir, "dir", "", "directory for the links (default: foo's bin home)")
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
 	kitcli.SetIdempotency(cmd, kitcli.IdempotencyYes)
+	// The link installer has no preview mode: kit refuses --dry-run
+	// here rather than letting it through to a real install.
+	kitcli.OptOutDryRun(cmd)
 	return cmd
 }
 
@@ -243,6 +246,8 @@ touched. Running uninstall again changes nothing.`,
 	cmd.Flags().StringVar(&dir, "dir", "", "directory holding the links (default: foo's bin home)")
 	kitcli.SetSideEffect(cmd, kitcli.SideEffectWriteLocal)
 	kitcli.SetIdempotency(cmd, kitcli.IdempotencyYes)
+	// No preview mode in the link installer; see toolInstallCmd.
+	kitcli.OptOutDryRun(cmd)
 	return cmd
 }
 

@@ -13,7 +13,7 @@ ones.
 | Built-in defaults | (compiled) | Lowest |
 | System | `/etc/foo/config.yaml` | |
 | User | `$XDG_CONFIG_HOME/foo/config.yaml` ([defaults](#xdg-variables-kit-shared)) | |
-| Project | `.foo.yaml` (in the current directory) | |
+| Project | `.foo.yaml` (in the current directory, or the `-C` directory) | |
 | Extra `-c` files | Per `-c <path>` invocation | |
 | Environment | `FOO_*` variables | |
 | `-c key=value` | Per `-c key=value` invocation | Highest |

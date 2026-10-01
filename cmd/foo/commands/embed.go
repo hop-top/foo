@@ -58,6 +58,10 @@ collection is "default"; override with --collection.`,
 				return err
 			}
 
+			if isDryRun(cmd) {
+				return planEmbed(cmd, collection, map[string]any{"collection": collection}, []string{args[0]})
+			}
+
 			store, err := openEmbedStore()
 			if err != nil {
 				return err
@@ -120,6 +124,9 @@ same content produces new rows.`,
 			embedder, err := newEmbedder()
 			if err != nil {
 				return err
+			}
+			if isDryRun(cmd) {
+				return planEmbed(cmd, collection, map[string]any{"collection": collection, "file": filePath}, chunks)
 			}
 			store, err := openEmbedStore()
 			if err != nil {
@@ -255,6 +262,9 @@ delete collections; embeddings themselves are added with
 		Long:  "Drop every embedding stored under the named collection. Irreversible local state loss.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isDryRun(cmd) {
+				return planCollectionDelete(cmd, args[0])
+			}
 			store, err := openEmbedStore()
 			if err != nil {
 				return err
@@ -279,16 +289,24 @@ func newEmbedder() (*embed.OpenAIEmbedder, error) {
 	return embed.NewOpenAIEmbedder(embed.WithSecretStore(secretStore()))
 }
 
-func openEmbedStore() (*embed.Store, error) {
+// embedDBPath is where the embedding store lives.
+func embedDBPath() (string, error) {
 	stateDir, err := xdg.StateDir("foo")
 	if err != nil {
-		return nil, fmt.Errorf("state dir: %w", err)
+		return "", fmt.Errorf("state dir: %w", err)
 	}
+	return filepath.Join(stateDir, "embeddings.db"), nil
+}
+
+func openEmbedStore() (*embed.Store, error) {
+	dbPath, err := embedDBPath()
+	if err != nil {
+		return nil, err
+	}
+	stateDir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, err
 	}
-
-	dbPath := filepath.Join(stateDir, "embeddings.db")
 
 	// Back up the live DB into <stateDir>/.dbs/ before NewStore runs its
 	// CREATE TABLE migrations. BackupBeforeMigrate is a no-op on first

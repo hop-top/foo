@@ -52,7 +52,6 @@ var (
 	strategyName    string
 	modelName       string
 	noStream        bool
-	dryRun          bool
 	maxTokens       int
 	toolNames       []string
 	chainLimit      int
@@ -119,6 +118,10 @@ func New(v string) *kitcli.Root {
 		Help: kitcli.HelpConfig{
 			Disclaimer:  longDescription,
 			ShowAliases: true,
+			// kit's --dry-run previews the root's model call and every
+			// write leaf, so keep it in the default GLOBAL FLAGS list
+			// rather than behind --help-all.
+			ShowGlobals: []string{"dry-run"},
 			Groups: []kitcli.GroupConfig{
 				{ID: "knowledge", Title: "KNOWLEDGE"},
 				{ID: "organize", Title: "ORGANIZE"},
@@ -133,6 +136,11 @@ func New(v string) *kitcli.Root {
 			{Name: "profile", Usage: "Namespace secret lookups under an aps profile (keyring backend only)", StringVar: &profileName},
 			{Name: "instance", Usage: "Reserved for multi-instance builds; no effect in this build", StringVar: &instanceName},
 		},
+		// foo's runtime init rides kit's PersistentPreRunE chain rather
+		// than replacing it: kit runs -C/--chdir, progress, the --dry-run
+		// tier policy and the --offline marker first, so config loads
+		// from the resolved directory and every leaf sees kit's context.
+		Hooks: kitcli.Hooks{PrePersistentRunE: initializeRuntime},
 	}, kitcli.WithStatus(kitcli.StatusConfig{}))
 
 	// --instance is wired end to end (it feeds config.Secrets.Service in
@@ -171,7 +179,6 @@ foo`
 	root.Cmd.SilenceErrors = true
 	root.Cmd.SuggestionsMinimumDistance = 2
 	root.Cmd.Args = cobra.MaximumNArgs(1)
-	root.Cmd.PersistentPreRunE = initializeRuntime
 	root.Cmd.RunE = runPromptOrREPL
 
 	flags := root.Cmd.Flags()
@@ -180,7 +187,6 @@ foo`
 	flags.StringVarP(&modelName, "model", "m", "", "Model override")
 	flags.BoolVar(&noStream, "no-stream", false, "Disable streaming output")
 	flags.IntVar(&maxTokens, "max-tokens", 0, "Cap completion length in tokens (0 = provider default)")
-	flags.BoolVar(&dryRun, "dry-run", false, "Print assembled prompt without calling the model")
 	flags.StringSliceVarP(&toolNames, "tool", "T", nil, "Enable tools by name (repeatable); see \"foo tool list\"")
 	flags.IntVar(&chainLimit, "chain-limit", 5, "Maximum tool-call iterations")
 	flags.BoolVar(&toolsDebug, "tools-debug", false, "Write tool call traces to stderr")
@@ -347,18 +353,15 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	// value arrives via the root's viper binding rather than a local
 	// BoolVar. Mirror it into the package-level flag that networkAllowed()
 	// and wireBusNetwork() read.
-	offline = root.Offline()
-
+	//
 	// --offline refuses every request that would leave the machine;
 	// loopback (localhost, 127.0.0.0/8, ::1) and unix sockets stay
 	// reachable, so a model served locally still answers. Enforcement
 	// is kit's network guard, which cli.New installs under
 	// http.DefaultTransport and which every provider adapter and foo's
 	// own HTTP clients ride; it refuses a request whose context carries
-	// the offline marker. kit stamps that marker in its own
-	// PersistentPreRunE chain, which this hook replaces, so stamp it
-	// here or nothing downstream is ever refused.
-	cmd.SetContext(kitcli.WithOffline(cmd.Context(), offline))
+	// the offline marker, stamped by kit's chain before this hook runs.
+	offline = root.Offline()
 
 	// Work foo skips outright rather than letting the guard refuse:
 	// the update notice (the one network touch in the init path; see
@@ -373,7 +376,9 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 		wireBusNetwork(cmd.Context())
 	}
 
-	if cmd.CommandPath() == "foo" || cmd.CommandPath() == "foo repl" {
+	// The workspace records the conversation; a dry run has none and
+	// must not create the workspace either.
+	if (cmd.CommandPath() == "foo" || cmd.CommandPath() == "foo repl") && !kitcli.IsDryRun(cmd) {
 		mgr, ws, err = workspace.InitWorkspace(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("initialize workspace: %w", err)
@@ -410,6 +415,11 @@ func initializeRuntime(cmd *cobra.Command, _ []string) error {
 	// the path so operators discover it and can edit. Errors are
 	// non-fatal: a degraded config is still better than refusing to
 	// launch.
+	//
+	// A dry run writes nothing, so it skips the seed.
+	if kitcli.IsDryRun(cmd) {
+		return nil
+	}
 	if wrote, seedErr := llm.SeedDefaultPool(); seedErr != nil {
 		slog.Warn("llm.seed.failed", slog.Any("err", seedErr))
 	} else if wrote {
@@ -459,7 +469,9 @@ func runPromptOrREPL(cmd *cobra.Command, args []string) error {
 		prompt = strings.TrimSpace(prompt + "\n---\n" + resolved)
 	}
 
-	if dryRun {
+	// --dry-run is kit's global flag. On the root the side effect it
+	// previews is the model call: print what would be sent instead.
+	if kitcli.IsDryRun(cmd) {
 		if systemPrompt != "" {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "--- system ---")
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), systemPrompt)
@@ -541,6 +553,12 @@ func stdinIsPipe(cmd *cobra.Command) bool {
 }
 
 func runREPL(cmd *cobra.Command) error {
+	// Same refusal kit gives `foo repl --dry-run`: a session has no
+	// batch boundary to preview. The bare root reaches here when no
+	// prompt was given on a terminal.
+	if kitcli.IsDryRun(cmd) {
+		return fmt.Errorf("--dry-run is not meaningful for the interactive REPL: pass a prompt to preview it, or run without --dry-run")
+	}
 	if f, ok := cmd.InOrStdin().(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
 		return fmt.Errorf("interactive REPL requires a terminal; supply a prompt (`foo \"...\"`) or pipe input (`echo ... | foo -p <pattern>`)")
 	}
@@ -608,6 +626,14 @@ applied to any prompt via --pattern.`,
 			if len(args) == 2 {
 				systemPrompt = args[1]
 			}
+			if isDryRun(cmd) {
+				dir, err := pattern.Dir(cfg.PatternsPath, args[0])
+				if err != nil {
+					return err
+				}
+				return renderPlan(cmd, map[string]any{"name": args[0]}, []string{"name-valid"},
+					patternWriteEffect(filepath.Join(dir, "system.md"), args[0]))
+			}
 			if err := pattern.Create(cfg.PatternsPath, args[0], systemPrompt); err != nil {
 				return err
 			}
@@ -629,6 +655,18 @@ applied to any prompt via --pattern.`,
 			if len(args) == 2 {
 				name = args[1]
 			}
+			if isDryRun(cmd) {
+				stored := pattern.ImportName(args[0], name)
+				dir, err := pattern.Dir(cfg.PatternsPath, stored)
+				if err != nil {
+					return err
+				}
+				if _, err := os.Stat(args[0]); err != nil {
+					return err
+				}
+				return renderPlan(cmd, map[string]any{"path": args[0], "name": stored}, []string{"name-valid", "source-readable"},
+					patternWriteEffect(filepath.Join(dir, "system.md"), stored))
+			}
 			if err := pattern.Import(cfg.PatternsPath, args[0], name); err != nil {
 				return err
 			}
@@ -647,6 +685,17 @@ applied to any prompt via --pattern.`,
 		Long:  "Remove a named pattern from the local pattern directory. Local irreversible.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isDryRun(cmd) {
+				dir, err := pattern.Dir(cfg.PatternsPath, args[0])
+				if err != nil {
+					return err
+				}
+				var effects []kitcli.Effect
+				if _, err := os.Stat(dir); err == nil {
+					effects = append(effects, kitcli.Effect{Kind: "delete", Target: dir, Detail: fmt.Sprintf("remove pattern %q", args[0])})
+				}
+				return renderPlan(cmd, map[string]any{"name": args[0]}, []string{"name-valid"}, effects...)
+			}
 			if err := pattern.Delete(cfg.PatternsPath, args[0]); err != nil {
 				return err
 			}
@@ -724,6 +773,16 @@ file; when one does, a note on stderr names the model that wins.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			model := args[0]
+			if isDryRun(cmd) {
+				path, err := config.UserConfigPath()
+				if err != nil {
+					return err
+				}
+				return renderPlan(cmd, map[string]any{"model": model}, nil, kitcli.Effect{
+					Kind: "update", Target: path, Reversible: true,
+					Detail: fmt.Sprintf("set model: %s (previous: %q)", model, cfg.Model),
+				})
+			}
 			if err := config.SetUser("model", model); err != nil {
 				return err
 			}
@@ -852,7 +911,16 @@ func aliasCmd() *cobra.Command {
 	if loadErr := store.Load(); loadErr != nil {
 		slog.Warn("alias.load.failed", slog.Any("err", loadErr))
 	}
-	return root.AliasCmd(store)
+	cmd := root.AliasCmd(store)
+	// kit's alias leaves write the store without consulting --dry-run,
+	// so a dry run would save or drop the alias for real. Opt them out:
+	// kit then refuses --dry-run on them instead.
+	for _, sub := range cmd.Commands() {
+		if kitcli.IsDryRunSupported(sub) {
+			kitcli.OptOutDryRun(sub)
+		}
+	}
+	return cmd
 }
 
 func upgradeCmd() *cobra.Command {
@@ -864,6 +932,9 @@ the upgrade in-place when one is available. Local binary mutation.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !networkAllowed() {
 				return fmt.Errorf("`foo upgrade` requires network access; drop --offline and retry")
+			}
+			if isDryRun(cmd) {
+				return planUpgrade(cmd)
 			}
 			return upgrade.RunCLI(cmd.Context(), newUpgradeChecker(), upgrade.CLIOptions{})
 		},
