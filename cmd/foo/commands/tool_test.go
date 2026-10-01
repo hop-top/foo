@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"hop.top/foo/internal/testutil"
 	"hop.top/foo/internal/tool"
 	"hop.top/kit/go/ai/llm"
 	"hop.top/kit/go/console/output"
@@ -70,9 +71,7 @@ func newToolTestEnv(t *testing.T) toolTestEnv {
 		t.Fatal(err)
 	}
 	demo := filepath.Join(bin, "foo-tool-demo")
-	if err := os.WriteFile(demo, []byte(demoToolScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteScript(t, demo, demoToolScript)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
 
 	log := filepath.Join(tmp, "extinfo.log")
@@ -320,10 +319,7 @@ func (e toolTestEnv) addToolScript(t *testing.T, file, extInfo string) string {
 	path := filepath.Join(bin, "foo-tool-"+file)
 	script := "#!/bin/sh\nif [ \"$1\" = \"--ext-info\" ]; then\n  cat <<'JSON'\n" + extInfo +
 		"\nJSON\n  exit 0\nfi\ncat > '" + filepath.Join(bin, file+".stdin") + "'\necho '{\"result\":{\"ok\":true}}'\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return testutil.WriteScript(t, path, script)
 }
 
 const weatherToolInfo = `{"name":"weather","version":"0.1.0","description":"Forecast for a city",` +

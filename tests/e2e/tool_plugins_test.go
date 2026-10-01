@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"hop.top/foo/internal/testutil"
 )
 
 // notesPlugin is a third-party foo-tool-notes plugin that declares its
@@ -54,7 +56,7 @@ func TestToolPlugins_DeclaredPathsGated(t *testing.T) {
 	mkfile(t, e.path("outside", "x.md"), "x\n")
 	log := e.path("calls.log")
 	footool := `{"spec":1,"side_effect":"write","paths":{"file":{"op":["read","write"],"must_exist":true,"kind":"file"}}}`
-	require.NoError(t, os.WriteFile(filepath.Join(e.bin, "foo-tool-notes"), []byte(notesPlugin(log, footool)), 0o755))
+	testutil.WriteScript(t, filepath.Join(e.bin, "foo-tool-notes"), notesPlugin(log, footool))
 	e.scope("mode: strict\nallow:\n  - path: \"" + notes + "/**\"\n    ops: [read, write]\n")
 
 	ran := func() bool { _, err := os.Stat(log); return err == nil }

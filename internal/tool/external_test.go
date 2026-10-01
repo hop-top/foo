@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"hop.top/foo/internal/testutil"
 	"hop.top/kit/go/ai/ext/discover"
 	"hop.top/kit/go/ai/llm"
 )
@@ -17,7 +18,8 @@ const weatherSchema = `{"type":"object","properties":{"city":{"type":"string"},"
 
 // writePlugin drops an executable foo-tool-<file> script into a temp
 // dir. --ext-info prints extInfo and appends a line to extinfo.log;
-// a call copies its stdin to stdin.json and prints result.
+// a call copies its stdin to stdin.json and prints result. The script
+// is warmed up (testutil.WriteScript): kit gives --ext-info 5s.
 func writePlugin(t *testing.T, file, extInfo, result string) (path, dir string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -30,9 +32,7 @@ func writePlugin(t *testing.T, file, extInfo, result string) (path, dir string) 
 		"fi\n" +
 		"cat > '" + filepath.Join(dir, "stdin.json") + "'\n" +
 		"cat <<'JSON'\n" + result + "\nJSON\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteScript(t, path, script)
 	return path, dir
 }
 
