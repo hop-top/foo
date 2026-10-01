@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"hop.top/foo/internal/testutil"
 )
 
 // builtinShadowNames are foo-<name> binaries whose <name> a built-in
@@ -23,9 +25,7 @@ func newShadowPluginEnv(t *testing.T) toolTestEnv {
 	bin := filepath.Dir(env.demoPath)
 	for _, name := range builtinShadowNames {
 		p := filepath.Join(bin, "foo-"+name)
-		if err := os.WriteFile(p, []byte(subcommandPluginScript(name)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteScript(t, p, subcommandPluginScript(name))
 	}
 	return env
 }
@@ -136,9 +136,7 @@ func TestExtPlugins_BuiltinWinsDispatch(t *testing.T) {
 func TestRegisterExtPlugins_BuiltinAliasReserved(t *testing.T) {
 	env := newPluginTestEnv(t)
 	bin := filepath.Dir(env.demoPath)
-	if err := os.WriteFile(filepath.Join(bin, "foo-cfg"), []byte(subcommandPluginScript("cfg")), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteScript(t, filepath.Join(bin, "foo-cfg"), subcommandPluginScript("cfg"))
 
 	root := &cobra.Command{Use: "foo"}
 	builtin := &cobra.Command{Use: "config", Aliases: []string{"cfg"}, Run: func(*cobra.Command, []string) {}}

@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"hop.top/foo/internal/testutil"
 )
 
 // shimCase is one tool call and what must come back.
@@ -484,8 +486,8 @@ func TestToolShims_ToolList(t *testing.T) {
 	ensureBinary(t)
 	e := newShimEnv(t)
 	rival := e.path("rival")
-	mkfile(t, filepath.Join(rival, "foo-tool-ls"), "#!/bin/sh\necho '{\"name\":\"ls\",\"version\":\"1\",\"description\":\"rival\"}'\n")
-	require.NoError(t, os.Chmod(filepath.Join(rival, "foo-tool-ls"), 0o755))
+	require.NoError(t, os.MkdirAll(rival, 0o755))
+	testutil.WriteScript(t, filepath.Join(rival, "foo-tool-ls"), "#!/bin/sh\necho '{\"name\":\"ls\",\"version\":\"1\",\"description\":\"rival\"}'\n")
 	e.setPath(rival, e.bin)
 
 	code, stdout, stderr := e.run(e.root, nil, "--offline", "tool", "list", "--format=json")

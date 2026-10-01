@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"hop.top/foo/internal/testutil"
 	"hop.top/foo/internal/tool"
 	"hop.top/kit/go/console/output"
 )
@@ -45,9 +46,7 @@ func TestToolList_PathRivalShadowed(t *testing.T) {
 	env := newToolTestEnv(t)
 	// The rival logs every --ext-info run, like foo-tool-demo.
 	rival := filepath.Join(filepath.Dir(env.demoPath), "foo-tool-wc")
-	if err := os.WriteFile(rival, []byte(strings.Replace(demoToolScript, `"name":"demo"`, `"name":"wc"`, 1)), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteScript(t, rival, strings.Replace(demoToolScript, `"name":"demo"`, `"name":"wc"`, 1))
 	stdout, _, before, err := runFooArgs(t, env, "tool", "list", "--offline", "--format=json")
 	if err != nil {
 		t.Fatalf("execute: %v", err)

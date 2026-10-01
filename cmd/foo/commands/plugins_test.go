@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hop.top/foo/internal/testutil"
 )
 
 // subcommandPluginScript is a foo-<name> subcommand plugin. Each
@@ -31,9 +33,7 @@ func newPluginTestEnv(t *testing.T) toolTestEnv {
 	bin := filepath.Dir(env.demoPath)
 	for _, name := range []string{"hello", "toolbox"} {
 		p := filepath.Join(bin, "foo-"+name)
-		if err := os.WriteFile(p, []byte(subcommandPluginScript(name)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.WriteScript(t, p, subcommandPluginScript(name))
 	}
 	return env
 }

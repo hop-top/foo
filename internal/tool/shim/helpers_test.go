@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"hop.top/foo/internal/testutil"
 	"hop.top/foo/internal/tool/gate"
 )
 
@@ -125,13 +126,11 @@ func writeFile(t *testing.T, path, content string) string {
 	return path
 }
 
+// writeScript writes an sh script, warmed up so its first run fits
+// the 2s flavor probe and a fixture's own timeout (testutil.WriteScript).
 func writeScript(t *testing.T, dir, name, body string) string {
 	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return testutil.WriteScript(t, filepath.Join(dir, name), "#!/bin/sh\n"+body)
 }
 
 // mustSpec parses a fixture spec and pins its binary.

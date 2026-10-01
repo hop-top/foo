@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hop.top/foo/internal/testutil"
 )
 
 // gatedPluginScript is a foo-tool-<name> plugin that declares extInfo
@@ -47,9 +49,7 @@ func (e pluginEnv) plugin(t *testing.T, name, footool string) {
 	}
 	info += "}"
 	p := filepath.Join(e.bin, "foo-tool-"+name)
-	if err := os.WriteFile(p, []byte(gatedPluginScript(e.calls, name, info)), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteScript(t, p, gatedPluginScript(e.calls, name, info))
 }
 
 // received is the request plugin name got, "" when it never ran.
