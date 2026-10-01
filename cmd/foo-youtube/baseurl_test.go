@@ -127,6 +127,64 @@ func TestModelURI_ConfiguredBaseURL(t *testing.T) {
 	}
 }
 
+// TestModelURI_AliasConfigBlock: a provider's llm.yaml block may sit
+// under any of its names. A scheme without a block of its own takes
+// the block of the provider it names (gemini reads providers.google,
+// fireworks-ai reads providers.fireworks), base_url and api_key alike;
+// its own block wins.
+func TestModelURI_AliasConfigBlock(t *testing.T) {
+	const googleURL, geminiURL, fwURL = "http://127.0.0.1:9/google", "http://127.0.0.1:9/gemini", "http://127.0.0.1:9/fw"
+	tests := []struct {
+		name, model, yaml, want string
+	}{
+		{
+			name:  "gemini reads providers.google",
+			model: "gemini://gemini-2.0-flash",
+			yaml:  "providers:\n  google:\n    base_url: " + googleURL + "\n    api_key: g-yaml\n",
+			want:  "gemini://gemini-2.0-flash?base_url=" + googleURL + "&api_key=g-yaml",
+		},
+		{
+			name:  "own block wins",
+			model: "gemini://gemini-2.0-flash",
+			yaml:  "providers:\n  google:\n    base_url: " + googleURL + "\n  gemini:\n    base_url: " + geminiURL + "\n    api_key: gm-yaml\n",
+			want:  "gemini://gemini-2.0-flash?base_url=" + geminiURL + "&api_key=gm-yaml",
+		},
+		{
+			name:  "fireworks-ai reads providers.fireworks",
+			model: "fireworks-ai://accounts/fireworks/models/m",
+			yaml:  "providers:\n  fireworks:\n    base_url: " + fwURL + "\n    api_key: fw-yaml\n",
+			want:  "fireworks-ai://accounts/fireworks/models/m?base_url=" + fwURL + "&api_key=fw-yaml",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := isolateLLMEnv(t)
+			writeLLMYAML(t, cfg, tt.yaml)
+			got, err := modelURI(context.Background(), tt.model)
+			if err != nil {
+				t.Fatalf("modelURI(%q): %v", tt.model, err)
+			}
+			if got != tt.want {
+				t.Errorf("modelURI(%q)\n got %q\nwant %q", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestModelURI_BlankAPIKeyResolved: a blank api_key on the model is no
+// key; it is dropped and the scheme's own key sent instead.
+func TestModelURI_BlankAPIKeyResolved(t *testing.T) {
+	isolateLLMEnv(t)
+	t.Setenv("OPENROUTER_API_KEY", "or-key")
+	got, err := modelURI(context.Background(), "openrouter://openai/gpt-4.1-nano?api_key=")
+	if err != nil {
+		t.Fatalf("modelURI: %v", err)
+	}
+	if want := "openrouter://openai/gpt-4.1-nano?api_key=or-key"; got != want {
+		t.Errorf("modelURI\n got %q\nwant %q", got, want)
+	}
+}
+
 // TestAnswer_URIFormModelReachesLLMYamlBaseURL is the reported defect
 // on the wire: a URI-form model with llm.yaml naming its scheme's
 // endpoint must send the request there, not to the public endpoint.

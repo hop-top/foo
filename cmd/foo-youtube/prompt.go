@@ -211,14 +211,16 @@ func querySep(s string) string {
 //
 //  1. ?base_url= already on uri: the caller's own choice, never replaced
 //  2. LLM_BASE_URL
-//  3. llm.yaml providers.<scheme>.base_url
+//  3. llm.yaml base_url, from the block kit reads for the scheme: its
+//     own, else an alias's (gemini reads providers.google)
 //  4. nothing: the adapter's default
 //
 // The host scopes LLM_BASE_URL to its primary model's scheme so a
-// fallback on another scheme never borrows it. This binary runs one
+// fallback on another scheme never borrows it, and reads the file tier
+// alone (kit's ProviderSettingsFor) for those. This binary runs one
 // model and no fallbacks, so the model is always the primary and kit's
-// LoadConfig, which layers LLM_BASE_URL over the file, answers tiers
-// 2-3 as they stand. A host-form URI ("scheme://host:port/model")
+// LoadConfig, which layers LLM_BASE_URL over the same block, answers
+// tiers 2-3 as they stand. A host-form URI ("scheme://host:port/model")
 // already names its endpoint and is left alone.
 func applyConfiguredBaseURL(uri string) string {
 	parsed, err := kitllm.ParseURI(uri)

@@ -13,16 +13,18 @@
 //
 // The answer is now the run's own: for any provider a kit adapter
 // serves — registered scheme, catalog alias ("fireworks-ai") or catalog
-// protocol route — the index makes the same kitllm.ApplyAPIKey call a
-// run makes, against the same secret store, and reports its outcome.
-// Key variables, their order, llm.yaml's api_key / api_key_env,
-// LLM_API_KEY and local runtimes are all kit's; the listing and
-// `foo provider show` therefore cannot call "missing" a key a run would
-// use, nor "configured" one it would refuse.
+// protocol route — the index resolves the key as a run does
+// (kitllm.ResolveAPIKey, against the same secret store) and reports
+// where kit found it. Key variables, their order, llm.yaml's api_key /
+// api_key_env (the scheme's block or an alias's), LLM_API_KEY, blank
+// values and local runtimes are all kit's; the listing and `foo
+// provider show` therefore cannot call "missing" a key a run would use,
+// nor "configured" one it would refuse.
 //
-// A catalog provider no adapter serves cannot be run at all; for it the
-// index reads the variables aim lists, by kit's rules (store, then
-// environment; an empty value is no key), so `provider show` still
+// A catalog provider no adapter serves cannot be run at all. kit still
+// takes what its own llm.yaml block names, so the index reports that;
+// otherwise it reads the variables aim lists, by kit's rules (store,
+// then environment; a blank value is no key), so `provider show` still
 // names what that provider would want.
 
 package llm
@@ -176,11 +178,12 @@ func NewAuthIndexFrom(ctx context.Context, envByProvider map[string][]string, st
 // resolveProviderAuth decides name's state. For a name a kit adapter
 // serves, that is the outcome of the key resolution a run on name would
 // make (resolveKeyStatus); only the source is kept, never the key.
-// Otherwise catalogEnv, aim's list, answers (resolveCatalogAuth).
+// Otherwise catalogEnv, aim's list, answers (resolveCatalogAuth), after
+// the key kit takes from name's own llm.yaml block.
 func resolveProviderAuth(ctx context.Context, name string, catalogEnv []string, store secret.Store) ProviderAuth {
 	st := resolveKeyStatus(ctx, store, name)
 	if !st.routed {
-		return resolveCatalogAuth(ctx, name, catalogEnv, store)
+		return resolveCatalogAuth(ctx, name, catalogEnv, store, st)
 	}
 	a := ProviderAuth{
 		Provider: name,
@@ -207,10 +210,23 @@ func resolveProviderAuth(ctx context.Context, name string, catalogEnv []string, 
 // The names are looked up as kit looks up a routed provider's: the
 // store first, then the environment, and a blank value (empty or only
 // whitespace) is no key. A blank variable reads "missing" on this
-// branch as it does on kit's. LLM_API_KEY and llm.yaml are not
-// consulted: kit lends neither to a provider it cannot reach.
-func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, store secret.Store) ProviderAuth {
+// branch as it does on kit's. LLM_API_KEY and other providers' llm.yaml
+// blocks are not consulted: kit lends neither to a provider it cannot
+// reach.
+//
+// own is kit's resolution for the scheme, which reads its own llm.yaml
+// block only (api_key, or the variable api_key_env names): a key found
+// there is the provider's own, and answers first.
+func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, store secret.Store, own keyStatus) ProviderAuth {
 	a := ProviderAuth{Provider: provider, EnvVars: envVars, Required: len(envVars) > 0}
+	if own.found {
+		a.Required, a.Configured, a.Source = true, true, own.source
+		a.SecretKey = own.secretKey
+		if a.SecretKey == "" && len(envVars) > 0 {
+			a.SecretKey = SecretName(envVars[0])
+		}
+		return a
+	}
 	if !a.Required {
 		return a
 	}
@@ -226,16 +242,18 @@ func resolveCatalogAuth(ctx context.Context, provider string, envVars []string, 
 }
 
 // lookupCatalogKey reports the secret name of the first of envVars
-// holding a key: in store (nil for none), then in the environment. A
-// blank value is no key, kit's rule (blankKey). namedStore applies
-// foo's names and counts a blank secret, or a lookup error, as "not
-// this one": one unreadable backend entry must not make the other
-// alternatives unaskable, and the listing has to render either way.
+// holding a key: in store (nil for none) under foo's SecretName, then
+// in the environment. A blank value is no key, kit's rule (blankKey). A
+// store lookup error counts as "not this one", as it does in kit: one
+// unreadable backend entry must not make the other alternatives
+// unaskable, and the listing has to render either way.
 func lookupCatalogKey(ctx context.Context, store secret.Store, envVars []string) (string, bool) {
-	probe := &namedStore{inner: store}
-	for _, envVar := range envVars {
-		if _, err := probe.Get(ctx, envVar); err == nil {
-			return probe.hit, true
+	if store != nil {
+		for _, envVar := range envVars {
+			name := SecretName(envVar)
+			if got, err := store.Get(ctx, name); err == nil && got != nil && !blankKey(string(got.Value)) {
+				return name, true
+			}
 		}
 	}
 	for _, envVar := range envVars {

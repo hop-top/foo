@@ -76,7 +76,10 @@ A provider's key is stored under its env var's name in lowercase
 (`openrouter_api_key` for `OPENROUTER_API_KEY`). The store is
 asked under each of the provider's key names first, then the env
 vars of those names ([key precedence](#key-precedence)). A backend
-error counts as "not in the store": the env var still answers.
+error counts as "not in the store": the env var still answers. It
+is not hidden, though: a run that finds the key elsewhere logs a
+warning naming the failed lookup, and a key found nowhere fails
+with the store error appended to the missing-key message.
 
 | Backend | Reads | Settings |
 |---------|-------|----------|
@@ -159,7 +162,7 @@ fallback:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `default` | string | URI used when no model is specified. Overridden by `LLM_PROVIDER` env. |
-| `providers.<scheme>.api_key` | string | Provider key for that scheme only; satisfies foo's key precheck. Outranks the scheme's env var (e.g. `OPENAI_API_KEY`), the secret store and `LLM_API_KEY`; only `?api_key=` on the URI beats it ([key precedence](#key-precedence)). |
+| `providers.<scheme>.api_key` | string | Provider key for that scheme (and a scheme naming the same provider that has no block of its own: `google`/`gemini`, `fireworks`/`fireworks-ai`); satisfies foo's key precheck. Outranks the scheme's env var (e.g. `OPENAI_API_KEY`), the secret store and `LLM_API_KEY`; only `?api_key=` on the URI beats it ([key precedence](#key-precedence)). |
 | `providers.<scheme>.api_key_env` | string | Name of the variable holding that scheme's key, for a key kept under another name (`MY_OR_KEY`). Looked up before the scheme's own names, in the secret store and the environment ([key precedence](#key-precedence)). |
 | `providers.<scheme>.base_url` | string | Custom base URL for that scheme: bare id, URI-form `--model`, pool pick and fallback entries alike; `providers.openai.base_url` also serves `foo embed`. Overridden by `LLM_BASE_URL` (primary's scheme only) and by a `?base_url=` param on the URI ([base URL precedence](#base-url-precedence)). See [use a local endpoint](../how-to/use-a-local-endpoint.md). |
 | `providers.<scheme>.model` | string | Default model for this scheme; URI model wins when set. |
@@ -283,7 +286,7 @@ first hit:
 |---|--------|------------|
 | 1 | `?base_url=` on the URI | That URI; never replaced |
 | 2 | `LLM_BASE_URL` | The primary model, and fallbacks on the primary's scheme |
-| 3 | `providers.<scheme>.base_url` in llm.yaml | Any URI of that scheme |
+| 3 | `base_url` in the scheme's llm.yaml block — its own, else the block of the provider it names (`gemini://` reads `providers.google`, `fireworks-ai://` reads `providers.fireworks`) | Any URI of that scheme |
 | 4 | The adapter's default | Public API for hosted schemes; local default for `ollama`, `lmstudio` |
 
 A host-form URI (`scheme://host:port/model`) names its endpoint
@@ -293,7 +296,8 @@ and is sent as written.
 primary's scheme. With `LLM_BASE_URL=http://127.0.0.1:8000/v1`,
 `-m my-model` (openai scheme) and `LLM_FALLBACK=anthropic://claude-...`,
 the fallback goes to Anthropic, or to `providers.anthropic.base_url`
-if set — never to the local server, which would receive the
+if set (the file tier alone, alias blocks included) — never to the
+local server, which would receive the
 Anthropic key. An `openai://` fallback in the same run does go to
 the local server. Pin a fallback elsewhere with `?base_url=` on
 its entry.

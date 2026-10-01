@@ -1,14 +1,8 @@
 package llm
 
 import (
-	"os"
-
-	"gopkg.in/yaml.v3"
 	kitllm "hop.top/kit/go/ai/llm"
 )
-
-// baseURLEnv is kit's universal endpoint override, read by LoadConfig.
-const baseURLEnv = "LLM_BASE_URL"
 
 // applyConfiguredBaseURL folds the configured endpoint into uri as a
 // base_url param. Every URI foo sends goes through it — a bare id, a
@@ -21,7 +15,9 @@ const baseURLEnv = "LLM_BASE_URL"
 //
 //  1. ?base_url= already on uri: the caller's own choice, never replaced
 //  2. LLM_BASE_URL, only when uri's scheme is primaryScheme
-//  3. llm.yaml providers.<scheme>.base_url
+//  3. llm.yaml base_url, from the block kit reads for the scheme: its
+//     own, else an alias's (gemini reads providers.google,
+//     fireworks-ai providers.fireworks)
 //  4. nothing: the adapter's default (local runtimes included)
 //
 // primaryScheme is the scheme of the run's primary model; a primary
@@ -53,9 +49,9 @@ func applyConfiguredBaseURL(uri, primaryScheme string) string {
 // EndpointBaseURL returns the base URL a call whose only model is uri
 // reaches, or "" for the adapter's default. It is applyConfiguredBaseURL
 // with uri as its own primary, read back: the same ladder a run's
-// primary model takes (?base_url=, LLM_BASE_URL, llm.yaml
-// providers.<scheme>.base_url), and for a host-form URI the host, as
-// kit's Resolve reads it.
+// primary model takes (?base_url=, LLM_BASE_URL, the llm.yaml block's
+// base_url), and for a host-form URI the host, as kit's Resolve reads
+// it.
 //
 // It serves callers that speak to the provider directly rather than
 // through a kit client — the embedder — so they reach the server a run
@@ -78,62 +74,21 @@ func EndpointBaseURL(uri string) string {
 // configuredBaseURL returns tiers 2-3 of applyConfiguredBaseURL for a
 // URI with no base_url param and no host.
 //
-// kit's LoadConfig is the implementation of record for both tiers, and
-// is what `foo model list` reads (ResolveConfiguredEndpoint), so it
-// answers whenever its answer is the right one: always when LLM_BASE_URL
-// applies, and when LLM_BASE_URL is unset (LoadConfig then returns the
-// file value). Only an other-scheme URI under a set LLM_BASE_URL needs
-// the file tier alone, which LoadConfig cannot give — it layers the env
-// over the file unconditionally.
+// Where LLM_BASE_URL applies, kit's LoadConfig answers: it layers the
+// variable over the file, and is what `foo model list` reads
+// (ResolveConfiguredEndpoint). Elsewhere the file tier stands alone,
+// which kit's ProviderSettingsFor gives: the block LoadConfig reads for
+// the scheme, an alias's included, without LLM_BASE_URL over it.
 func configuredBaseURL(uri, scheme string, envApplies bool) string {
-	if !envApplies && os.Getenv(baseURLEnv) != "" {
-		return fileBaseURL(scheme)
+	if !envApplies {
+		settings, _ := kitllm.ProviderSettingsFor(scheme)
+		return settings.BaseURL
 	}
 	cfg, err := kitllm.LoadConfig(uri)
 	if err != nil {
 		return ""
 	}
 	return cfg.Provider.BaseURL
-}
-
-// llmFile mirrors the shape kit's LoadConfig decodes llm.yaml into, so
-// a file kit discards as a whole (bad YAML, a mistyped block) is
-// discarded here too and the two reads never disagree.
-type llmFile struct {
-	Default   string `yaml:"default"`
-	Providers map[string]struct {
-		APIKey  string         `yaml:"api_key"`
-		BaseURL string         `yaml:"base_url"`
-		Model   string         `yaml:"model"`
-		Extra   map[string]any `yaml:",inline"`
-	} `yaml:"providers"`
-	Fallback []string `yaml:"fallback"`
-	Pool     []struct {
-		Alias   string  `yaml:"alias,omitempty"`
-		Scheme  string  `yaml:"scheme"`
-		Model   string  `yaml:"model"`
-		Enabled *bool   `yaml:"enabled,omitempty"`
-		Weight  float64 `yaml:"weight,omitempty"`
-	} `yaml:"pool,omitempty"`
-}
-
-// fileBaseURL returns llm.yaml providers.<scheme>.base_url, ignoring
-// LLM_BASE_URL. Like kit, a missing, unreadable or undecodable file
-// means "nothing configured".
-func fileBaseURL(scheme string) string {
-	path, err := SeedPath()
-	if err != nil {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var f llmFile
-	if err := yaml.Unmarshal(data, &f); err != nil {
-		return ""
-	}
-	return f.Providers[scheme].BaseURL
 }
 
 // schemeOf returns uri's scheme, or "" when kit cannot parse it.

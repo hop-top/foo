@@ -334,9 +334,11 @@ A blank value (empty or only whitespace) is no key: a variable
 exported as `""` or `"  "`, a blank secret, a blank `api_key` in
 llm.yaml, or an `api_key_env` naming a blank variable reads
 `missing`, and a run with it fails the key check (exit 5); a
-lower-precedence source still applies. A catalog provider no adapter serves is looked up under
-the names the catalog lists, in the secret store then the
-environment; `LLM_API_KEY` and llm.yaml never apply to it, since no
+lower-precedence source still applies. A catalog provider no adapter serves reads `configured` for
+a key in its own llm.yaml block (`api_key`, or the variable
+`api_key_env` names), and is otherwise looked up under the names the
+catalog lists, in the secret store then the environment;
+`LLM_API_KEY` and other providers' blocks never apply to it, and no
 run can reach it.
 
 The verdict is the one `foo model list` filters on, and for a

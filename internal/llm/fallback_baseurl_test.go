@@ -109,6 +109,33 @@ func TestFallbackURIs_EnvBaseURLOtherSchemeIgnored(t *testing.T) {
 	}
 }
 
+// TestFallbackURIs_OtherSchemeReadsAliasBlock: a fallback on another
+// scheme than the primary's, under a set LLM_BASE_URL, takes the
+// llm.yaml block a run on its scheme reads, an alias's included:
+// gemini reads providers.google, fireworks-ai reads providers.fireworks.
+func TestFallbackURIs_OtherSchemeReadsAliasBlock(t *testing.T) {
+	isolateBaseURLEnv(t)
+	captureWarnings(t)
+	t.Setenv("OPENAI_API_KEY", "fake-openai-key")
+	t.Setenv("GOOGLE_API_KEY", "fake-google-key")
+	t.Setenv("FIREWORKS_API_KEY", "fake-fw-key")
+	t.Setenv("LLM_BASE_URL", envBase)
+	t.Setenv("LLM_FALLBACK", "gemini://gemini-fb,fireworks-ai://fw-fb")
+	const googleBase, fwBase = "http://127.0.0.1:9106", "http://127.0.0.1:9107/v1"
+	writeLLMYAML(t, "providers:\n  google:\n    base_url: "+googleBase+"\n  fireworks:\n    base_url: "+fwBase+"\n")
+
+	got := fallbackURIs(context.Background(), nil, "openai://primary-model")
+	if len(got) != 2 {
+		t.Fatalf("fallbackURIs = %q, want 2 entries", got)
+	}
+	if bu := baseURLOf(t, got[0]); bu != googleBase {
+		t.Errorf("gemini fallback base_url = %q, want providers.google's %q", bu, googleBase)
+	}
+	if bu := baseURLOf(t, got[1]); bu != fwBase {
+		t.Errorf("fireworks-ai fallback base_url = %q, want providers.fireworks's %q", bu, fwBase)
+	}
+}
+
 // TestFallbackURIs_ExplicitBaseURLKept: a ?base_url= written on the entry
 // outranks file and env, and is not duplicated.
 func TestFallbackURIs_ExplicitBaseURLKept(t *testing.T) {
@@ -195,29 +222,35 @@ func TestResolvedURI_URIFormGetsConfiguredBaseURL(t *testing.T) {
 	})
 }
 
-// TestFileBaseURL_MatchesKit pins the llm.yaml read foo does itself (the
-// file tier without LLM_BASE_URL, which LoadConfig cannot give) to kit's
-// own reading of the same file, including a file kit rejects outright.
-func TestFileBaseURL_MatchesKit(t *testing.T) {
+// TestFileTier_MatchesKit: the file tier a fallback on another scheme
+// takes under LLM_BASE_URL is the base_url kit's LoadConfig reads for
+// that scheme without LLM_BASE_URL: the same block, alias blocks
+// included, and nothing for a file kit rejects outright.
+func TestFileTier_MatchesKit(t *testing.T) {
 	bodies := map[string]string{
-		"set":       "providers:\n  anthropic:\n    base_url: " + fileAnthropicBase + "\n",
-		"absent":    "providers:\n  openai:\n    base_url: " + fileOpenAIBase + "\n",
-		"empty":     "",
-		"bad-yaml":  "providers: [\n",
-		"bad-shape": "providers:\n  anthropic:\n    base_url: " + fileAnthropicBase + "\npool: not-a-list\n",
+		"set":        "providers:\n  anthropic:\n    base_url: " + fileAnthropicBase + "\n",
+		"absent":     "providers:\n  openai:\n    base_url: " + fileOpenAIBase + "\n",
+		"alias":      "providers:\n  google:\n    base_url: " + fileAnthropicBase + "\n",
+		"empty":      "",
+		"bad-yaml":   "providers: [\n",
+		"bad-shape":  "providers:\n  anthropic:\n    base_url: " + fileAnthropicBase + "\npool: not-a-list\n",
+		"own-blocks": "providers:\n  google:\n    base_url: http://127.0.0.1:9108\n  gemini:\n    base_url: " + fileAnthropicBase + "\n",
 	}
 	for name, body := range bodies {
-		t.Run(name, func(t *testing.T) {
-			isolateBaseURLEnv(t)
-			writeLLMYAML(t, body)
-			cfg, err := kitllm.LoadConfig("anthropic://m")
-			if err != nil {
-				t.Fatalf("LoadConfig: %v", err)
-			}
-			if got, want := fileBaseURL("anthropic"), cfg.Provider.BaseURL; got != want {
-				t.Errorf("fileBaseURL = %q, kit LoadConfig = %q", got, want)
-			}
-		})
+		for _, uri := range []string{"anthropic://m", "gemini://m"} {
+			t.Run(name+"/"+uri, func(t *testing.T) {
+				isolateBaseURLEnv(t)
+				writeLLMYAML(t, body)
+				cfg, err := kitllm.LoadConfig(uri)
+				if err != nil {
+					t.Fatalf("LoadConfig: %v", err)
+				}
+				t.Setenv("LLM_BASE_URL", envBase)
+				if got, want := configuredBaseURL(uri, schemeOf(uri), false), cfg.Provider.BaseURL; got != want {
+					t.Errorf("file tier = %q, kit LoadConfig = %q", got, want)
+				}
+			})
+		}
 	}
 }
 
